@@ -1,0 +1,12 @@
+---
+description: Required project skills for code, UI, and UI copy
+alwaysApply: true
+---
+
+# Skills
+
+Follow the Skills section in [AGENTS.md](AGENTS.md). The files are in `.agents/skills/`.
+
+- Every code change: read and follow `.agents/skills/ponytail/SKILL.md` before writing code.
+- Every UI or UX change: read and follow `.agents/skills/picasso/SKILL.md`, including `references/anti-patterns.md`.
+- Every sentence a person reads in a UI: read `.agents/skills/avoid-ai-writing/SKILL.md` and `references/patterns.md`, then audit those sentences before finishing.

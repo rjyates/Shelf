@@ -1,0 +1,15 @@
+---
+description: Locked oseink product decisions for work after the emulator
+alwaysApply: true
+---
+
+# Product scope
+
+The emulator (GitHub issues 1 through 8) is the current milestone. Do not start `shell/` product features, `shelf/`, or `protocol/` until those issues are done.
+
+After that, follow [docs/product.md](docs/product.md) and [AGENTS.md](AGENTS.md). Implement the earliest phase whose "done when" is still open.
+
+- Branch the UI on the capability profile, not on device model names.
+- Sync only through shelf. Keep an offline outbox on the device.
+- Run forced alignment on the server. Play EPUB 3 Media Overlays on the device.
+- Shelf is one self-hosted book service. Do not add video, comics, or bundled indexer definitions.
