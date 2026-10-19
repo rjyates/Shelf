@@ -1,0 +1,20 @@
+[project]
+name = "oseink"
+version = "0.0.0"
+description = "A Linux image for an e-ink reader, and a book service named shelf."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = "8.3.4"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "scripts"]
+addopts = "-ra"
+markers = [
+    "smoke: boots the emulator and needs /dev/kvm",
+]
