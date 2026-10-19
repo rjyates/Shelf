@@ -18,19 +18,17 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`
 
 `.githooks/commit-msg` rejects a bad commit subject and prints the form to use. It calls `scripts/check-semantic.sh`. If `git config --get core.hooksPath` is not `.githooks`, run `git config core.hooksPath .githooks` before the first commit. Do not pass `--no-verify`. If the hook rejects a commit, rewrite the message and commit again.
 
-`.github/workflows/semantic.yml` runs that same script on every pull request and on every push to `main`. A pull request fails when its title or any commit subject is not a Conventional Commit. Rewrite the title or the commits and update the branch. Git-generated `Merge`, `fixup!`, and `squash!` subjects are allowed. Pull request titles are not.
+`.github/workflows/semantic.yml` runs that same script on every pull request and on every push to `main`. A pull request fails when its title or any commit subject is not a Conventional Commit. Rewrite the title or the commits and update the branch. Git-generated `Merge`, `fixup!`, and `squash!` subjects are allowed. Pull request titles are not. A push whose tip is `Merge pull request #N` is checked using that pull request's title. A `chore(release):` commit is the release bot and is skipped.
 
 ## Releases
 
-Versions follow [Semantic Versioning](https://semver.org/). `version.txt` is the current version. It is `0.0.0` until the first release.
+Versions follow [Semantic Versioning](https://semver.org/). The published version is the latest `vX.Y.Z` tag.
 
-`.github/workflows/release.yml` runs [release-please](https://github.com/googleapis/release-please) on every push to `main`. A `feat` commit opens a pull request for the next minor version. A `fix`, `perf`, or `revert` commit opens one for the next patch. A breaking change (`!` before the colon, or a `BREAKING CHANGE:` footer) opens a minor release while the version is below `1.0.0`, and a major release from `1.0.0` on. `docs`, `style`, `refactor`, `test`, `build`, `ci`, and `chore` do not open a release.
+`.github/workflows/release.yml` runs [semantic-release](https://github.com/semantic-release/semantic-release) after `.github/workflows/semantic.yml` succeeds on a push to `main`. A direct push and a merged pull request both take that path. A `feat` commit publishes the next minor version. A `fix` commit publishes the next patch. A breaking change (`!` before the colon, or a `BREAKING CHANGE:` footer) publishes the next major. The first release is `1.0.0`. Other commit types do not publish a release.
 
-The pull request title is `chore: release X.Y.Z`. It updates `CHANGELOG.md`, `version.txt`, and `.release-please-manifest.json`. Merge that pull request. The merge publishes tag `vX.Y.Z` and a GitHub Release. The release body is the changelog section for that version.
+semantic-release writes `CHANGELOG.md`, commits `chore(release): X.Y.Z [skip ci]`, pushes tag `vX.Y.Z`, and creates a GitHub Release. The release body is the changelog for that version. Plugin config is `release.plugins` in `package.json`. Leave `CHANGELOG.md` for that commit to edit. The `version` field in `package.json` stays `0.0.0`.
 
-Leave `CHANGELOG.md`, `version.txt`, and `.release-please-manifest.json` for that workflow to edit. To publish `1.0.0`, add `Release-As: 1.0.0` as the footer of a Conventional Commit on `main`. The next release pull request uses that version.
-
-The release pull request is opened with the Actions token, so `.github/workflows/semantic.yml` does not run on it. The title is a Conventional Commit, and the push to `main` after the merge is checked. An admin of the repo has to allow GitHub Actions to create pull requests, under Settings, Actions, General.
+A squash merge uses the pull request title as the commit subject, so that title is what semantic-release versions. A merge commit versions from the commits on the branch.
 
 The current milestone is the emulator: issues 1 through 8 on this repo. Finish those before building the reader service or the device shell features below.
 
