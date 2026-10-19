@@ -1,0 +1,17 @@
+# BOOT is a stock Alpine ISO so the browser console can be checked before the
+# oseink image exists. Issue 3 replaces this with that image.
+services:
+  qemu:
+    build: .
+    environment:
+      BOOT: alpine
+    devices:
+      - /dev/kvm
+    ports:
+      - "8006:8006"
+    volumes:
+      - disks:/storage
+    stop_grace_period: 2m
+
+volumes:
+  disks:

@@ -1,0 +1,27 @@
+name: emulator
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the emulator contract
+        run: emulator/check.sh
+
+      - name: Boot the viewer when KVM is available
+        run: |
+          if [ -e /dev/kvm ]; then
+            emulator/smoke.sh
+          else
+            echo "This runner has no /dev/kvm, so emulator/smoke.sh did not run."
+            echo "Run emulator/smoke.sh on a KVM machine before merging."
+          fi
