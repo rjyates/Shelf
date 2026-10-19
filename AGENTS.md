@@ -20,6 +20,8 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`
 
 `.github/workflows/semantic.yml` runs that same script on every pull request and on every push to `main`. A pull request fails when its title or any commit subject is not a Conventional Commit. Rewrite the title or the commits and update the branch. Git-generated `Merge`, `fixup!`, and `squash!` subjects are allowed. Pull request titles are not. A push whose tip is `Merge pull request #N` is checked using that pull request's title. A `chore(release):` commit is the release bot and is skipped.
 
+Pull request descriptions follow [`.github/pull_request_template.md`](.github/pull_request_template.md). GitHub reads that file from `main`. Keep the Summary and Test plan headings. `Fixes #N` closes that issue on merge. A plain `#N` reference does not.
+
 ## Releases
 
 Versions follow [Semantic Versioning](https://semver.org/). The published version is the latest `vX.Y.Z` tag.
