@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "oseink-emulator": {
+      "command": "${workspaceFolder}/tools/emulator-mcp/run.sh",
+      "env": {
+        "OSEINK_VIEWER_URL": "http://127.0.0.1:8006/",
+        "OSEINK_COMPOSE_PROJECT": "oseink"
+      }
+    }
+  }
+}

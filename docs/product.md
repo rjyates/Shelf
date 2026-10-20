@@ -16,7 +16,7 @@ oseink is a device OS plus a self-hosted service. They share a protocol and stay
 | Shelf | `shelf/` | A server the user runs | Catalog, files, progress, alignment jobs, acquisition |
 | Protocol | `protocol/` | Both | Request and response types for catalog, files, and sync |
 
-The shell speaks the damage protocol from issue 7. Shelf never learns waveform timings, refresh modes, or panel product names.
+The shell speaks the damage protocol from issue 7 (`quality` / `fast` / `full` plus a damage rect and gray pixels; see `emulator/viewer/damage.js`). Shelf never learns waveform timings, refresh modes, or panel product names.
 
 ## What we take from the references
 

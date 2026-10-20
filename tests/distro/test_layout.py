@@ -90,3 +90,6 @@ def test_devd_watches_share_and_restarts_shell():
     shell = (DISTRO / "overlay" / "bin" / "oseink-shell").read_text(encoding="utf-8")
     assert "/oseink/share/banner" in shell
     assert "/run/oseink-shell" in shell
+    assert "/dev/tty0" in shell
+    assert "damage.json" not in shell
+    assert (DISTRO / "overlay" / "run" / ".gitkeep").is_file()

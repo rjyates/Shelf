@@ -3,5 +3,11 @@
 __pycache__/
 *.py[cod]
 .build/
+node_modules/
+.tmp-oseink-*.png
+.tmp-oseink-*.ppm
 distro/overlay/.oseink-share-probe
+distro/overlay/run/*
+!distro/overlay/run/.gitkeep
+tools/emulator-mcp/node_modules/
 
