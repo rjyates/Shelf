@@ -1,0 +1,16 @@
+#!/bin/sh
+# Mark the panel path live once /dev/fb0 appears. Later issues draw through this device.
+case "$1" in
+	start)
+		if [ -e /dev/fb0 ]; then
+			printf 'fb0\n' >/run/oseink-fb
+		fi
+		;;
+	stop)
+		rm -f /run/oseink-fb
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac

@@ -38,7 +38,7 @@ semantic-release writes `CHANGELOG.md`, commits `chore(release): X.Y.Z [skip ci]
 
 A squash merge uses the pull request title as the commit subject, so that title is what semantic-release versions. A merge commit versions from the commits on the branch.
 
-The current milestone is the emulator: issues 1 through 8 on this repo. Finish those before building the reader service or the device shell features below.
+The current milestone is the emulator: issues 1 through 8 on this repo. Issues 1 and 2 are done: `emulator/` boots a stock ISO in the browser, and `distro/` is the Buildroot x86_64 guest (`./distro/build.sh`, then `./distro/run.sh` on the host). Next is issue 3 (boot that image from the compose stack). Finish 1 through 8 before building the reader service or the device shell features below.
 
 When issues 1 through 8 are done, read [docs/product.md](docs/product.md) and implement the next phase in that file whose "done when" is not yet true. Do not skip ahead, and do not reopen choices that file already locks.
 
