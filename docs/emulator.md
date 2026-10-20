@@ -2,19 +2,21 @@
 
 `:8006` is the e-ink **display** attached to the Buildroot guest — the web stand-in for the panel the OS will drive. You see the guest framebuffer through e-ink simulation (quantize, delay, ghosting, full-refresh flash) and type into the guest by clicking the panel.
 
-Milestone issues 1–8; see [AGENTS.md](../AGENTS.md) for status.
+Issues 1–8 are done. Day-to-day run path is in [README.md](../README.md). See [AGENTS.md](../AGENTS.md) for what comes next.
 
 ## Build and run
 
+Entry point (Docker + KVM):
+
 ```
-./distro/build.sh
-./distro/run.sh          # host QEMU
-cd emulator && docker compose up   # browser + KVM
+cd emulator && docker compose up
 ```
 
 Open [http://127.0.0.1:8006](http://127.0.0.1:8006). Click the panel to focus the guest; **Full refresh** clears ghosting. Keys `1` / `2` / `3` set refresh class `quality` / `fast` / `full` while developing.
 
-`build.sh` writes images under `.build/oseink/images/`. Compose and `run.sh` share `distro/overlay/` into the guest at `/oseink`.
+`./distro/build.sh` writes images under `.build/oseink/images/` (needed before the first compose, and again for a kernel or initramfs change). `./distro/run.sh` boots the same image on the host. Compose and `run.sh` share `distro/overlay/` into the guest at `/oseink`.
+
+The userspace shell and assets under `distro/overlay/` reload while the VM stays up.
 
 ## How the panel gets pixels
 

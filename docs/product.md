@@ -1,8 +1,6 @@
 # oseink product decisions
 
-Read this after the emulator exists. Do not implement it before then.
-
-The emulator is GitHub issues 1 through 8 on [rjyates/oseink](https://github.com/rjyates/oseink/issues). That work boots a Linux image, hot-reloads the shell, and simulates the panel. This document is the next body of work.
+The emulator (GitHub issues 1 through 8 on [rjyates/oseink](https://github.com/rjyates/oseink/issues)) is done: it boots a Linux image, hot-reloads the shell, and simulates the panel. This document is the next body of work.
 
 ## Two products
 
