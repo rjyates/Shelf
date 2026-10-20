@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/rjyates/oseink/compare/v1.3.0...v1.4.0) (2026-10-20)
+
+
+### Features
+
+* **distro:** share overlay into the guest over virtiofs/9p ([c53a53a](https://github.com/rjyates/oseink/commit/c53a53a82a7e4256fcf25fd49dbb80b399b456b9))
+
 # [1.3.0](https://github.com/rjyates/oseink/compare/v1.2.0...v1.3.0) (2026-10-20)
 
 
