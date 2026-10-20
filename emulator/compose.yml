@@ -1,16 +1,22 @@
-# BOOT is a stock Alpine ISO so the browser console can be checked before the
-# oseink image exists. Issue 3 replaces this with that image.
+# Boots the Buildroot guest from distro/build.sh. No ISO download.
+# Images: ../.build/oseink/images/{bzImage,rootfs.ext2}
 services:
   qemu:
     build: .
     environment:
-      BOOT: alpine
+      DISK_DISABLE: "Y"
+      DISK_TYPE: blk
+      BOOT_MODE: legacy
+      # Single-token -append: qemux word-splits ARGUMENTS (see entry.sh).
+      ARGUMENTS: "-kernel /oseink/bzImage -append root=/dev/vda"
     devices:
       - /dev/kvm
     ports:
       - "8006:8006"
     volumes:
       - disks:/storage
+      - ../.build/oseink/images/rootfs.ext2:/boot.img
+      - ../.build/oseink/images/bzImage:/oseink/bzImage:ro
     stop_grace_period: 2m
 
 volumes:
