@@ -38,7 +38,7 @@ semantic-release writes `CHANGELOG.md`, commits `chore(release): X.Y.Z [skip ci]
 
 A squash merge uses the pull request title as the commit subject, so that title is what semantic-release versions. A merge commit versions from the commits on the branch.
 
-The current milestone is the emulator: issues 1 through 8 on this repo. Issues 1 through 3 are done: `emulator/` boots the Buildroot guest in the browser (`docker compose up` from `emulator/` after `./distro/build.sh`), and `distro/` can also boot that image on the host (`./distro/run.sh`). Next is issue 4 (share the workspace into the guest). Finish 1 through 8 before building the reader service or the device shell features below.
+The current milestone is the emulator: issues 1 through 8 on this repo. Issues 1 through 4 are done: `emulator/` boots the Buildroot guest in the browser (`docker compose up` from `emulator/` after `./distro/build.sh`), `distro/` can also boot that image on the host (`./distro/run.sh`), and `distro/overlay/` is shared into the guest at `/oseink` (virtiofs when `virtiofsd` is present, otherwise 9p; compose uses qemux's `/shared` 9p tag). Next is issue 5 (hot-reload the shell). Finish 1 through 8 before building the reader service or the device shell features below.
 
 When issues 1 through 8 are done, read [docs/product.md](docs/product.md) and implement the next phase in that file whose "done when" is not yet true. Do not skip ahead, and do not reopen choices that file already locks.
 

@@ -11,6 +11,8 @@ def test_external_tree_shape():
     assert (DISTRO / "configs" / "oseink_x86_64_defconfig").is_file()
     assert (DISTRO / "board" / "oseink" / "x86_64" / "linux.config").is_file()
     assert (DISTRO / "overlay" / "etc" / "init.d" / "S40framebuffer").is_file()
+    share = DISTRO / "overlay" / "etc" / "init.d" / "S30share"
+    assert share.is_file() and share.stat().st_mode & 0o111
 
 
 def test_defconfig_targets_framebuffer_console():
@@ -29,10 +31,42 @@ def test_kernel_config_enables_fb():
     assert "CONFIG_DRM_BOCHS=y" in text
 
 
+def test_kernel_config_enables_virtiofs_and_9p():
+    text = (DISTRO / "board" / "oseink" / "x86_64" / "linux.config").read_text(
+        encoding="utf-8"
+    )
+    assert "CONFIG_VIRTIO_FS=y" in text
+    assert "CONFIG_FUSE_FS=y" in text
+    assert "CONFIG_NET_9P_VIRTIO=y" in text
+    assert "CONFIG_9P_FS=y" in text
+
+
 def test_one_command_build_and_host_run_scripts_exist():
     build = DISTRO / "build.sh"
     run = DISTRO / "run.sh"
     assert build.is_file() and build.stat().st_mode & 0o111
     assert run.is_file() and run.stat().st_mode & 0o111
     assert "oseink_x86_64_defconfig" in build.read_text(encoding="utf-8")
-    assert "qemu-system-x86_64" in run.read_text(encoding="utf-8")
+    run_text = run.read_text(encoding="utf-8")
+    assert "qemu-system-x86_64" in run_text
+    assert "distro/overlay" in run_text
+    assert "mount_tag=shared" in run_text or "tag=$TAG" in run_text
+
+
+def test_post_build_creates_oseink_mountpoint():
+    text = (DISTRO / "board" / "oseink" / "x86_64" / "post-build.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'mkdir -p "$TARGET/oseink"' in text
+
+
+def test_share_init_prefers_virtiofs_then_9p():
+    text = (DISTRO / "overlay" / "etc" / "init.d" / "S30share").read_text(
+        encoding="utf-8"
+    )
+    assert "mount -t virtiofs" in text
+    assert "mount -t 9p" in text
+    assert "cache=mmap" in text
+    assert "TAG=shared" in text
+    assert "MNT=/oseink" in text
+    assert "oseink-share:fail" in text

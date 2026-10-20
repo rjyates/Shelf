@@ -13,7 +13,7 @@ Read [AGENTS.md](AGENTS.md) before changing the repo. Claude Code gets there thr
 ./distro/run.sh
 ```
 
-`build.sh` fetches Buildroot and builds the x86_64 kernel plus rootfs under `.build/`. `run.sh` boots that image with host QEMU outside Docker. From `emulator/`, `docker compose up` boots the same images in the browser (no ISO download). A kernel or initramfs change needs a new build; later issues cover live userspace reload.
+`build.sh` fetches Buildroot and builds the x86_64 kernel plus rootfs under `.build/`. `run.sh` boots that image with host QEMU outside Docker and shares `distro/overlay/` into the guest at `/oseink`. From `emulator/`, `docker compose up` boots the same images in the browser (no ISO download) with the same overlay share. A kernel or initramfs change needs a new build; later issues cover live userspace reload.
 
 ## Tests
 

@@ -3,4 +3,5 @@
 __pycache__/
 *.py[cod]
 .build/
+distro/overlay/.oseink-share-probe
 
