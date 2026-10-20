@@ -17,6 +17,8 @@ services:
       - disks:/storage
       - ../.build/oseink/images/rootfs.ext2:/boot.img
       - ../.build/oseink/images/bzImage:/oseink/bzImage:ro
+      # qemux exposes /shared as 9p mount_tag=shared; guest mounts it at /oseink.
+      - ../distro/overlay:/shared
     stop_grace_period: 2m
 
 volumes:

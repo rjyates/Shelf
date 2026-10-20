@@ -62,5 +62,15 @@ def test_boots_the_oseink_rootfs_not_an_iso(compose_config):
     assert Path(mounts["/oseink/bzImage"]).resolve() == (images / "bzImage").resolve()
 
 
+def test_shares_overlay_as_qemux_shared(compose_config):
+    mounts = {
+        volume.get("target"): volume.get("source")
+        for volume in compose_config["services"]["qemu"]["volumes"]
+        if volume.get("type") == "bind"
+    }
+    overlay = ROOT / "distro" / "overlay"
+    assert Path(mounts["/shared"]).resolve() == overlay.resolve()
+
+
 def test_lets_qemu_flush_disks_on_shutdown(compose_config):
     assert compose_config["services"]["qemu"]["stop_grace_period"] in ("2m", "2m0s", "120s")
