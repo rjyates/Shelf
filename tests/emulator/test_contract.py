@@ -1,4 +1,6 @@
-from tests.emulator.conftest import QEMU_IMAGE
+from pathlib import Path
+
+from tests.emulator.conftest import QEMU_IMAGE, ROOT
 
 
 def test_image_pin(emulator_dir):
@@ -42,8 +44,22 @@ def test_keeps_disks_on_a_named_volume(compose_config):
     assert not compose_config["volumes"][disk["source"]].get("external")
 
 
-def test_boots_the_alpine_iso_until_our_image_exists(compose_config):
-    assert compose_config["services"]["qemu"]["environment"]["BOOT"] == "alpine"
+def test_boots_the_oseink_rootfs_not_an_iso(compose_config):
+    env = compose_config["services"]["qemu"]["environment"]
+    assert "BOOT" not in env or env.get("BOOT") in ("", None)
+    assert env["DISK_DISABLE"] in ("Y", "y", "true", "1")
+    assert env["DISK_TYPE"] == "blk"
+    assert "-kernel /oseink/bzImage" in env["ARGUMENTS"]
+    assert "root=/dev/vda" in env["ARGUMENTS"]
+
+    mounts = {
+        volume.get("target"): volume.get("source")
+        for volume in compose_config["services"]["qemu"]["volumes"]
+        if volume.get("type") == "bind"
+    }
+    images = ROOT / ".build" / "oseink" / "images"
+    assert Path(mounts["/boot.img"]).resolve() == (images / "rootfs.ext2").resolve()
+    assert Path(mounts["/oseink/bzImage"]).resolve() == (images / "bzImage").resolve()
 
 
 def test_lets_qemu_flush_disks_on_shutdown(compose_config):
