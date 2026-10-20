@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/rjyates/oseink/compare/v1.7.0...v1.8.0) (2026-10-20)
+
+
+### Features
+
+* **distro:** publish the capability profile ([5c3a63c](https://github.com/rjyates/oseink/commit/5c3a63c6c116b6c3c93cb6f4d2950915e3ea38ed))
+
 # [1.7.0](https://github.com/rjyates/oseink/compare/v1.6.0...v1.7.0) (2026-10-20)
 
 
