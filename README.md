@@ -1,6 +1,6 @@
 # oseink
 
-Linux image for an e-ink reader, plus a self-hosted book service (`shelf`, not in-tree yet).
+Linux image for an e-ink device: a default reader/notes session, a full desktop when you want it, plus a self-hosted book service (`shelf`, not in-tree yet). Session model: [docs/product.md](docs/product.md).
 
 Docs: [docs/product.md](docs/product.md) · [docs/emulator.md](docs/emulator.md) · [AGENTS.md](AGENTS.md)
 

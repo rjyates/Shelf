@@ -20,9 +20,9 @@ The userspace shell and assets under `distro/overlay/` reload while the VM stays
 
 ## How the panel gets pixels
 
-Today the guest console is on the VGA framebuffer. The viewer pulls that over VNC and runs it through `emulator/viewer/panel.js`. That is a temporary bridge: the long-term path is the damage protocol (`quality` / `fast` / `full` + rect + pixels) in `damage.js`, which a real shell/panel driver will speak. MCP can still publish test damage frames; see [emulator-mcp.md](emulator-mcp.md).
+Today the guest console is on the VGA framebuffer. The viewer pulls that over VNC and runs it through `emulator/viewer/panel.js`. That is a temporary bridge: the long-term path is the damage protocol (`quality` / `fast` / `full` + rect + pixels) in `damage.js`, which both the reader/notes session and the desktop session use so ordinary Linux drawing still hits e-ink safeguards. MCP can still publish test damage frames; see [emulator-mcp.md](emulator-mcp.md).
 
-`oseink-devd` restarts `/oseink/bin/oseink-shell` when that binary or `/oseink/share/` changes. Kernel or initramfs changes need a new build.
+`oseink-devd` restarts `/oseink/bin/oseink-shell` when that binary or `/oseink/share/` changes. Kernel or initramfs changes need a new build. Session modes (reader/notes vs desktop) are defined in [product.md](product.md).
 
 ## Agent MCP
 
