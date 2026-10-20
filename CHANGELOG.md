@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/rjyates/oseink/compare/v1.5.0...v1.6.0) (2026-10-20)
+
+
+### Features
+
+* expands emulator device screen behavior ([a00e944](https://github.com/rjyates/oseink/commit/a00e94426f890118846ee80461ae315a0333f856))
+
 # [1.5.0](https://github.com/rjyates/oseink/compare/v1.4.0...v1.5.0) (2026-10-20)
 
 
