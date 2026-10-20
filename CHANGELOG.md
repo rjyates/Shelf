@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/rjyates/oseink/compare/v1.6.0...v1.7.0) (2026-10-20)
+
+
+### Features
+
+* **emulator:** e-ink panel as guest display and agent MCP ([2904bbc](https://github.com/rjyates/oseink/commit/2904bbca56a94081f9da6e091bca2d897d97a35e))
+
 # [1.6.0](https://github.com/rjyates/oseink/compare/v1.5.0...v1.6.0) (2026-10-20)
 
 
