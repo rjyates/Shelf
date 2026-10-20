@@ -28,6 +28,12 @@ Pull request descriptions follow [`.github/pull_request_template.md`](.github/pu
 
 The two commands in the Tests section of [README.md](README.md) install Poetry and run the suite.
 
+## Emulator MCP (agent debugging)
+
+When a task touches the emulator panel, guest UI, e-ink modes, or “what is on the screen,” use the **oseink-emulator** MCP: call `panel_screenshot` before guessing from logs; use `guest_type` to drive the guest. Do not debug the panel from compose logs alone.
+
+Hosts: Cursor (`.cursor/mcp.json`), Claude Code (`.mcp.json`), VS Code (`.vscode/mcp.json`). Shared launch: `tools/emulator-mcp/run.sh`. Full tool list and other hosts: [docs/emulator-mcp.md](docs/emulator-mcp.md). Emulator run path: [docs/emulator.md](docs/emulator.md).
+
 ## Releases
 
 Versions follow [Semantic Versioning](https://semver.org/). The published version is the latest `vX.Y.Z` tag.
@@ -38,7 +44,7 @@ semantic-release writes `CHANGELOG.md`, commits `chore(release): X.Y.Z [skip ci]
 
 A squash merge uses the pull request title as the commit subject, so that title is what semantic-release versions. A merge commit versions from the commits on the branch.
 
-The current milestone is the emulator: issues 1 through 8 on this repo. Issues 1 through 6 are done: `emulator/` boots the Buildroot guest in the browser (`docker compose up` from `emulator/` after `./distro/build.sh`), `distro/` can also boot that image on the host (`./distro/run.sh`), `distro/overlay/` is shared into the guest at `/oseink` (virtiofs when `virtiofsd` is present, otherwise 9p; compose uses qemux's `/shared` 9p tag), guest `oseink-devd` restarts `/oseink/bin/oseink-shell` when that binary or `/oseink/share/` changes while the VM stays up, and `http://127.0.0.1:8006` serves `emulator/viewer/` as the e-ink panel (quantize, delay, ghosting, full-refresh flash) over the guest VNC stream. Next is issue 7 (guest damage protocol; replaces the VNC frame ingest). Finish 1 through 8 before building the reader service or the device shell features below.
+The current milestone is the emulator: issues 1 through 8 on this repo. Issues 1 through 7 are done: `emulator/` boots the Buildroot guest in the browser (`docker compose up` from `emulator/` after `./distro/build.sh`), `distro/` can also boot that image on the host (`./distro/run.sh`), `distro/overlay/` is shared into the guest at `/oseink` (virtiofs when `virtiofsd` is present, otherwise 9p; compose uses qemux's `/shared` 9p tag), guest `oseink-devd` restarts `/oseink/bin/oseink-shell` when that binary or `/oseink/share/` changes while the VM stays up, and `http://127.0.0.1:8006` is the e-ink **display** for that guest (framebuffer over VNC, painted through quantize / delay / ghost / flash; click to type). Damage protocol modes live in `emulator/viewer/damage.js` for the real shell path; VNC ingest is the bridge until the shell paints via damage only. Details: [docs/emulator.md](docs/emulator.md). Next is issue 8 (one command and a short README). Finish 1 through 8 before building the reader service or the device shell features below.
 
 When issues 1 through 8 are done, read [docs/product.md](docs/product.md) and implement the next phase in that file whose "done when" is not yet true. Do not skip ahead, and do not reopen choices that file already locks.
 

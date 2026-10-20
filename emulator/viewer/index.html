@@ -12,8 +12,8 @@
       <p id="status" class="hint" aria-live="polite">Connecting to the guest…</p>
       <div class="bezel">
         <div class="stack">
-          <!-- RFB target first (under). E-ink canvas on top with pointer-events: none. -->
-          <div id="screen" aria-hidden="true"></div>
+          <!-- RFB under the panel: input + framebuffer. Panel paints e-ink. -->
+          <div id="screen"></div>
           <canvas id="panel" width="640" height="480" aria-label="E-ink panel"></canvas>
         </div>
       </div>

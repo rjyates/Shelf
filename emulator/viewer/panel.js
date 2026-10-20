@@ -1,7 +1,7 @@
 /**
  * E-ink panel simulator. Quantizes to gray levels, delays refreshes,
  * leaves ghosting on partial updates, and clears with a full-refresh flash.
- * Damage modes from the guest (issue 7) will call into this same path.
+ * Guest damage modes (damage.js) call applyPartial / applyFull here.
  */
 
 const DEFAULT_GHOST = 0.42;

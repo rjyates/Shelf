@@ -1,11 +1,14 @@
 /**
- * Browser entry for localhost:8006. Reads the guest through qemux's VNC
- * websocket and paints via Panel (quantize, delay, ghost, full flash).
+ * :8006 is the e-ink panel attached to the guest. Pixels come from the guest
+ * framebuffer over VNC; the Panel applies quantize / delay / ghost / flash.
+ * Click the panel to type into the guest (RFB under the canvas).
  *
- * shortcut: VNC full-frame ingest until issue 7's damage protocol replaces it.
+ * shortcut: VNC full-frame ingest until the shell paints only via damage
+ * (issue 7 modes still live in damage.js; MCP can publish test frames).
  */
 import RFB from "./core/rfb.js";
 import { Panel } from "./panel.js";
+import { MODES, configurePanel } from "./damage.js";
 
 const screen = document.getElementById("screen");
 const canvas = document.getElementById("panel");
@@ -13,6 +16,8 @@ const status = document.getElementById("status");
 const fullBtn = document.getElementById("full");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
+/** Default refresh class for console updates (page-turn / GC16-like). */
+let mode = "quality";
 let panel = null;
 let image = null;
 let lastRgba = null;
@@ -21,7 +26,6 @@ let pending = false;
 let updates = 0;
 let rfb = null;
 
-/** Guest frames between automatic full refreshes (clears ghosting). */
 const FULL_EVERY = 24;
 
 function sleep(ms) {
@@ -41,12 +45,14 @@ function ensurePanel(width, height) {
   panel = new Panel({
     width,
     height,
-    grayLevels: 4,
-    ghost: 0.45,
-    delayMs: 90,
+    grayLevels: MODES.quality.grayLevels,
+    ghost: MODES.quality.ghost,
+    delayMs: MODES.quality.delayMs,
     dither: true,
+    // VGA console is light-on-dark; e-ink ink is dark-on-paper.
     invert: true,
   });
+  configurePanel(panel, mode);
   canvas.width = width;
   canvas.height = height;
   image = ctx.createImageData(width, height);
@@ -83,14 +89,18 @@ async function ingest(forceFull = false) {
     lastRgba = frame.data;
     updates += 1;
 
-    const wantFull = forceFull || updates % FULL_EVERY === 0;
+    configurePanel(panel, forceFull ? "full" : mode);
+    const wantFull = forceFull || mode === "full" || updates % FULL_EVERY === 0;
+
     if (wantFull) {
       await sleep(panel.delayMs);
       await showFlash();
       panel.applyFull(lastRgba, { flash: false });
+      if (mode === "full") mode = "quality";
     } else {
       await panel.partial(lastRgba);
     }
+    status.textContent = `${forceFull || wantFull ? "full" : mode} · click panel to type`;
     paint();
   } catch (err) {
     status.textContent = String(err.message || err);
@@ -104,7 +114,6 @@ async function ingest(forceFull = false) {
 }
 
 function hookFlip() {
-  // noVNC has no public "frame ready" event; wrap the display flip.
   const display = rfb._display;
   const flip = display.flip.bind(display);
   display.flip = function hookedFlip() {
@@ -117,6 +126,19 @@ fullBtn.addEventListener("click", () => {
   void ingest(true);
 });
 
+// Mode shortcuts while developing e-ink refresh classes.
+window.addEventListener("keydown", (event) => {
+  if (event.target !== document.body && event.target !== document.documentElement) {
+    return;
+  }
+  if (event.key === "1") mode = "quality";
+  else if (event.key === "2") mode = "fast";
+  else if (event.key === "3") mode = "full";
+  else return;
+  status.textContent = `mode ${mode}`;
+  void ingest(mode === "full");
+});
+
 status.textContent = "Connecting to the guest…";
 fullBtn.disabled = true;
 
@@ -125,7 +147,7 @@ rfb.scaleViewport = true;
 rfb.focusOnClick = true;
 
 rfb.addEventListener("connect", () => {
-  status.textContent = "Partial updates leave ghosts. Full refresh clears them.";
+  status.textContent = "Guest live · e-ink panel";
   fullBtn.disabled = false;
   hookFlip();
   void ingest(true);
