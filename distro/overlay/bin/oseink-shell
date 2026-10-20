@@ -1,0 +1,16 @@
+#!/bin/sh
+# Stub shell for the emulator reload loop. Reads assets once at start so a
+# change only appears after oseink-devd restarts this process.
+BANNER=/oseink/share/banner
+MSG=oseink-shell
+[ -f "$BANNER" ] && MSG=$(cat "$BANNER")
+
+printf '%s\n' "$MSG" >/run/oseink-shell
+printf 'oseink-shell:%s\n' "$MSG" >/dev/console
+# Visible on the framebuffer console (tty0) without fighting serial getty.
+printf '\033[2J\033[H%s\n' "$MSG" >/dev/tty0 2>/dev/null || true
+
+# Stay alive so kill/restart is the update path.
+while true; do
+	sleep 3600
+done

@@ -1,0 +1,49 @@
+#!/bin/sh
+# Watch the shared overlay and restart the shell when its binary or assets change.
+# Kernel / initramfs changes still need a new image; this only touches userspace.
+WATCH="/oseink/bin /oseink/share"
+SHELL_BIN=/oseink/bin/oseink-shell
+PIDFILE=/run/oseink-shell.pid
+
+fingerprint() {
+	# One digest over every watched file. Empty tree is still a stable value.
+	{
+		find $WATCH -type f 2>/dev/null | sort | while read -r f; do
+			md5sum "$f"
+		done
+	} | md5sum | awk '{print $1}'
+}
+
+start_shell() {
+	[ -x "$SHELL_BIN" ] || return 1
+	"$SHELL_BIN" &
+	echo $! >"$PIDFILE"
+	printf 'oseink-devd:start\n' >/dev/console
+	return 0
+}
+
+stop_shell() {
+	if [ -f "$PIDFILE" ]; then
+		kill "$(cat "$PIDFILE")" 2>/dev/null || true
+		rm -f "$PIDFILE"
+	fi
+	killall oseink-shell 2>/dev/null || true
+}
+
+prev=$(fingerprint)
+start_shell || true
+
+while true; do
+	sleep 1
+	cur=$(fingerprint)
+	if [ "$cur" != "$prev" ]; then
+		prev=$cur
+		stop_shell
+		if start_shell; then
+			printf 'oseink-devd:reload\n' >/dev/console
+		fi
+	elif [ ! -f "$PIDFILE" ] || ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		# Shell missing or exited; start again when the share has a binary.
+		start_shell || true
+	fi
+done

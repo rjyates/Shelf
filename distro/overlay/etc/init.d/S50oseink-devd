@@ -1,0 +1,23 @@
+#!/bin/sh
+# Start the userspace hot-reload daemon after the share and framebuffer are up.
+case "$1" in
+	start)
+		if [ -x /usr/sbin/oseink-devd ]; then
+			/usr/sbin/oseink-devd &
+			echo $! >/run/oseink-devd.pid
+		fi
+		;;
+	stop)
+		if [ -f /run/oseink-devd.pid ]; then
+			kill "$(cat /run/oseink-devd.pid)" 2>/dev/null || true
+			rm -f /run/oseink-devd.pid
+		fi
+		killall oseink-devd 2>/dev/null || true
+		killall oseink-shell 2>/dev/null || true
+		rm -f /run/oseink-shell.pid /run/oseink-shell
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac

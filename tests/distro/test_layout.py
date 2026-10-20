@@ -13,6 +13,13 @@ def test_external_tree_shape():
     assert (DISTRO / "overlay" / "etc" / "init.d" / "S40framebuffer").is_file()
     share = DISTRO / "overlay" / "etc" / "init.d" / "S30share"
     assert share.is_file() and share.stat().st_mode & 0o111
+    devd_init = DISTRO / "overlay" / "etc" / "init.d" / "S50oseink-devd"
+    assert devd_init.is_file() and devd_init.stat().st_mode & 0o111
+    devd = DISTRO / "overlay" / "usr" / "sbin" / "oseink-devd"
+    assert devd.is_file() and devd.stat().st_mode & 0o111
+    shell = DISTRO / "overlay" / "bin" / "oseink-shell"
+    assert shell.is_file() and shell.stat().st_mode & 0o111
+    assert (DISTRO / "overlay" / "share" / "banner").is_file()
 
 
 def test_defconfig_targets_framebuffer_console():
@@ -70,3 +77,16 @@ def test_share_init_prefers_virtiofs_then_9p():
     assert "TAG=shared" in text
     assert "MNT=/oseink" in text
     assert "oseink-share:fail" in text
+
+
+def test_devd_watches_share_and_restarts_shell():
+    text = (DISTRO / "overlay" / "usr" / "sbin" / "oseink-devd").read_text(
+        encoding="utf-8"
+    )
+    assert "/oseink/bin" in text
+    assert "/oseink/share" in text
+    assert "/oseink/bin/oseink-shell" in text
+    assert "oseink-devd:reload" in text
+    shell = (DISTRO / "overlay" / "bin" / "oseink-shell").read_text(encoding="utf-8")
+    assert "/oseink/share/banner" in shell
+    assert "/run/oseink-shell" in shell
