@@ -1,0 +1,9 @@
+{
+  "color": "gray",
+  "gray_levels": 16,
+  "input": "buttons",
+  "frontlight": "no",
+  "width": 400,
+  "height": 300,
+  "dpi": 300
+}

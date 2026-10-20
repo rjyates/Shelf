@@ -1,7 +1,16 @@
 #!/bin/sh
-# Stub shell for the emulator reload loop. Draws on the guest framebuffer
-# (tty0); the browser panel at :8006 shows that through VNC + e-ink simulation.
+# Stub shell for the emulator reload loop. Reads the capability profile, then
+# draws on the guest framebuffer (tty0). The browser panel at :8006 shows that
+# through VNC + e-ink simulation.
 # Real damage protocol (quality/fast/full) lands when the shell paints for real.
+PROFILE=/oseink/run/profile.json
+if ! line=$(/oseink/bin/oseink-profile "$PROFILE"); then
+	printf 'oseink-shell:profile\n' >/dev/console
+	exit 1
+fi
+printf '%s\n' "$line" >/run/oseink-profile
+printf 'oseink-profile:%s\n' "$line" >/dev/console
+
 BANNER=/oseink/share/banner
 MSG=oseink-shell
 [ -f "$BANNER" ] && MSG=$(cat "$BANNER")

@@ -101,7 +101,7 @@ Rules:
 - `kaleido` and `full` use different color paths. Kaleido is a filter overlay. Full color is a color particle panel. The shell treats them as different profile values.
 - Stylus present: store ink as vector strokes on that book and sync them as annotations. Stylus absent: hide ink tools. Touch can still create a highlight from a selection. Buttons can set a bookmark.
 - Frontlight absent: hide the light control.
-- The emulator's panel simulator must accept this same profile so a gray button-only device and a color touch-and-stylus device can both be tested before hardware exists. The viewer at `:8006` is where that profile is chosen. The guest reads the published profile at session start, the same way a device reads the boot probe. Changing it in the viewer restarts the session. Compose does not set the profile.
+- The emulator's panel simulator must accept this same profile so a gray button-only device and a color touch-and-stylus device can both be tested before hardware exists. The viewer at `:8006` is where that profile is chosen. The published file is `/oseink/run/profile.json` (on the emulator, `distro/overlay/run/profile.json`). The guest reads that file at session start, the same way a device reads the boot probe. Changing it in the viewer restarts the session. Compose does not set the profile.
 
 ## Phases
 

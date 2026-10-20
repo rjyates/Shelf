@@ -14,7 +14,7 @@ case "$1" in
 		fi
 		killall oseink-devd 2>/dev/null || true
 		killall oseink-shell 2>/dev/null || true
-		rm -f /run/oseink-shell.pid /run/oseink-shell
+		rm -f /run/oseink-shell.pid /run/oseink-shell /run/oseink-profile
 		;;
 	*)
 		echo "Usage: $0 {start|stop}"
