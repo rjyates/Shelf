@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/rjyates/oseink/compare/v1.2.0...v1.3.0) (2026-10-20)
+
+
+### Features
+
+* **emulator:** boot the Buildroot guest from compose ([30f9812](https://github.com/rjyates/oseink/commit/30f9812e5ace294df2c19e5e0ce87a3999206662))
+
 # [1.2.0](https://github.com/rjyates/oseink/compare/v1.1.0...v1.2.0) (2026-10-20)
 
 
