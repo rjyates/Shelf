@@ -1,3 +1,11 @@
+# [1.1.0](https://github.com/rjyates/oseink/compare/v1.0.0...v1.1.0) (2026-10-20)
+
+
+### Features
+
+* adds tests ([efd9aef](https://github.com/rjyates/oseink/commit/efd9aef8585cc16a4aa6ce75faac5714fb06fc5e))
+* **emulator:** boot a VM in the browser ([a60ff79](https://github.com/rjyates/oseink/commit/a60ff796d6ce6945a7d8cc7fa37f37b155aeeb82))
+
 # 1.0.0 (2026-10-19)
 
 
