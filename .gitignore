@@ -9,5 +9,6 @@ node_modules/
 distro/overlay/.oseink-share-probe
 distro/overlay/run/*
 !distro/overlay/run/.gitkeep
+!distro/overlay/run/profile.json
 tools/emulator-mcp/node_modules/
 

@@ -16,7 +16,7 @@ Open [http://127.0.0.1:8006](http://127.0.0.1:8006). Click the panel to focus th
 
 `./distro/build.sh` writes images under `.build/oseink/images/` (needed before the first compose, and again for a kernel or initramfs change). `./distro/run.sh` boots the same image on the host. Compose and `run.sh` share `distro/overlay/` into the guest at `/oseink`.
 
-The userspace shell and assets under `distro/overlay/` reload while the VM stays up.
+The userspace shell and assets under `distro/overlay/` reload while the VM stays up. `distro/overlay/run/profile.json` is the capability profile the guest reads at `/oseink/run/profile.json` when the shell starts.
 
 ## How the panel gets pixels
 
