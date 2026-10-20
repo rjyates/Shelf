@@ -23,7 +23,7 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           COMMIT_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
-        run: scripts/check-semantic.sh
+        run: python3 scripts/check_semantic.py
 
       - name: Check push
         if: github.event_name == 'push'
@@ -46,9 +46,9 @@ jobs:
                 echo "::error::Merge commit has no associated PR title to validate."
                 exit 1
               fi
-              PR_TITLE="$title" scripts/check-semantic.sh
+              PR_TITLE="$title" python3 scripts/check_semantic.py
               ;;
             *)
-              scripts/check-semantic.sh
+              python3 scripts/check_semantic.py
               ;;
           esac

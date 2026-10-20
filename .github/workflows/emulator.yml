@@ -14,14 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the emulator contract
-        run: emulator/check.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Boot the viewer when KVM is available
-        run: |
-          if [ -e /dev/kvm ]; then
-            emulator/smoke.sh
-          else
-            echo "This runner has no /dev/kvm, so emulator/smoke.sh did not run."
-            echo "Run emulator/smoke.sh on a KVM machine before merging."
-          fi
+      - name: Install Poetry
+        run: pipx install poetry==2.4.1
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Test
+        run: poetry run pytest

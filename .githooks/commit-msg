@@ -1,4 +1,4 @@
 #!/bin/sh
 # Conventional Commits check. Git runs this when core.hooksPath is .githooks.
 root=$(git rev-parse --show-toplevel)
-exec "$root/scripts/check-semantic.sh" --file "$1"
+exec python3 "$root/scripts/check_semantic.py" --file "$1"
