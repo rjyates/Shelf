@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/rjyates/oseink/compare/v1.1.0...v1.2.0) (2026-10-20)
+
+
+### Features
+
+* **distro:** build x86_64 guest that boots to a framebuffer ([663f085](https://github.com/rjyates/oseink/commit/663f085c7b21c4a1780f600d00ee21e1af615f4e))
+
 # [1.1.0](https://github.com/rjyates/oseink/compare/v1.0.0...v1.1.0) (2026-10-20)
 
 
