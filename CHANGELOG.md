@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/rjyates/oseink/compare/v1.4.0...v1.5.0) (2026-10-20)
+
+
+### Features
+
+* **distro:** hot-reload the shell via oseink-devd ([d3d69e8](https://github.com/rjyates/oseink/commit/d3d69e8aa3a881e8429cf0749ce622cb969f2628))
+
 # [1.4.0](https://github.com/rjyates/oseink/compare/v1.3.0...v1.4.0) (2026-10-20)
 
 
