@@ -25,7 +25,8 @@ def _viewer_up():
             body = response.read().decode("utf-8", "replace")
     except OSError:
         return False
-    return "<title>noVNC</title>" in body
+    # Boot status page first, then the e-ink viewer (replaced noVNC landing).
+    return "<title>oseink panel</title>" in body or "Connecting" in body or "spinner" in body
 
 
 def _container_id(emulator_dir, project):

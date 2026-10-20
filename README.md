@@ -13,7 +13,7 @@ Read [AGENTS.md](AGENTS.md) before changing the repo. Claude Code gets there thr
 ./distro/run.sh
 ```
 
-`build.sh` fetches Buildroot and builds the x86_64 kernel plus rootfs under `.build/`. `run.sh` boots that image with host QEMU outside Docker and shares `distro/overlay/` into the guest at `/oseink`. From `emulator/`, `docker compose up` boots the same images in the browser (no ISO download) with the same overlay share. Guest `oseink-devd` restarts the stub shell when you edit `/oseink/bin/oseink-shell` or files under `/oseink/share/` on the host; the VM stays up. A kernel or initramfs change still needs a new build.
+`build.sh` fetches Buildroot and builds the x86_64 kernel plus rootfs under `.build/`. `run.sh` boots that image with host QEMU outside Docker and shares `distro/overlay/` into the guest at `/oseink`. From `emulator/`, `docker compose up` boots the same images in the browser (no ISO download) with the same overlay share. Open [http://127.0.0.1:8006](http://127.0.0.1:8006) for the e-ink panel view (ghosting on updates, full refresh clears it). Guest `oseink-devd` restarts the stub shell when you edit `/oseink/bin/oseink-shell` or files under `/oseink/share/` on the host; the VM stays up. A kernel or initramfs change still needs a new build.
 
 ## Tests
 

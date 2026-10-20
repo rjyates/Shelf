@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>oseink panel</title>
+    <link rel="stylesheet" href="viewer.css" />
+  </head>
+  <body>
+    <main class="stage">
+      <h1>oseink</h1>
+      <p id="status" class="hint" aria-live="polite">Connecting to the guest…</p>
+      <div class="bezel">
+        <div class="stack">
+          <!-- RFB target first (under). E-ink canvas on top with pointer-events: none. -->
+          <div id="screen" aria-hidden="true"></div>
+          <canvas id="panel" width="640" height="480" aria-label="E-ink panel"></canvas>
+        </div>
+      </div>
+      <div class="controls">
+        <button type="button" id="full">Full refresh</button>
+      </div>
+    </main>
+    <script type="module" src="boot.js"></script>
+  </body>
+</html>
