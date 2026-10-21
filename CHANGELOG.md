@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/rjyates/oseink/compare/v1.11.0...v1.12.0) (2026-10-21)
+
+
+### Features
+
+* **distro:** start Weston as the desktop session ([d6deea4](https://github.com/rjyates/oseink/commit/d6deea44ab4ab4f0f9d4f5376bcf4e93e6486173))
+
 # [1.11.0](https://github.com/rjyates/oseink/compare/v1.10.0...v1.11.0) (2026-10-21)
 
 
