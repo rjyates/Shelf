@@ -4,3 +4,5 @@ FROM qemux/qemu:7.50@sha256:e7f6fda52503a546fd649670ba46e4bc23dc6dcef275bc3fac48
 # @vnc → /usr/share/novnc/vnc.html. Put the e-ink viewer there.
 COPY viewer/index.html /usr/share/novnc/vnc.html
 COPY viewer/boot.js viewer/panel.js viewer/damage.js viewer/viewer.css /usr/share/novnc/
+COPY viewer/profile-choices.json viewer/profile-writer.py viewer/profile-location.conf /usr/share/novnc/
+COPY viewer/start.sh /run/start.sh

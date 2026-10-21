@@ -4,7 +4,7 @@ MCP server so **any** AI agent can see and drive the e-ink panel on the Docker e
 
 When debugging the panel or guest, call `panel_screenshot` before guessing from logs.
 
-Live tools need the qemu container (`emulator_up` or `docker compose up` from `emulator/`). They talk to Docker / `:8006` only — no host overlay bypass.
+Live tools need the qemu container (`emulator_up`, or `docker compose -p oseink up -d --build --force-recreate` from `emulator/`). They talk to Docker / `:8006` only — no host overlay bypass.
 
 ## Host setup
 

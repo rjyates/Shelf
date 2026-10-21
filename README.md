@@ -9,10 +9,16 @@ Docs: [docs/product.md](docs/product.md) · [docs/emulator.md](docs/emulator.md)
 Needs [Docker](https://docs.docker.com/get-docker/) and KVM (`/dev/kvm`).
 
 ```
-cd emulator && docker compose up
+cd emulator && docker compose -p oseink up -d --build --force-recreate
 ```
 
-Panel: [http://127.0.0.1:8006](http://127.0.0.1:8006)
+Stop it with:
+
+```
+cd emulator && docker compose -p oseink down
+```
+
+`-p oseink` is the Compose project the emulator MCP uses. Panel: [http://127.0.0.1:8006](http://127.0.0.1:8006)
 
 The userspace shell and assets under `distro/overlay/` reload while the VM stays up. A kernel or initramfs change boots a new image (`./distro/build.sh`, then compose again).
 

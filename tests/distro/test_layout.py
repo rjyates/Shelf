@@ -85,6 +85,7 @@ def test_devd_watches_share_and_restarts_shell():
     )
     assert "/oseink/bin" in text
     assert "/oseink/share" in text
+    assert "/oseink/run/profile.json" in text
     assert "/oseink/bin/oseink-shell" in text
     assert "oseink-devd:reload" in text
     shell = (DISTRO / "overlay" / "bin" / "oseink-shell").read_text(encoding="utf-8")

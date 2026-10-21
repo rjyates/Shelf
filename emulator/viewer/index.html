@@ -20,6 +20,18 @@
       <div class="controls">
         <button type="button" id="full">Full refresh</button>
       </div>
+      <div class="controls" role="group" aria-labelledby="color-label">
+        <span class="controls-label" id="color-label">Color</span>
+        <button type="button" data-color="bw" aria-pressed="false">Black and white</button>
+        <button type="button" data-color="color" aria-pressed="false">Color</button>
+      </div>
+      <div class="controls" role="group" aria-labelledby="input-label">
+        <span class="controls-label" id="input-label">Interaction</span>
+        <button type="button" data-input="buttons" aria-pressed="false">Button</button>
+        <button type="button" data-input="touch" aria-pressed="false">Touch</button>
+        <button type="button" data-input="stylus" aria-pressed="false">Stylus</button>
+        <span id="profile-note" class="controls-label" aria-live="polite"></span>
+      </div>
     </main>
     <script type="module" src="boot.js"></script>
   </body>

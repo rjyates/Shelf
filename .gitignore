@@ -7,6 +7,7 @@ node_modules/
 .tmp-oseink-*.png
 .tmp-oseink-*.ppm
 distro/overlay/.oseink-share-probe
+distro/overlay/share/profile.stamp
 distro/overlay/run/*
 !distro/overlay/run/.gitkeep
 !distro/overlay/run/profile.json
