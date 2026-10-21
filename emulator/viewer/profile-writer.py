@@ -3,6 +3,8 @@
 
 import json
 import os
+import re
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -10,9 +12,12 @@ CHOICES = Path(os.environ.get("OSEINK_PROFILE_CHOICES", "/usr/share/novnc/profil
 DEST = Path(os.environ.get("OSEINK_PROFILE_DEST", "/shared/run/profile.json"))
 # shortcut: booted devd hashes share content, drop the stamp once that image hashes profile.json
 STAMP = Path(os.environ.get("OSEINK_PROFILE_STAMP", "/shared/share/profile.stamp"))
+INPUT = Path(os.environ.get("OSEINK_INPUT_DIR", "/shared/run/input"))
 HOST = os.environ.get("OSEINK_PROFILE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OSEINK_PROFILE_PORT", "8765"))
 MAX_EDGE = 4096
+INPUT_LINE = re.compile(r"^(k [0-9]+ [01]|t [0-9]+ [0-9]+ [01]|s [0-9]+ [0-9]+ [01] [0-9]+)$")
+_input_lock = threading.Lock()
 
 
 def canonical(doc):
@@ -61,6 +66,36 @@ def apply_selection(doc, body, choices):
     return updated
 
 
+def enqueue(line):
+    line = line.strip()
+    if not INPUT_LINE.match(line):
+        raise ValueError
+    parts = line.split()
+    nums = [int(part) for part in parts[1:]]
+    if any(num > 65535 for num in nums):
+        raise ValueError
+    if parts[0] == "k" and (nums[0] < 1 or nums[0] > 57):
+        raise ValueError
+    if parts[0] == "s" and nums[3] > 4095:
+        raise ValueError
+    with _input_lock:
+        INPUT.mkdir(parents=True, exist_ok=True)
+        os.chmod(INPUT, 0o777)
+        seq_path = INPUT / "seq"
+        try:
+            nxt = int(seq_path.read_text(encoding="utf-8") or "0")
+        except (OSError, ValueError):
+            nxt = 0
+        nxt += 1
+        dest = INPUT / f"{nxt:08d}"
+        tmp = INPUT / f".{nxt:08d}.tmp"
+        tmp.write_text(line + "\n", encoding="utf-8")
+        tmp.chmod(0o666)
+        tmp.replace(dest)
+        seq_path.write_text(f"{nxt}\n", encoding="utf-8")
+        seq_path.chmod(0o666)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -76,6 +111,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, data, "application/json")
 
     def do_POST(self):
+        if self.path == "/input":
+            self._post_input()
+            return
         if self.path != "/profile":
             self._send(404, b"")
             return
@@ -103,6 +141,22 @@ class Handler(BaseHTTPRequestHandler):
         STAMP.write_text(text, encoding="utf-8")
         STAMP.chmod(0o666)
         self._send(200, b'{"ok":true}\n', "application/json")
+
+    def _post_input(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send(400, b"")
+            return
+        if length < 1 or length > 64:
+            self._send(400, b"")
+            return
+        try:
+            enqueue(self.rfile.read(length).decode("utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            self._send(400, b"")
+            return
+        self._send(204, b"")
 
     def _send(self, code, data, content_type="text/plain"):
         self.send_response(code)
