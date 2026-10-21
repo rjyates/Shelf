@@ -24,6 +24,8 @@ def test_emulator_mcp_layout_and_hosts():
     server = (MCP / "server.mjs").read_text(encoding="utf-8")
     for tool in (
         "panel_screenshot",
+        "display_screenshot",
+        "console_read",
         "guest_type",
         "viewer_full_refresh",
         "emulator_up",
@@ -36,6 +38,8 @@ def test_emulator_mcp_layout_and_hosts():
 
     docs = (ROOT / "docs" / "emulator-mcp.md").read_text(encoding="utf-8")
     assert "panel_screenshot" in docs
+    assert "display_screenshot" in docs
+    assert "console_read" in docs
     assert "Claude Code" in docs
     assert "run.sh" in docs
 

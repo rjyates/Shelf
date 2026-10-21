@@ -9,6 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { MODES } from "../../emulator/viewer/damage.js";
+import { captureVga, readSerial } from "./lib/console.mjs";
 import {
   composeDown,
   composeLogs,
@@ -46,7 +47,7 @@ function imageResult(summary, png) {
 
 const server = new McpServer({
   name: "oseink-emulator",
-  version: "0.3.0",
+  version: "0.4.0",
 });
 
 server.tool(
@@ -149,8 +150,58 @@ server.tool(
 );
 
 server.tool(
+  "display_screenshot",
+  "PNG of the live QEMU VGA display (virtio-vga), plus tty0 text decoded from that framebuffer. This is the guest console. The :8006 e-ink page covers it, so panel_screenshot does not show it. Call this whenever you need to see the display.",
+  {},
+  async () => {
+    try {
+      const vga = await captureVga();
+      const summary = `vga ${vga.width}x${vga.height}\n${vga.text || "(blank)"}`;
+      return imageResult(summary, vga.png);
+    } catch (err) {
+      return errorText(`display_screenshot failed: ${err.message || err}`);
+    }
+  },
+);
+
+server.tool(
+  "console_read",
+  "Text of the guest consoles. vga is tty0 (the framebuffer console). ttyS0 is the serial port. Default returns both. Use display_screenshot when you need the pixels.",
+  {
+    which: z
+      .enum(["all", "vga", "ttyS0"])
+      .optional()
+      .describe("Which console. Default all."),
+    tail: z
+      .number()
+      .int()
+      .min(10)
+      .max(500)
+      .optional()
+      .describe("Serial log lines to keep. Default 200."),
+  },
+  async ({ which, tail }) => {
+    try {
+      const want = which || "all";
+      const parts = [];
+      if (want === "all" || want === "vga") {
+        const vga = await captureVga();
+        parts.push(`tty0 ${vga.width}x${vga.height}\n${vga.text || "(blank)"}`);
+      }
+      if (want === "all" || want === "ttyS0") {
+        const serial = await readSerial(tail ?? 200);
+        parts.push(`ttyS0\n${serial || "(empty)"}`);
+      }
+      return text(parts.join("\n---\n"));
+    } catch (err) {
+      return errorText(`console_read failed: ${err.message || err}`);
+    }
+  },
+);
+
+server.tool(
   "guest_type",
-  "Click the e-ink viewer and type into the guest (VNC). Returns a screenshot after typing.",
+  "Click the e-ink viewer and type into the guest VGA console (VNC). Returns the e-ink screenshot. Read what was typed with display_screenshot or console_read.",
   {
     text: z.string().min(1).describe("Keys to type into the guest console"),
     submit: z.boolean().optional().describe("Press Enter after typing"),

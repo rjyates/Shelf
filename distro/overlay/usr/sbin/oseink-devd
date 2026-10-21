@@ -1,7 +1,7 @@
 #!/bin/sh
 # Watch the shared overlay and restart the shell when its binary, assets,
 # capability profile, or boot target change. Kernel / initramfs changes still
-# need a new image. The devd in the current image watches bin and share only.
+# need a new image.
 WATCH="/oseink/bin /oseink/share"
 PROFILE=/oseink/run/profile.json
 BOOT=/oseink/run/boot-target

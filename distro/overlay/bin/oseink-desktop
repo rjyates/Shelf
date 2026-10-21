@@ -1,5 +1,5 @@
 #!/bin/sh
-# Desktop presenter stub. One gray8 frame, then wait until the boot target changes.
+# Desktop presenter. Weston headless plus weston-terminal. No damage frame.
 PROFILE=/oseink/run/profile.json
 if ! line=$(/oseink/bin/oseink-profile "$PROFILE"); then
 	printf 'oseink-desktop:profile\n' >/dev/console
@@ -19,13 +19,92 @@ printf '%s\n' desktop >/run/oseink-session
 
 # color levels input light width height dpi
 set -- $line
-if ! /oseink/bin/oseink-damage "$5" "$6" /oseink/run /oseink/share/demo/menu.gray fast; then
-	printf 'oseink-desktop:damage\n' >/dev/console
+width=$5
+height=$6
+
+RUNTIME=/run/oseink-weston
+mkdir -p "$RUNTIME"
+chmod 700 "$RUNTIME"
+export XDG_RUNTIME_DIR=$RUNTIME
+
+weston_pid=
+seatd_pid=
+
+stop_one() {
+	pid=$1
+	[ -n "$pid" ] || return 0
+	kill "$pid" 2>/dev/null || true
+	i=0
+	while kill -0 "$pid" 2>/dev/null; do
+		i=$((i + 1))
+		if [ "$i" -gt 5 ]; then
+			kill -9 "$pid" 2>/dev/null || true
+			break
+		fi
+		sleep 1
+	done
+}
+
+stop_children() {
+	stop_one "$weston_pid"
+	weston_pid=
+	stop_one "$seatd_pid"
+	seatd_pid=
+	rm -f /run/oseink-desktop.status
+}
+
+trap 'stop_children; exit 0' INT TERM
+trap stop_children EXIT
+
+fail() {
+	printf 'oseink-desktop:%s\n' "$1" >/dev/console
+	cat /run/oseink-seatd.log /run/oseink-weston.log >/dev/console 2>/dev/null || true
 	exit 1
-fi
-printf 'oseink-damage:ok\n' >/dev/console
+}
+
+/usr/bin/seatd >/run/oseink-seatd.log 2>&1 &
+seatd_pid=$!
+i=0
+while [ ! -S /run/seatd.sock ]; do
+	kill -0 "$seatd_pid" 2>/dev/null || fail seatd
+	i=$((i + 1))
+	[ "$i" -le 20 ] || fail seatd
+	sleep 1
+done
+
+/usr/bin/weston \
+	--config=/oseink/etc/weston.ini \
+	--socket=wayland-0 \
+	--backend=headless \
+	--renderer=pixman \
+	--shell=desktop \
+	--idle-time=0 \
+	--width="$width" \
+	--height="$height" \
+	>/run/oseink-weston.log 2>&1 &
+weston_pid=$!
+
+i=0
+while [ ! -S "$RUNTIME/wayland-0" ]; do
+	kill -0 "$weston_pid" 2>/dev/null || fail weston
+	i=$((i + 1))
+	[ "$i" -le 20 ] || fail weston
+	sleep 1
+done
+
+i=0
+while ! pidof weston-terminal >/dev/null 2>&1; do
+	kill -0 "$weston_pid" 2>/dev/null || fail weston
+	i=$((i + 1))
+	[ "$i" -le 20 ] || fail terminal
+	sleep 1
+done
+
+printf 'weston %s %s\n' "$width" "$height" >/run/oseink-desktop.status
+printf 'oseink-desktop:weston %s %s\n' "$width" "$height" >/dev/console
 
 while true; do
 	sleep 1
+	kill -0 "$weston_pid" 2>/dev/null || fail weston
 	[ "$(/oseink/etc/init.d/S60oseink-session target)" = desktop ] || exit 0
 done

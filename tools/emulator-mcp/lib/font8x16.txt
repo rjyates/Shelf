@@ -1,0 +1,2 @@
+font8x16.bin is the glyph data from Linux lib/fonts/font_8x16.c
+(SPDX-License-Identifier: GPL-2.0). 256 glyphs, 16 bytes each, high bit on the left.

@@ -37,6 +37,38 @@ def test_defconfig_targets_framebuffer_console():
     assert "linux.config" in text
 
 
+def test_defconfig_builds_headless_weston_without_gl_or_x():
+    text = (DISTRO / "configs" / "oseink_x86_64_defconfig").read_text(encoding="utf-8")
+    assert "BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y" in text
+    assert "BR2_PACKAGE_SEATD=y" in text
+    assert "BR2_PACKAGE_SEATD_DAEMON=y" in text
+    assert "BR2_PACKAGE_LIBINPUT=y" in text
+    assert "BR2_PACKAGE_WESTON=y" in text
+    assert "BR2_PACKAGE_WESTON_DEFAULT_HEADLESS=y" in text
+    assert "BR2_PACKAGE_WESTON_HEADLESS=y" in text
+    assert "BR2_PACKAGE_WESTON_SHELL_DESKTOP=y" in text
+    assert "# BR2_PACKAGE_WESTON_SHELL_FULLSCREEN is not set" in text
+    assert "# BR2_PACKAGE_WESTON_SHELL_IVI is not set" in text
+    assert "# BR2_PACKAGE_WESTON_SHELL_KIOSK is not set" in text
+    assert "# BR2_PACKAGE_WESTON_SCREENSHARE is not set" in text
+    assert 'BR2_TARGET_ROOTFS_EXT2_SIZE="128M"' in text
+    for forbidden in (
+        "BR2_PACKAGE_WESTON_DRM=y",
+        "BR2_PACKAGE_WESTON_X11=y",
+        "BR2_PACKAGE_WESTON_XWAYLAND=y",
+        "BR2_PACKAGE_WESTON_DEMO_CLIENTS=y",
+        "BR2_PACKAGE_XORG7=y",
+        "BR2_INIT_SYSTEMD=y",
+        "BR2_TOOLCHAIN_BUILDROOT_MUSL=y",
+        'BR2_TARGET_ROOTFS_EXT2_SIZE="64M"',
+    ):
+        assert forbidden not in text
+    script = (DISTRO / "board" / "oseink" / "x86_64" / "post-build.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "S70seatd" in script
+
+
 def test_kernel_config_enables_fb():
     text = (DISTRO / "board" / "oseink" / "x86_64" / "linux.config").read_text(
         encoding="utf-8"

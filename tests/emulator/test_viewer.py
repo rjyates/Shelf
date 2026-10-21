@@ -148,10 +148,10 @@ def test_shell_publishes_damage_and_keeps_the_console():
     assert "/oseink/bin/oseink-damage" in text
     desktop = (ROOT / "distro" / "overlay" / "bin" / "oseink-desktop").read_text(encoding="utf-8")
     assert "/dev/tty0" in desktop
-    assert "menu.gray" in desktop
-    assert "fast" in desktop
+    assert "menu.gray" not in desktop
+    assert "oseink-damage" not in desktop
     assert "damage.json" not in desktop
-    assert "/oseink/bin/oseink-damage" in desktop
+    assert "/usr/bin/weston" in desktop
     writer = (ROOT / "distro" / "overlay" / "bin" / "oseink-damage").read_text(encoding="utf-8")
     assert "damage.json" in writer
     assert "frame.gray" in writer
