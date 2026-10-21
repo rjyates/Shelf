@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/rjyates/oseink/compare/v1.8.0...v1.9.0) (2026-10-21)
+
+
+### Features
+
+* **emulator:** select the capability profile in the viewer ([28e187a](https://github.com/rjyates/oseink/commit/28e187a3a6d74e6477309c8178e591d4103fb541))
+
 # [1.8.0](https://github.com/rjyates/oseink/compare/v1.7.0...v1.8.0) (2026-10-20)
 
 
