@@ -8,15 +8,28 @@
  #include <stdbool.h>
  
  #include <libweston/libweston.h>
-@@ -48,6 +49,7 @@
+@@ -48,6 +49,10 @@
  #include "shared/cairo-util.h"
  #include "shared/xalloc.h"
  #include "shared/timespec-util.h"
 +#include "oseink-refresh.h"
++#include "libinput-seat.h"
++#include "launcher-util.h"
++#include <libudev.h>
  #include "linux-dmabuf.h"
  #include "output-capture.h"
  #include "presentation-time-server-protocol.h"
-@@ -82,6 +84,7 @@
+@@ -60,6 +65,9 @@
+ 	struct weston_compositor *compositor;
+ 
+ 	struct weston_seat fake_seat;
++	struct udev *udev;
++	struct udev_input input;
++	bool input_ready;
+ 
+ 	bool decorate;
+ 	struct theme *theme;
+@@ -82,6 +90,7 @@
  	struct weston_mode mode;
  	struct wl_event_source *finish_frame_timer;
  	struct weston_renderbuffer *renderbuffer;
@@ -24,7 +37,7 @@
  
  	struct frame *frame;
  	struct {
-@@ -156,6 +159,73 @@
+@@ -156,6 +165,73 @@
  }
  
  static int
@@ -98,7 +111,7 @@
  headless_output_repaint(struct weston_output *output_base)
  {
  	struct headless_output *output = to_headless_output(output_base);
-@@ -176,9 +246,13 @@
+@@ -176,9 +252,13 @@
  	ec->renderer->repaint_output(&output->base, &damage,
  				     output->renderbuffer);
  
@@ -113,7 +126,7 @@
  	wl_event_source_timer_update(output->finish_frame_timer, delay_msec);
  
  	return 0;
-@@ -225,6 +299,7 @@
+@@ -225,6 +305,7 @@
  
  	b = output->backend;
  
@@ -121,7 +134,7 @@
  	wl_event_source_remove(output->finish_frame_timer);
  
  	switch (b->compositor->renderer->type) {
-@@ -369,6 +444,11 @@
+@@ -369,6 +450,11 @@
  		return -1;
  	}
  
@@ -133,7 +146,7 @@
  	switch (b->compositor->renderer->type) {
  	case WESTON_RENDERER_GL:
  		ret = headless_output_enable_gl(output);
-@@ -383,6 +463,7 @@
+@@ -383,6 +469,7 @@
  	}
  
  	if (ret < 0) {
@@ -141,13 +154,66 @@
  		wl_event_source_remove(output->finish_frame_timer);
  		return -1;
  	}
+@@ -528,6 +615,15 @@
+ 	if (b->theme)
+ 		theme_destroy(b->theme);
+ 
++	if (b->input_ready)
++		udev_input_destroy(&b->input);
++	if (b->udev)
++		udev_unref(b->udev);
++	if (ec->launcher) {
++		weston_launcher_destroy(ec->launcher);
++		ec->launcher = NULL;
++	}
++
+ 	free(b->formats);
+ 	free(b);
+ 
+@@ -641,6 +737,20 @@
+ 		goto err_input;
+ 	}
+ 
++	/* The qemu tablet and keyboard are already on seat0. seatd opened them. */
++	compositor->launcher = weston_launcher_connect(compositor, "seat0", false);
++	if (!compositor->launcher) {
++		weston_log("oseink: seat launcher failed\n");
++	} else {
++		b->udev = udev_new();
++		if (!b->udev ||
++		    udev_input_init(&b->input, compositor, b->udev, "seat0", NULL) < 0) {
++			weston_log("oseink: input seat failed\n");
++		} else {
++			b->input_ready = true;
++		}
++	}
++
+ 	return b;
+ 
+ err_input:
 --- a/libweston/backend-headless/meson.build
 +++ b/libweston/backend-headless/meson.build
-@@ -6,6 +6,7 @@
+@@ -6,7 +6,13 @@
  
  srcs_headless = [
  	'headless.c',
 +	'oseink-refresh.c',
++	'../libinput-device.c',
++	'../libinput-seat.c',
++	'../launcher-libseat.c',
++	'../launcher-util.c',
  	presentation_time_server_protocol_h,
++	tablet_unstable_v2_server_protocol_h,
  ]
  plugin_headless = shared_library(
+ 	'headless-backend',
+@@ -18,6 +24,9 @@
+ 		dep_libdrm_headers,
+ 		dep_lib_cairo_shared,
+ 		dep_lib_gl_borders,
++		dep_libinput,
++		dependency('libudev', version: '>= 136'),
++		dependency('libseat', version: '>= 0.4'),
+ 	],
+ 	name_prefix: '',
+ 	install: true,

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fill the panel. A floating terminal is clipped on a 400x300 output, and there
+# is no pointer yet to drag it back.
+exec /usr/bin/weston-terminal --fullscreen

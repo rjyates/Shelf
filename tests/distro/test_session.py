@@ -104,7 +104,9 @@ def test_reader_stays_damage_client_and_desktop_starts_weston():
     assert "close-animation=none" in ini
     assert "focus-animation=none" in ini
     assert "require-input=false" in ini
-    assert "path=/usr/bin/weston-terminal" in ini
+    assert "path=/oseink/bin/oseink-terminal" in ini
+    terminal = (OVERLAY / "bin" / "oseink-terminal").read_text(encoding="utf-8")
+    assert "weston-terminal --fullscreen" in terminal
     shell = (OVERLAY / "bin" / "oseink-shell").read_text(encoding="utf-8")
     assert "S60oseink-session foreground" in shell
 

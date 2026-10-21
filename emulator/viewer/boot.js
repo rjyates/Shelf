@@ -31,9 +31,26 @@ function websockifyUrl() {
   return `${protocol}//${window.location.host}${path}/websockify`;
 }
 
-function ensurePanel(width, height) {
-  if (panel && panel.width === width && panel.height === height) {
+function fitStack(width, height) {
+  const stage = document.querySelector(".stage");
+  if (!stage || !(width > 0) || !(height > 0)) return;
+  const nextW = String(width);
+  const nextH = String(height);
+  if (
+    stage.style.getPropertyValue("--panel-w") === nextW &&
+    stage.style.getPropertyValue("--panel-h") === nextH
+  ) {
     return;
+  }
+  stage.style.setProperty("--panel-w", nextW);
+  stage.style.setProperty("--panel-h", nextH);
+  window.dispatchEvent(new Event("resize"));
+}
+
+function ensurePanel(width, height) {
+  fitStack(width, height);
+  if (panel && panel.width === width && panel.height === height) {
+    return false;
   }
   panel = new Panel({
     width,
@@ -45,6 +62,7 @@ function ensurePanel(width, height) {
   canvas.width = width;
   canvas.height = height;
   image = ctx.createImageData(width, height);
+  return true;
 }
 
 function paint() {
@@ -54,11 +72,15 @@ function paint() {
 }
 
 async function present(msg, pixels) {
-  ensurePanel(msg.panel_w, msg.panel_h);
+  const fresh = ensurePanel(msg.panel_w, msg.panel_h);
   paint();
-  const use = modeOverride ? { ...msg, mode: modeOverride } : msg;
+  let use = modeOverride ? { ...msg, mode: modeOverride } : { ...msg };
+  // The latest message may be a clock-bar rect. The gray buffer is the whole desktop.
+  if (fresh && use.mode !== "full") {
+    use = { ...use, x: 0, y: 0, w: use.panel_w, h: use.panel_h };
+  }
   await applyDamage(panel, use, pixels);
-  status.textContent = `${use.mode} · click panel to type`;
+  status.textContent = `${use.mode} · ${use.panel_w}×${use.panel_h} · click panel to type`;
   paint();
   fullBtn.disabled = false;
 }
@@ -158,6 +180,19 @@ function markProfile(current, choices) {
   for (const btn of document.querySelectorAll("[data-input]")) {
     btn.setAttribute("aria-pressed", flags.has(btn.dataset.input) ? "true" : "false");
   }
+  const width = document.querySelector("#panel-w");
+  const height = document.querySelector("#panel-h");
+  if (width && Number.isInteger(current.width)) width.value = String(current.width);
+  if (height && Number.isInteger(current.height)) height.value = String(current.height);
+  fitStack(current.width, current.height);
+}
+
+function panelSize() {
+  const width = Number(document.querySelector("#panel-w").value);
+  const height = Number(document.querySelector("#panel-h").value);
+  if (!Number.isInteger(width) || !Number.isInteger(height)) return null;
+  if (width < 1 || height < 1 || width > 4096 || height > 4096) return null;
+  return { width, height };
 }
 
 function selection() {
@@ -166,7 +201,9 @@ function selection() {
   for (const btn of document.querySelectorAll('[data-input][aria-pressed="true"]')) {
     input.push(btn.dataset.input);
   }
-  return { color: colorBtn ? colorBtn.dataset.color : "", input };
+  const size = panelSize();
+  if (!size) return null;
+  return { color: colorBtn ? colorBtn.dataset.color : "", input, ...size };
 }
 
 async function initProfile() {
@@ -183,12 +220,18 @@ async function initProfile() {
   let saving = false;
   async function save() {
     if (saving) return;
+    const body = selection();
+    if (!body) {
+      note("Width and height are whole numbers from 1 to 4096.");
+      return;
+    }
+    fitStack(body.width, body.height);
     saving = true;
     try {
       const res = await fetch("/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(selection()),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error("Could not save the profile.");
       current = await (await fetch("/profile")).json();
@@ -221,6 +264,10 @@ async function initProfile() {
       btn.setAttribute("aria-pressed", turningOff ? "false" : "true");
       void save();
     });
+  }
+
+  for (const id of ["panel-w", "panel-h"]) {
+    document.getElementById(id).addEventListener("change", () => void save());
   }
 }
 

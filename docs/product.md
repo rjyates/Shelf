@@ -103,7 +103,7 @@ Rules:
 - `kaleido` and `full` use different color paths. Kaleido is a filter overlay. Full color is a color particle panel. The shell treats them as different profile values.
 - Stylus present: store ink as vector strokes on that book and sync them as annotations. Stylus absent: hide ink tools. Touch can still create a highlight from a selection. Buttons can set a bookmark.
 - Frontlight absent: hide the light control.
-- The emulator's panel simulator must accept this same profile so a gray button-only device and a color touch-and-stylus device can both be tested before hardware exists. The viewer at `:8006` sets color and input separately. Color is black and white (`gray`) or color (`kaleido`, or `full` when the file already says so). Input is any combination of buttons, touch, and stylus. The published file is `/oseink/run/profile.json` (on the emulator, `distro/overlay/run/profile.json`). The guest reads that file at session start, the same way a device reads the boot probe. Changing it in the viewer restarts the session. Compose does not set the profile.
+- The emulator's panel simulator must accept this same profile so a gray button-only device and a color touch-and-stylus device can both be tested before hardware exists. The viewer at `:8006` sets color, input, and size separately. Color is black and white (`gray`) or color (`kaleido`, or `full` when the file already says so). Input is any combination of buttons, touch, and stylus. Size is width and height in pixels, from 1 to 4096. The published file is `/oseink/run/profile.json` (on the emulator, `distro/overlay/run/profile.json`). The guest reads that file at session start, the same way a device reads the boot probe. Changing it in the viewer restarts the session. Compose does not set the profile.
 
 ## Panel timing
 
@@ -123,7 +123,7 @@ Room-temperature stand-ins come from the E Ink mode declaration (A2, GC16, INIT)
 
 DU is the slower black-and-white sibling of A2, about 260ms. `fast` uses the A2 time, which is the typing and menu path.
 
-The hook and `emulator/viewer/damage.js` use the busy times above. A rect that covers the panel is `full`. A rect under one eighth of the panel is `fast` when the previous frame was under 450ms ago, and `quality` otherwise. Partials also become `full` after they add up to four panel-areas. That budget can move.
+The hook and `emulator/viewer/damage.js` use the busy times above. The first rect that covers the panel is `full`. A later one is `quality`, so a desktop redraw does not flash again. A rect under one eighth of the panel is `fast` when the previous frame was under 450ms ago, and `quality` otherwise. Partials also become `full` after they add up to four panel-areas. That budget can move.
 
 ## Phases
 

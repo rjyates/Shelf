@@ -168,10 +168,20 @@ def test_viewer_sets_color_and_interaction_separately():
     assert ">Color<" in page
     for name in ("buttons", "touch", "stylus"):
         assert f'data-input="{name}"' in page
+    assert 'id="panel-w"' in page
+    assert 'id="panel-h"' in page
+    assert ">Width<" in page
+    assert ">Height<" in page
+    assert 'max="4096"' in page
     script = (VIEWER / "boot.js").read_text(encoding="utf-8")
     assert 'fetch("/profile"' in script
     assert "POST" in script
     assert "Pick at least one." in script
+    assert "Width and height are whole numbers from 1 to 4096." in script
+    assert "--panel-w" in script
+    css = (VIEWER / "viewer.css").read_text(encoding="utf-8")
+    assert "--panel-w" in css
+    assert "aspect-ratio" in css
     choices = json.loads(CHOICES.read_text(encoding="utf-8"))
     assert choices["bw"] == "gray"
     assert choices["color_on"] in {"kaleido", "full"}
@@ -265,6 +275,8 @@ def test_profile_endpoint_updates_color_and_input_independently(tmp_path):
         assert written["input"] == "buttons_and_touch"
         assert written["gray_levels"] == published["gray_levels"]
         assert written["frontlight"] == published["frontlight"]
+        assert written["width"] == published["width"]
+        assert written["height"] == published["height"]
         assert (tmp_path / "profile.stamp").read_text(encoding="utf-8") == dest.read_text(
             encoding="utf-8"
         )
@@ -297,6 +309,44 @@ def test_profile_endpoint_updates_color_and_input_independently(tmp_path):
         assert restored["color"] == "gray"
         assert restored["input"] == "buttons"
         assert restored["gray_levels"] == published["gray_levels"]
+
+        status, body = _request(
+            port,
+            "POST",
+            {"color": "bw", "input": ["buttons"], "width": 800, "height": 600},
+        )
+        assert status == 200, body
+        sized = json.loads(dest.read_text(encoding="utf-8"))
+        assert sized["width"] == 800
+        assert sized["height"] == 600
+        assert sized["dpi"] == published["dpi"]
+        parsed = subprocess.run(
+            ["sh", str(ROOT / "distro" / "overlay" / "bin" / "oseink-profile"), str(dest)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert parsed.returncode == 0, parsed.stderr
+        assert parsed.stdout.split() == [
+            "gray",
+            "16",
+            "buttons",
+            "no",
+            "800",
+            "600",
+            str(published["dpi"]),
+        ]
+
+        kept = dest.read_text(encoding="utf-8")
+        for bad in (
+            {"color": "bw", "input": ["buttons"], "width": 0, "height": 600},
+            {"color": "bw", "input": ["buttons"], "width": 4097, "height": 600},
+            {"color": "bw", "input": ["buttons"], "width": True, "height": 600},
+            {"color": "bw", "input": ["buttons"], "width": 800.5, "height": 600},
+        ):
+            status, _ = _request(port, "POST", bad)
+            assert status == 400
+            assert dest.read_text(encoding="utf-8") == kept
     finally:
         proc.kill()
         proc.wait(timeout=5)
@@ -313,3 +363,41 @@ def test_partial_updates_degrade_and_modes_differ():
     assert result.returncode == 0, result.stdout + result.stderr
     assert "partial degrades, full clears" in result.stdout
     assert "quality slow gray, fast mono, full flashes" in result.stdout
+
+
+def test_damage_scales_the_demo_page_to_the_profile_size(tmp_path):
+    writer = ROOT / "distro" / "overlay" / "bin" / "oseink-damage"
+    src = tmp_path / "page.gray"
+    raw = bytes((i % 256) for i in range(400 * 300))
+    src.write_bytes(raw)
+    run = tmp_path / "run"
+    result = subprocess.run(
+        ["sh", str(writer), "8", "6", str(run), str(src), "quality"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    frame = (run / "frame.gray").read_bytes()
+    assert len(frame) == 48
+    msg = json.loads((run / "damage.json").read_text(encoding="utf-8"))
+    assert [msg["panel_w"], msg["panel_h"]] == [8, 6]
+
+    def at(x, y):
+        sx = x * 400 // 8
+        sy = y * 300 // 6
+        return raw[sy * 400 + sx]
+
+    assert frame[0] == at(0, 0) == 0
+    assert frame[4] == at(4, 0)
+    assert frame[8 * 5 + 7] == at(7, 5)
+
+    other = tmp_path / "other.gray"
+    other.write_bytes(b"\x00" * 10)
+    bad = subprocess.run(
+        ["sh", str(writer), "4", "4", str(run), str(other), "quality"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bad.returncode != 0

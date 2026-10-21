@@ -18,15 +18,17 @@ struct oseink_refresh {
 	int panel_h;
 	long budget_px;
 	long last_ms;
+	const char *last_mode;
 	uint8_t *gray;
 };
 
 void oseink_refresh_init(struct oseink_refresh *st, int panel_w, int panel_h);
 void oseink_refresh_fini(struct oseink_refresh *st);
 
-/* Updates *budget_px. Returns "fast", "quality", or "full". */
+/* Updates *budget_px. prev is the mode of the frame just published, or NULL.
+ * Returns "fast", "quality", or "full". */
 const char *oseink_mode(int w, int h, int panel_w, int panel_h, int dt_ms,
-			long *budget_px);
+			long *budget_px, const char *prev);
 int oseink_busy_ms(const char *mode);
 
 /* Gray the damage rect (the whole panel when the mode is full) into a v1

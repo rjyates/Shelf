@@ -48,16 +48,25 @@ oseink_refresh_fini(struct oseink_refresh *st)
 }
 
 const char *
-oseink_mode(int w, int h, int panel_w, int panel_h, int dt_ms, long *budget_px)
+oseink_mode(int w, int h, int panel_w, int panel_h, int dt_ms, long *budget_px,
+	    const char *prev)
 {
 	long area = (long)w * (long)h;
 	long panel = (long)panel_w * (long)panel_h;
 
 	if (panel < 1)
 		panel = 1;
-	if (area >= panel || *budget_px <= 0) {
+	if (*budget_px <= 0) {
 		*budget_px = (long)OSEINK_PARTIAL_BUDGET * panel;
 		return "full";
+	}
+	/* Weston often damages the whole output. Only the first of those is a clear. */
+	if (area >= panel) {
+		if (!prev) {
+			*budget_px = (long)OSEINK_PARTIAL_BUDGET * panel;
+			return "full";
+		}
+		return "quality";
 	}
 	*budget_px -= area;
 	/* A small rect before a quality update would have finished is typing. */
@@ -194,7 +203,8 @@ oseink_refresh_publish(struct oseink_refresh *st, const uint32_t *xrgb,
 	saved_y = y;
 	saved_w = w;
 	saved_h = h;
-	mode = oseink_mode(w, h, st->panel_w, st->panel_h, dt, &st->budget_px);
+	mode = oseink_mode(w, h, st->panel_w, st->panel_h, dt, &st->budget_px,
+			   st->last_mode);
 	busy = oseink_busy_ms(mode);
 	if (busy < 0)
 		return -1;
@@ -237,6 +247,7 @@ oseink_refresh_publish(struct oseink_refresh *st, const uint32_t *xrgb,
 	if (write_atomic(path, json, (size_t)json_n) < 0)
 		return -1;
 	st->last_ms = now_ms;
+	st->last_mode = mode;
 	return busy;
 }
 
@@ -262,22 +273,28 @@ main(void)
 	int i;
 
 	budget = (long)OSEINK_PARTIAL_BUDGET * 400 * 300;
-	if (strcmp(oseink_mode(400, 300, 400, 300, 10, &budget), "full") != 0)
+	if (strcmp(oseink_mode(400, 300, 400, 300, 10, &budget, NULL), "full") != 0)
 		return fail("full panel");
 	if (budget != (long)OSEINK_PARTIAL_BUDGET * 400 * 300)
 		return fail("full resets budget");
+	budget = (long)OSEINK_PARTIAL_BUDGET * 400 * 300;
+	if (strcmp(oseink_mode(400, 300, 400, 300, 10, &budget, "full"),
+		   "quality") != 0)
+		return fail("later covering frame");
+	if (budget != (long)OSEINK_PARTIAL_BUDGET * 400 * 300)
+		return fail("covering frame keeps the budget");
 
 	budget = (long)OSEINK_PARTIAL_BUDGET * 400 * 300;
-	if (strcmp(oseink_mode(8, 8, 400, 300, 10, &budget), "fast") != 0)
+	if (strcmp(oseink_mode(8, 8, 400, 300, 10, &budget, NULL), "fast") != 0)
 		return fail("small recent rect");
-	if (strcmp(oseink_mode(200, 200, 400, 300, 10, &budget), "quality") != 0)
+	if (strcmp(oseink_mode(200, 200, 400, 300, 10, &budget, NULL), "quality") != 0)
 		return fail("large partial");
 	budget = (long)OSEINK_PARTIAL_BUDGET * 400 * 300;
-	if (strcmp(oseink_mode(8, 8, 400, 300, OSEINK_BUSY_QUALITY_MS, &budget),
+	if (strcmp(oseink_mode(8, 8, 400, 300, OSEINK_BUSY_QUALITY_MS, &budget, NULL),
 		   "quality") != 0)
 		return fail("small rect after the quality interval");
 	budget = 0;
-	if (strcmp(oseink_mode(8, 8, 400, 300, 10, &budget), "full") != 0)
+	if (strcmp(oseink_mode(8, 8, 400, 300, 10, &budget, NULL), "full") != 0)
 		return fail("spent budget");
 	if (oseink_busy_ms("fast") != 120 || oseink_busy_ms("quality") != 450 ||
 	    oseink_busy_ms("full") != 2000)
