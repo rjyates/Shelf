@@ -1,3 +1,11 @@
+# [1.13.0](https://github.com/rjyates/oseink/compare/v1.12.0...v1.13.0) (2026-10-21)
+
+
+### Features
+
+* **desktop:** paint Weston frames through the repaint hook ([7f43498](https://github.com/rjyates/oseink/commit/7f434982beccfe6868a3d1057b3f1a0e5402dd82))
+* **emulator:** set the panel size from the viewer ([d5bbe06](https://github.com/rjyates/oseink/commit/d5bbe06a9468df41f188e6a00e0382a4117f2efe))
+
 # [1.12.0](https://github.com/rjyates/oseink/compare/v1.11.0...v1.12.0) (2026-10-21)
 
 
