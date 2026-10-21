@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/rjyates/oseink/compare/v1.10.0...v1.11.0) (2026-10-21)
+
+
+### Features
+
+* **distro:** boot the saved session and switch ([7f82795](https://github.com/rjyates/oseink/commit/7f82795ab108da871df0a78bdb4baf4269761ded))
+
 # [1.10.0](https://github.com/rjyates/oseink/compare/v1.9.0...v1.10.0) (2026-10-21)
 
 
