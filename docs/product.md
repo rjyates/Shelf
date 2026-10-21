@@ -61,7 +61,7 @@ SteamOS is the session pattern only: a constrained default environment, a full d
 - Desktop pixels: a repaint hook in the Weston headless backend is the only desktop writer of the damage protocol. It grays the pixman damage region, picks `quality`, `fast`, or `full` from rect size, time since the last frame, and a partial-area budget, and stalls `finish_frame` until the panel delay has elapsed. There is no app-facing waveform API.
 - Reader/notes presenter: a damage-protocol client that sets the mode itself. It is not a Weston client. Session switch stops one presenter and starts the other.
 - Input: seatd and libinput for both sessions. One session holds the seat. Buttons are evdev keys. Touch and stylus are libinput devices.
-- Session manager: a BusyBox init script and a boot-target file, `reader` (default) or `desktop`. Switching rewrites the file and restarts the presenter without rebooting the guest.
+- Session manager: a BusyBox init script and `/oseink/run/boot-target`, contents `reader` (default) or `desktop`. Switching rewrites the file and restarts the presenter without rebooting the guest.
 - Device storage: SQLite for the library cache, the outbox, and positions. Book files live on the local filesystem.
 - Shelf deploy: one Docker image, one container, SQLite, book files on a local disk. Compose is the install path, same expectation as BookOrbit and Cinephage.
 - Shelf stack: TypeScript on Node 22. The admin UI is served by that same process. Alignment tools run as subprocesses (ffmpeg and a forced-alignment binary), not as a second service.

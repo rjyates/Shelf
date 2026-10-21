@@ -96,10 +96,13 @@ def test_distro_has_no_device_model_table():
 
 
 def test_shell_reads_profile_at_session_start():
-    text = SHELL.read_text(encoding="utf-8")
+    text = (OVERLAY / "bin" / "oseink-reader").read_text(encoding="utf-8")
     assert text.index("/oseink/bin/oseink-profile") < text.index("/dev/tty0")
     assert "/oseink/run/profile.json" in text
     assert "/run/oseink-profile" in text
+    desktop = (OVERLAY / "bin" / "oseink-desktop").read_text(encoding="utf-8")
+    assert desktop.index("/oseink/bin/oseink-profile") < desktop.index("/dev/tty0")
+    assert "/run/oseink-profile" in desktop
     stop = (OVERLAY / "etc" / "init.d" / "S50oseink-devd").read_text(encoding="utf-8")
     assert "/run/oseink-profile" in stop
 

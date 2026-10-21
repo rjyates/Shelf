@@ -13,8 +13,9 @@ case "$1" in
 			rm -f /run/oseink-devd.pid
 		fi
 		killall oseink-devd 2>/dev/null || true
-		killall oseink-shell 2>/dev/null || true
-		rm -f /run/oseink-shell.pid /run/oseink-shell /run/oseink-profile
+		killall oseink-shell oseink-reader oseink-desktop 2>/dev/null || true
+		rm -f /run/oseink-shell.pid /run/oseink-shell /run/oseink-profile \
+			/run/oseink-session /run/oseink-session.pid
 		;;
 	*)
 		echo "Usage: $0 {start|stop}"

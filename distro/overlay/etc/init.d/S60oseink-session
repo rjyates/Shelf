@@ -1,0 +1,108 @@
+#!/bin/sh
+# Start the presenter named in the boot-target file.
+# reader (default) or desktop. A restart does not rebuild the image or reboot.
+# The desktop presenter is a damage stub.
+if [ -x /oseink/bin/oseink-reader ]; then
+	ROOT=/oseink
+else
+	ROOT=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
+fi
+TARGET=$ROOT/run/boot-target
+PIDFILE=/run/oseink-session.pid
+
+read_target() {
+	target=reader
+	if [ -f "$TARGET" ]; then
+		target=$(cat "$TARGET")
+	fi
+	case $target in
+		reader|desktop) ;;
+		*) target=reader ;;
+	esac
+}
+
+presenter() {
+	case $1 in
+		desktop) printf '%s\n' "$ROOT/bin/oseink-desktop" ;;
+		*) printf '%s\n' "$ROOT/bin/oseink-reader" ;;
+	esac
+}
+
+devd_up() {
+	[ -f /run/oseink-devd.pid ] && kill -0 "$(cat /run/oseink-devd.pid)" 2>/dev/null
+}
+
+presenter_up() {
+	if [ -f /run/oseink-shell.pid ] && kill -0 "$(cat /run/oseink-shell.pid)" 2>/dev/null; then
+		return 0
+	fi
+	[ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+case "$1" in
+	target)
+		read_target
+		printf '%s\n' "$target"
+		;;
+	foreground)
+		# oseink-devd's child. Same pid, so a later kill of that pid stops this presenter.
+		read_target
+		if [ ! -f "$TARGET" ]; then
+			printf '%s\n' "$target" >"$TARGET"
+		fi
+		printf '%s\n' "$target" >/run/oseink-session
+		exec "$(presenter "$target")"
+		;;
+	start)
+		# shortcut: S50's devd also starts the shell, wait so this boot does not start a second presenter, drop the wait when devd no longer starts one
+		sleep 1
+		presenter_up && exit 0
+		read_target
+		if [ ! -f "$TARGET" ]; then
+			printf '%s\n' "$target" >"$TARGET"
+		fi
+		printf '%s\n' "$target" >/run/oseink-session
+		"$(presenter "$target")" &
+		echo $! >"$PIDFILE"
+		;;
+	stop)
+		if [ -f "$PIDFILE" ]; then
+			kill "$(cat "$PIDFILE")" 2>/dev/null || true
+			rm -f "$PIDFILE"
+		fi
+		if [ -f /run/oseink-shell.pid ]; then
+			kill "$(cat /run/oseink-shell.pid)" 2>/dev/null || true
+		fi
+		killall oseink-reader oseink-desktop oseink-shell 2>/dev/null || true
+		;;
+	restart)
+		if [ -n "${2:-}" ]; then
+			case $2 in
+				reader|desktop) ;;
+				*)
+					echo "Usage: $0 restart {reader|desktop}" >&2
+					exit 1
+					;;
+			esac
+			printf '%s\n' "$2" >"$TARGET"
+		fi
+		if [ -f "$PIDFILE" ]; then
+			kill "$(cat "$PIDFILE")" 2>/dev/null || true
+			rm -f "$PIDFILE"
+		fi
+		if [ -f /run/oseink-shell.pid ]; then
+			kill "$(cat /run/oseink-shell.pid)" 2>/dev/null || true
+		fi
+		killall oseink-reader oseink-desktop oseink-shell 2>/dev/null || true
+		# The running devd starts oseink-shell again, which reads the file.
+		devd_up && exit 0
+		read_target
+		printf '%s\n' "$target" >/run/oseink-session
+		"$(presenter "$target")" &
+		echo $! >"$PIDFILE"
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart [reader|desktop]|foreground|target}" >&2
+		exit 1
+		;;
+esac

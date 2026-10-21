@@ -1,0 +1,31 @@
+#!/bin/sh
+# Desktop presenter stub. One gray8 frame, then wait until the boot target changes.
+PROFILE=/oseink/run/profile.json
+if ! line=$(/oseink/bin/oseink-profile "$PROFILE"); then
+	printf 'oseink-desktop:profile\n' >/dev/console
+	exit 1
+fi
+printf '%s\n' "$line" >/run/oseink-profile
+printf 'oseink-profile:%s\n' "$line" >/dev/console
+
+BANNER=/oseink/share/banner
+MSG=oseink-shell
+[ -f "$BANNER" ] && MSG=$(cat "$BANNER")
+
+printf '%s\n' "$MSG" >/run/oseink-shell
+printf 'oseink-desktop:%s\n' "$MSG" >/dev/console
+printf '\033[2J\033[Hdesktop\n' >/dev/tty0 2>/dev/null || true
+printf '%s\n' desktop >/run/oseink-session
+
+# color levels input light width height dpi
+set -- $line
+if ! /oseink/bin/oseink-damage "$5" "$6" /oseink/run /oseink/share/demo/menu.gray fast; then
+	printf 'oseink-desktop:damage\n' >/dev/console
+	exit 1
+fi
+printf 'oseink-damage:ok\n' >/dev/console
+
+while true; do
+	sleep 1
+	[ "$(/oseink/etc/init.d/S60oseink-session target)" = desktop ] || exit 0
+done

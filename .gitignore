@@ -11,5 +11,6 @@ distro/overlay/share/profile.stamp
 distro/overlay/run/*
 !distro/overlay/run/.gitkeep
 !distro/overlay/run/profile.json
+!distro/overlay/run/boot-target
 tools/emulator-mcp/node_modules/
 

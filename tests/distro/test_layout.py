@@ -19,9 +19,15 @@ def test_external_tree_shape():
     assert devd.is_file() and devd.stat().st_mode & 0o111
     shell = DISTRO / "overlay" / "bin" / "oseink-shell"
     assert shell.is_file() and shell.stat().st_mode & 0o111
+    for name in ("oseink-reader", "oseink-desktop"):
+        stub = DISTRO / "overlay" / "bin" / name
+        assert stub.is_file() and stub.stat().st_mode & 0o111
+    session = DISTRO / "overlay" / "etc" / "init.d" / "S60oseink-session"
+    assert session.is_file() and session.stat().st_mode & 0o111
     damage = DISTRO / "overlay" / "bin" / "oseink-damage"
     assert damage.is_file() and damage.stat().st_mode & 0o111
     assert (DISTRO / "overlay" / "share" / "banner").is_file()
+    assert (DISTRO / "overlay" / "run" / "boot-target").is_file()
 
 
 def test_defconfig_targets_framebuffer_console():
@@ -88,13 +94,18 @@ def test_devd_watches_share_and_restarts_shell():
     assert "/oseink/bin" in text
     assert "/oseink/share" in text
     assert "/oseink/run/profile.json" in text
+    assert "/oseink/run/boot-target" in text
     assert "/oseink/bin/oseink-shell" in text
     assert "oseink-devd:reload" in text
     shell = (DISTRO / "overlay" / "bin" / "oseink-shell").read_text(encoding="utf-8")
-    assert "/oseink/share/banner" in shell
-    assert "/run/oseink-shell" in shell
-    assert "/dev/tty0" in shell
-    assert "/oseink/bin/oseink-damage" in shell
+    assert "S60oseink-session" in shell
+    assert "foreground" in shell
+    reader = (DISTRO / "overlay" / "bin" / "oseink-reader").read_text(encoding="utf-8")
+    assert "/oseink/share/banner" in reader
+    assert "/run/oseink-shell" in reader
+    assert "/dev/tty0" in reader
+    assert "/oseink/bin/oseink-damage" in reader
+    assert "mknod" not in reader
     assert "mknod" not in shell
     writer = (DISTRO / "overlay" / "bin" / "oseink-damage").read_text(encoding="utf-8")
     assert "damage.json" in writer
