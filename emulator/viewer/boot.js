@@ -1,14 +1,13 @@
 /**
- * :8006 is the e-ink panel attached to the guest. Pixels come from the guest
- * framebuffer over VNC; the Panel applies quantize / delay / ghost / flash.
- * Click the panel to type into the guest (RFB under the canvas).
+ * :8006 paints a guest damage frame (quality / fast / full, a rect, gray8).
+ * Click the panel to type into the guest console. VNC stays under the canvas
+ * for that input.
  *
- * shortcut: VNC full-frame ingest until the shell paints only via damage
- * (issue 7 modes still live in damage.js; MCP can publish test frames).
+ * shortcut: click-to-type is still the VGA console, drop it when seatd owns the seat.
  */
 import RFB from "./core/rfb.js";
 import { Panel } from "./panel.js";
-import { MODES, configurePanel } from "./damage.js";
+import { applyDamage, parseDamage } from "./damage.js";
 
 const screen = document.getElementById("screen");
 const canvas = document.getElementById("panel");
@@ -16,21 +15,15 @@ const status = document.getElementById("status");
 const fullBtn = document.getElementById("full");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
-/** Default refresh class for console updates (page-turn / GC16-like). */
-let mode = "quality";
 let panel = null;
 let image = null;
-let lastRgba = null;
 let busy = false;
-let pending = false;
-let updates = 0;
+let pending = null;
+let lastSeq = null;
+let shown = null;
+let frame = null;
+let modeOverride = null;
 let rfb = null;
-
-const FULL_EVERY = 24;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function websockifyUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -45,19 +38,13 @@ function ensurePanel(width, height) {
   panel = new Panel({
     width,
     height,
-    grayLevels: MODES.quality.grayLevels,
-    ghost: MODES.quality.ghost,
-    delayMs: MODES.quality.delayMs,
     dither: true,
-    // VGA console is light-on-dark; e-ink ink is dark-on-paper.
-    invert: true,
+    invert: false,
   });
-  configurePanel(panel, mode);
+  panel.paint = paint;
   canvas.width = width;
   canvas.height = height;
   image = ctx.createImageData(width, height);
-  lastRgba = null;
-  updates = 0;
 }
 
 function paint() {
@@ -66,96 +53,88 @@ function paint() {
   ctx.putImageData(image, 0, 0);
 }
 
-async function showFlash() {
-  if (!panel) return;
-  panel.ink.fill(0);
+async function present(msg, pixels) {
+  ensurePanel(msg.panel_w, msg.panel_h);
   paint();
-  await sleep(90);
-  panel.ink.fill(1);
+  const use = modeOverride ? { ...msg, mode: modeOverride } : msg;
+  await applyDamage(panel, use, pixels);
+  status.textContent = `${use.mode} · click panel to type`;
   paint();
-  await sleep(90);
+  fullBtn.disabled = false;
 }
 
-async function ingest(forceFull = false) {
-  if (!rfb) return;
-  if (busy) {
-    pending = true;
-    return;
-  }
+async function pump() {
+  if (busy || !pending) return;
+  const job = pending;
+  pending = null;
   busy = true;
   try {
-    const frame = rfb.getImageData();
-    ensurePanel(frame.width, frame.height);
-    lastRgba = frame.data;
-    updates += 1;
-
-    configurePanel(panel, forceFull ? "full" : mode);
-    const wantFull = forceFull || mode === "full" || updates % FULL_EVERY === 0;
-
-    if (wantFull) {
-      await sleep(panel.delayMs);
-      await showFlash();
-      panel.applyFull(lastRgba, { flash: false });
-      if (mode === "full") mode = "quality";
-    } else {
-      await panel.partial(lastRgba);
-    }
-    status.textContent = `${forceFull || wantFull ? "full" : mode} · click panel to type`;
-    paint();
+    await present(job.msg, job.pixels);
   } catch (err) {
     status.textContent = String(err.message || err);
   } finally {
     busy = false;
-    if (pending) {
-      pending = false;
-      void ingest();
-    }
+    if (pending) void pump();
   }
 }
 
-function hookFlip() {
-  const display = rfb._display;
-  const flip = display.flip.bind(display);
-  display.flip = function hookedFlip() {
-    flip();
-    void ingest();
-  };
+function queue(msg, pixels) {
+  pending = { msg, pixels };
+  void pump();
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/guest/damage.json", { cache: "no-store" });
+    if (!res.ok) return;
+    const parsed = parseDamage(await res.json());
+    if (parsed.seq === lastSeq && frame) return;
+    const pixRes = await fetch(`/guest/${parsed.pixels}?seq=${parsed.seq}`, {
+      cache: "no-store",
+    });
+    if (!pixRes.ok) return;
+    const buf = new Uint8Array(await pixRes.arrayBuffer());
+    const need = parsed.panel_w * parsed.panel_h;
+    if (buf.length < need) return;
+    frame = buf.subarray(0, need);
+    lastSeq = parsed.seq;
+    modeOverride = null;
+    shown = parsed;
+    queue(parsed, frame);
+  } catch {
+    // No frame yet, or the file was mid-write.
+  }
 }
 
 fullBtn.addEventListener("click", () => {
-  void ingest(true);
+  if (!shown || !frame) return;
+  modeOverride = "full";
+  queue(shown, frame);
 });
 
-// Mode shortcuts while developing e-ink refresh classes.
+// Reapply the current frame as another refresh class.
 window.addEventListener("keydown", (event) => {
   if (event.target !== document.body && event.target !== document.documentElement) {
     return;
   }
-  if (event.key === "1") mode = "quality";
-  else if (event.key === "2") mode = "fast";
-  else if (event.key === "3") mode = "full";
+  if (event.key === "1") modeOverride = "quality";
+  else if (event.key === "2") modeOverride = "fast";
+  else if (event.key === "3") modeOverride = "full";
   else return;
-  status.textContent = `mode ${mode}`;
-  void ingest(mode === "full");
+  if (shown && frame) queue(shown, frame);
 });
 
-status.textContent = "Connecting to the guest…";
+status.textContent = "Waiting for a frame.";
 fullBtn.disabled = true;
+setInterval(() => void poll(), 300);
+void poll();
 
 rfb = new RFB(screen, websockifyUrl());
 rfb.scaleViewport = true;
 rfb.focusOnClick = true;
 
-rfb.addEventListener("connect", () => {
-  status.textContent = "Guest live · e-ink panel";
-  fullBtn.disabled = false;
-  hookFlip();
-  void ingest(true);
-});
-
 rfb.addEventListener("disconnect", (event) => {
-  fullBtn.disabled = true;
-  if (!event.detail.clean) {
+  if (!event.detail.clean && !shown) {
     status.textContent = "Disconnected. Refresh when the guest is up.";
   }
 });

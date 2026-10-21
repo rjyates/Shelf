@@ -1,0 +1,35 @@
+#!/bin/sh
+# Publish one v1 gray8 damage frame. The panel reads this file; nothing opens a device.
+# shortcut: pixels are share/demo/page.gray (400x300), draw a frame when the profile size changes
+# Usage: oseink-damage WIDTH HEIGHT [RUNDIR [PIXELS [MODE]]]
+width=${1:?}
+height=${2:?}
+run=${3:-/oseink/run}
+src=${4:-/oseink/share/demo/page.gray}
+mode=${5:-quality}
+
+case $width in *[!0-9]*|'') exit 1 ;; esac
+case $height in *[!0-9]*|'') exit 1 ;; esac
+[ "$width" -gt 0 ] && [ "$height" -gt 0 ] || exit 1
+case $mode in quality|fast|full) ;; *) exit 1 ;; esac
+[ -f "$src" ] || exit 1
+
+need=$((width * height))
+got=$(wc -c < "$src" | awk '{print $1}')
+[ "$got" -eq "$need" ] || exit 1
+
+mkdir -p "$run"
+seqfile=$run/damage.seq
+seq=0
+if [ -f "$seqfile" ]; then
+	seq=$(cat "$seqfile")
+fi
+case $seq in *[!0-9]*|'') seq=0 ;; esac
+seq=$((seq + 1))
+printf '%s\n' "$seq" > "$seqfile"
+
+cp "$src" "$run/frame.gray.tmp"
+mv "$run/frame.gray.tmp" "$run/frame.gray"
+printf '%s\n' "{\"v\":1,\"mode\":\"$mode\",\"x\":0,\"y\":0,\"w\":$width,\"h\":$height,\"panel_w\":$width,\"panel_h\":$height,\"seq\":$seq,\"format\":\"gray8\",\"pixels\":\"frame.gray\"}" \
+	> "$run/damage.json.tmp"
+mv "$run/damage.json.tmp" "$run/damage.json"

@@ -66,23 +66,93 @@ def test_damage_protocol_defines_three_modes():
     assert "panel_w" in text
 
 
-def test_boot_shows_guest_framebuffer_through_eink_panel():
+def test_boot_paints_damage_frames_not_the_console():
     text = (VIEWER / "boot.js").read_text(encoding="utf-8")
     assert 'from "./core/rfb.js"' in text
     assert "websockify" in text
-    assert "getImageData" in text
-    assert "applyPartial" in text or "panel.partial" in text
-    assert "applyFull" in text
-    assert "configurePanel" in text
+    assert "getImageData" not in text
+    assert 'fetch("/guest/damage.json"' in text
+    assert "applyDamage" in text
+    assert "parseDamage" in text
     assert "shortcut:" in text
 
 
-def test_shell_draws_framebuffer_not_demo_slideshow():
+def test_guest_writer_publishes_a_v1_gray8_frame(tmp_path):
+    writer = ROOT / "distro" / "overlay" / "bin" / "oseink-damage"
+    page = ROOT / "distro" / "overlay" / "share" / "demo" / "page.gray"
+    run = tmp_path / "run"
+    for mode in ("quality", "fast", "full"):
+        result = subprocess.run(
+            ["sh", str(writer), "400", "300", str(run), str(page), mode],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        msg = json.loads((run / "damage.json").read_text(encoding="utf-8"))
+        assert msg["v"] == 1
+        assert msg["mode"] == mode
+        assert msg["format"] == "gray8"
+        assert msg["pixels"] == "frame.gray"
+        assert [msg["x"], msg["y"], msg["w"], msg["h"]] == [0, 0, 400, 300]
+        assert [msg["panel_w"], msg["panel_h"]] == [400, 300]
+        assert (run / "frame.gray").read_bytes() == page.read_bytes()
+        parsed = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                "import { parseDamage } from './emulator/viewer/damage.js';"
+                "const msg = parseDamage(process.argv[1]);"
+                "if (msg.mode !== process.argv[2] || msg.format !== 'gray8') process.exit(1);",
+                json.dumps(msg),
+                mode,
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert parsed.returncode == 0, parsed.stderr
+
+    seqs = []
+    for _ in range(2):
+        subprocess.run(
+            ["sh", str(writer), "400", "300", str(run), str(page)],
+            check=True,
+        )
+        seqs.append(json.loads((run / "damage.json").read_text(encoding="utf-8"))["seq"])
+    assert seqs[1] == seqs[0] + 1
+
+    short = tmp_path / "short.gray"
+    short.write_bytes(b"\x00" * 10)
+    bad = subprocess.run(
+        ["sh", str(writer), "400", "300", str(run), str(short)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bad.returncode != 0
+    assert json.loads((run / "damage.json").read_text(encoding="utf-8"))["seq"] == seqs[1]
+
+    for path in (ROOT / "distro" / "overlay").rglob("*"):
+        assert not path.is_block_device()
+        assert not path.is_char_device()
+
+
+def test_shell_publishes_damage_and_keeps_the_console():
     text = SHELL.read_text(encoding="utf-8")
     assert "/dev/tty0" in text
     assert "/oseink/share/banner" in text
     assert "page.gray" not in text
     assert "damage.json" not in text
+    assert "/oseink/bin/oseink-damage" in text
+    writer = (ROOT / "distro" / "overlay" / "bin" / "oseink-damage").read_text(encoding="utf-8")
+    assert "damage.json" in writer
+    assert "frame.gray" in writer
+    assert "page.gray" in writer
+    assert "/dev/" not in writer
+    assert "mknod" not in writer
 
 
 def test_viewer_sets_color_and_interaction_separately():

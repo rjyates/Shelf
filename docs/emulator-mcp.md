@@ -2,7 +2,7 @@
 
 MCP server so **any** AI agent can see and drive the e-ink panel on the Docker emulator. One launch script: `tools/emulator-mcp/run.sh` (installs deps on first run).
 
-When debugging the panel or guest, call `panel_screenshot` before guessing from logs.
+When debugging the panel or guest, call `panel_screenshot` before guessing from logs. The picture on `:8006` is the guest damage frame (`/guest/damage.json` and its gray8 pixels).
 
 Live tools need the qemu container (`emulator_up`, or `docker compose -p oseink up -d --build --force-recreate` from `emulator/`). They talk to Docker / `:8006` only — no host overlay bypass.
 

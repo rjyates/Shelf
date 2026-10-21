@@ -1,6 +1,6 @@
 # Emulator
 
-`:8006` is the e-ink **display** attached to the Buildroot guest — the web stand-in for the panel the OS will drive. You see the guest framebuffer through e-ink simulation (quantize, delay, ghosting, full-refresh flash) and type into the guest by clicking the panel.
+`:8006` is the e-ink **display** attached to the Buildroot guest — the web stand-in for the panel the OS will drive. The guest writes a damage frame, and the page paints it through e-ink simulation (quantize, delay, ghosting, full-refresh flash). Click the panel to type into the guest console.
 
 Issues 1–8 are done. Day-to-day run path is in [README.md](../README.md). See [AGENTS.md](../AGENTS.md) for what comes next.
 
@@ -14,7 +14,7 @@ cd emulator && docker compose -p oseink up -d --build --force-recreate
 
 Stop: `cd emulator && docker compose -p oseink down`
 
-Open [http://127.0.0.1:8006](http://127.0.0.1:8006). Click the panel to focus the guest; **Full refresh** clears ghosting. Keys `1` / `2` / `3` set refresh class `quality` / `fast` / `full` while developing.
+Open [http://127.0.0.1:8006](http://127.0.0.1:8006). Click the panel to focus the guest console; **Full refresh** reapplies the current frame as `full` and clears ghosting. Keys `1` / `2` / `3` reapply that frame as `quality` / `fast` / `full`.
 
 `./distro/build.sh` writes images under `.build/oseink/images/` (needed before the first compose, and again for a kernel or initramfs change). `./distro/run.sh` boots the same image on the host. Compose and `run.sh` share `distro/overlay/` into the guest at `/oseink`.
 
@@ -22,7 +22,7 @@ The userspace shell and assets under `distro/overlay/` reload while the VM stays
 
 ## How the panel gets pixels
 
-Today the guest console is on the VGA framebuffer. The viewer pulls that over VNC and runs it through `emulator/viewer/panel.js`. That is a temporary bridge: the long-term path is the damage protocol (`quality` / `fast` / `full` + rect + pixels) in `damage.js`, which both the reader/notes session and the desktop session use so ordinary Linux drawing still hits e-ink safeguards. MCP can still publish test damage frames; see [emulator-mcp.md](emulator-mcp.md).
+`oseink-shell` reads the capability profile, then `oseink-damage` writes `/oseink/run/damage.json` and `frame.gray` (a v1 message: `quality`, `fast`, or `full`, a rect, and gray8 pixels). Compose serves that directory at `/guest/`. The viewer polls it and applies the frame with `emulator/viewer/damage.js`. The picture is that frame. VNC stays connected so a click still reaches the VGA console. Apps do not open a panel device. MCP can write the same files; see [emulator-mcp.md](emulator-mcp.md). Desktop repaint is a later phase. The boot-target switch is the next issue.
 
 `oseink-devd` restarts `/oseink/bin/oseink-shell` when that binary, `/oseink/share/`, or `/oseink/run/profile.json` changes. The devd in the current image watches the binary and share only, so the profile picker also updates `profile.stamp` under share. Kernel or initramfs changes need a new build. Session modes (reader/notes vs desktop) are defined in [product.md](product.md).
 

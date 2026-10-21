@@ -12,7 +12,7 @@
       <p id="status" class="hint" aria-live="polite">Connecting to the guest…</p>
       <div class="bezel">
         <div class="stack">
-          <!-- RFB under the panel: input + framebuffer. Panel paints e-ink. -->
+          <!-- RFB under the panel for console input. The canvas paints damage frames. -->
           <div id="screen"></div>
           <canvas id="panel" width="640" height="480" aria-label="E-ink panel"></canvas>
         </div>
