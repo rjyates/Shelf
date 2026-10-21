@@ -58,7 +58,7 @@ SteamOS is the session pattern only: a constrained default environment, a full d
 - Panel path: one damage protocol and capability profile for both sessions. The panel device is that protocol. Apps never open it.
 - Desktop presenter: Weston 14.0.1 from Buildroot 2025.02.6, pixman renderer, desktop-shell, headless backend. No GL, no DRM backend. Animations off (`animation` none, `idle-time=0`).
 - X11: the image has no XWayland and no X server. Desktop apps are Wayland clients of Weston only.
-- Desktop pixels: a repaint hook in the Weston headless backend is the only desktop writer of the damage protocol. It grays the pixman damage region, picks `quality`, `fast`, or `full` from rect size, time since the last frame, and a partial-area budget, and stalls `finish_frame` until the panel delay has elapsed. There is no app-facing waveform API.
+- Desktop pixels: a repaint hook in the Weston headless backend is the only desktop writer of the damage protocol. It grays the pixman damage region, picks `quality`, `fast`, or `full` from rect size, time since the last frame, and a partial-area budget, and stalls `finish_frame` until the panel delay has elapsed. There is no app-facing waveform API. Busy times are in Panel timing.
 - Reader/notes presenter: a damage-protocol client that sets the mode itself. It is not a Weston client. Session switch stops one presenter and starts the other.
 - Input: seatd and libinput for both sessions. One session holds the seat. Buttons are evdev keys. Touch and stylus are libinput devices.
 - Session manager: a BusyBox init script and `/oseink/run/boot-target`, contents `reader` (default) or `desktop`. Switching rewrites the file and restarts the presenter without rebooting the guest.
@@ -78,7 +78,7 @@ SteamOS is the session pattern only: a constrained default environment, a full d
 
 - Moving the reader into Weston kiosk-shell later, if a side channel for the damage mode is worth a single presenter.
 - Extra desktop apps beyond `weston-terminal` (file manager, browser).
-- The numeric partial-to-full budget, EPD waveforms, and LUT files. The hook has a budget; the constant can move.
+- The numeric partial-to-full budget, waveform files, and temperature bands. The budget constant and the Panel timing busy times can move. Do not vendor LUT blobs.
 - musl, and systemd. This image is glibc and BusyBox.
 - Which embedded web renderer hosts the Readium navigator (WPE WebKit or an equivalent that can run without X11).
 
@@ -103,6 +103,26 @@ Rules:
 - Frontlight absent: hide the light control.
 - The emulator's panel simulator must accept this same profile so a gray button-only device and a color touch-and-stylus device can both be tested before hardware exists. The viewer at `:8006` sets color and input separately. Color is black and white (`gray`) or color (`kaleido`, or `full` when the file already says so). Input is any combination of buttons, touch, and stylus. The published file is `/oseink/run/profile.json` (on the emulator, `distro/overlay/run/profile.json`). The guest reads that file at session start, the same way a device reads the boot probe. Changing it in the viewer restarts the session. Compose does not set the profile.
 
+## Panel timing
+
+The three damage modes are refresh classes from a Rockchip EBC controller. The reference tree is [Supernote-Ratta/kernel_Nomad_Manta](https://github.com/Supernote-Ratta/kernel_Nomad_Manta), `drivers/gpu/drm/rockchip/ebc-dev`. Userspace submits a buffer and a mode (`EBC_SEND_BUFFER`, `enum panel_refresh_mode`). `epd_lut_get` returns a frame count for that mode and the panel temperature. The TCON plays that many frames (`DSP_FRM_TOTAL`). The driver blocks until the frame-end interrupt (`DSP_END_INT`). One update is in flight for that whole interval. A partial update leaves residue. `EPD_RESET` and `EPD_FORCE_FULL` clear it with a flash.
+
+`EBC_SET_FULL_MODE_NUM` forces a full refresh after a count of partials. The hook's rule is area: rect size, time since the last frame, and a partial-area budget. Copy this wait. Leave the Ratta waveform blobs out of the tree (`pvi_waveform_v8.S`, `rkf_waveform_v8.S`, `ht_ebc.px`).
+
+The desktop hook publishes the gray8 frame, then stalls `finish_frame` for that mode's busy time. `:8006` plays the ghost or the flash across that same interval. The picture settling is the end of the busy time.
+
+Room-temperature stand-ins come from the E Ink mode declaration (A2, GC16, INIT). The hook and `emulator/viewer/damage.js` share this table. The numbers can move.
+
+| mode | class | gray levels | residue | busy |
+| --- | --- | --- | --- | --- |
+| `fast` | A2 | 2 | harsh ghost | 120ms |
+| `quality` | GC16 | 16 | soft ghost | 450ms |
+| `full` | INIT / RESET / `EPD_FORCE_FULL` | 16 | flash, then clear | 2000ms |
+
+DU is the slower black-and-white sibling of A2, about 260ms. `fast` uses the A2 time, which is the typing and menu path.
+
+`emulator/viewer/damage.js` still has the placeholder table: `quality` 200ms, `fast` 35ms, `full` 140ms. In that table a full clear is shorter than a grayscale update. [#25](https://github.com/rjyates/oseink/issues/25) installs the table above.
+
 ## Phases
 
 Work these in order. A phase can start when the previous one's "done when" is true. Shelf phases can be developed on the host against the protocol. Device UI phases use the emulator.
@@ -119,7 +139,7 @@ Done when the emulator boots to the saved session preference, can switch session
 
 ### 2. Minimal desktop
 
-A real Linux desktop session on the phase 1 panel path. E-ink safeguards sit under the apps and keep refresh throttled. Uses the stack recorded in Locked technical choices.
+A real Linux desktop session on the phase 1 panel path. E-ink safeguards sit under the apps and keep refresh throttled. Uses the stack recorded in Locked technical choices. Issues: [#24](https://github.com/rjyates/oseink/issues/24) Weston session, [#25](https://github.com/rjyates/oseink/issues/25) repaint hook, [#26](https://github.com/rjyates/oseink/issues/26) panel input and return. Milestone: Minimal desktop.
 
 - Ordinary window updates go through damage modes.
 - The user can return to reader/notes.

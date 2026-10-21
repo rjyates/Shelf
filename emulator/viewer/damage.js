@@ -17,7 +17,7 @@
 
 /** @typedef {"quality"|"fast"|"full"} DamageMode */
 
-/** Mode → simulator knobs (timing + depth + residual). */
+/** Placeholder delays (200 / 35 / 140). docs/product.md "Panel timing" is the table issue 25 installs. */
 export const MODES = {
   // Page turns: slower grayscale, soft residual (GC16 / GL16 class).
   quality: { grayLevels: 16, delayMs: 200, ghost: 0.32, flash: false },
