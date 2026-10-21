@@ -37,13 +37,13 @@ export async function viewerScreenshotPng() {
   });
 }
 
-/** Click the panel (focuses RFB) and type into the guest. */
+/** Click the panel and type into the desktop seat. */
 export async function guestType(text, { submit = false } = {}) {
   if (typeof text !== "string" || !text.length) {
     throw new Error("guest_type requires non-empty text");
   }
   return withPage(async (page) => {
-    await page.locator("#screen").click({ timeout: 10000 });
+    await page.locator("#panel").click({ timeout: 10000 });
     await page.keyboard.type(text, { delay: 20 });
     if (submit) await page.keyboard.press("Enter");
     await sleep(400);

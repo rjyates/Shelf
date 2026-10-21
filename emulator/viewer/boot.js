@@ -1,9 +1,7 @@
 /**
  * :8006 paints a guest damage frame (quality / fast / full, a rect, gray8).
- * Click the panel to type into the guest console. VNC stays under the canvas
- * for that input.
- *
- * shortcut: click-to-type is still the VGA console, drop it when seatd owns the seat.
+ * Button, touch, and stylus events go to the profile's evdev devices.
+ * VNC stays connected under the canvas and does not take those events.
  */
 import RFB from "./core/rfb.js";
 import { Panel } from "./panel.js";
@@ -24,6 +22,7 @@ let shown = null;
 let frame = null;
 let modeOverride = null;
 let rfb = null;
+let inputFlags = new Set(["buttons"]);
 
 function websockifyUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -80,7 +79,8 @@ async function present(msg, pixels) {
     use = { ...use, x: 0, y: 0, w: use.panel_w, h: use.panel_h };
   }
   await applyDamage(panel, use, pixels);
-  status.textContent = `${use.mode} · ${use.panel_w}×${use.panel_h} · click panel to type`;
+  const hint = inputFlags.has("buttons") ? " · click panel to type" : "";
+  status.textContent = `${use.mode} · ${use.panel_w}×${use.panel_h}${hint}`;
   paint();
   fullBtn.disabled = false;
 }
@@ -153,7 +153,7 @@ void poll();
 
 rfb = new RFB(screen, websockifyUrl());
 rfb.scaleViewport = true;
-rfb.focusOnClick = true;
+rfb.focusOnClick = false;
 
 rfb.addEventListener("disconnect", (event) => {
   if (!event.detail.clean && !shown) {
@@ -164,6 +164,144 @@ rfb.addEventListener("disconnect", (event) => {
 rfb.addEventListener("securityfailure", () => {
   status.textContent = "VNC security failure.";
 });
+
+const KEY = {
+  Escape: 1,
+  Digit1: 2,
+  Digit2: 3,
+  Digit3: 4,
+  Digit4: 5,
+  Digit5: 6,
+  Digit6: 7,
+  Digit7: 8,
+  Digit8: 9,
+  Digit9: 10,
+  Digit0: 11,
+  Minus: 12,
+  Equal: 13,
+  Backspace: 14,
+  Tab: 15,
+  KeyQ: 16,
+  KeyW: 17,
+  KeyE: 18,
+  KeyR: 19,
+  KeyT: 20,
+  KeyY: 21,
+  KeyU: 22,
+  KeyI: 23,
+  KeyO: 24,
+  KeyP: 25,
+  BracketLeft: 26,
+  BracketRight: 27,
+  Enter: 28,
+  ControlLeft: 29,
+  KeyA: 30,
+  KeyS: 31,
+  KeyD: 32,
+  KeyF: 33,
+  KeyG: 34,
+  KeyH: 35,
+  KeyJ: 36,
+  KeyK: 37,
+  KeyL: 38,
+  Semicolon: 39,
+  Quote: 40,
+  Backquote: 41,
+  ShiftLeft: 42,
+  Backslash: 43,
+  KeyZ: 44,
+  KeyX: 45,
+  KeyC: 46,
+  KeyV: 47,
+  KeyB: 48,
+  KeyN: 49,
+  KeyM: 50,
+  Comma: 51,
+  Period: 52,
+  Slash: 53,
+  ShiftRight: 54,
+  Space: 57,
+};
+
+const panelEl = document.getElementById("panel");
+let pointing = null;
+
+function sendInput(line) {
+  void fetch("/input", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: line,
+  }).catch(() => {});
+}
+
+function panelPoint(event) {
+  const rect = panelEl.getBoundingClientRect();
+  if (!(rect.width > 0) || !(rect.height > 0)) return null;
+  const x = Math.round(((event.clientX - rect.left) / rect.width) * panelEl.width);
+  const y = Math.round(((event.clientY - rect.top) / rect.height) * panelEl.height);
+  return {
+    x: Math.max(0, Math.min(Math.max(panelEl.width - 1, 0), x)),
+    y: Math.max(0, Math.min(Math.max(panelEl.height - 1, 0), y)),
+  };
+}
+
+function onPointer(event) {
+  const kind = event.pointerType === "pen" ? "stylus" : "touch";
+  if (!inputFlags.has(kind)) return;
+  const down = event.type === "pointerup" || event.type === "pointercancel" ? 0 : 1;
+  if (event.type === "pointermove" && pointing !== kind) return;
+  const point = panelPoint(event);
+  if (!point) return;
+  if (event.type === "pointerdown") {
+    // preventDefault below would otherwise leave the canvas unfocused, so keys
+    // never reach the seat.
+    panelEl.focus();
+    pointing = kind;
+    try {
+      panelEl.setPointerCapture(event.pointerId);
+    } catch {
+      /* synthetic events have no pointer to capture */
+    }
+  }
+  if (kind === "stylus") {
+    const pressure = Math.round((down ? event.pressure || 0.5 : 0) * 4095);
+    sendInput(`s ${point.x} ${point.y} ${down} ${pressure}`);
+  } else {
+    sendInput(`t ${point.x} ${point.y} ${down}`);
+  }
+  if (!down) pointing = null;
+  event.preventDefault();
+}
+
+panelEl.addEventListener("pointerdown", onPointer);
+panelEl.addEventListener("pointermove", onPointer);
+panelEl.addEventListener("pointerup", onPointer);
+panelEl.addEventListener("pointercancel", onPointer);
+
+let heldShift = false;
+
+function needsShift(key) {
+  return key.length === 1 && (key >= "A" && key <= "Z" || "~!@#$%^&*()_+{}|:\"<>?".includes(key));
+}
+
+function onKey(event) {
+  if (event.target !== panelEl || event.repeat || !inputFlags.has("buttons")) return;
+  const code = KEY[event.code];
+  if (!code) return;
+  const down = event.type === "keydown" ? 1 : 0;
+  const isShift = event.code === "ShiftLeft" || event.code === "ShiftRight";
+  if (isShift) heldShift = down === 1;
+  const synth = !isShift && !heldShift && !event.shiftKey && needsShift(event.key);
+  if (synth && down) sendInput("k 42 1");
+  else if (!isShift && event.shiftKey && !heldShift) sendInput(`k 42 ${down}`);
+  sendInput(`k ${code} ${down}`);
+  if (synth && !down) sendInput("k 42 0");
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+window.addEventListener("keydown", onKey, true);
+window.addEventListener("keyup", onKey, true);
 
 function note(text) {
   const el = document.getElementById("profile-note");
@@ -177,6 +315,7 @@ function markProfile(current, choices) {
     btn.setAttribute("aria-pressed", on ? "true" : "false");
   }
   const flags = new Set(choices.input[current.input] || []);
+  inputFlags = flags;
   for (const btn of document.querySelectorAll("[data-input]")) {
     btn.setAttribute("aria-pressed", flags.has(btn.dataset.input) ? "true" : "false");
   }

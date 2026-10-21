@@ -50,6 +50,15 @@ case "$1" in
 		if [ ! -f "$TARGET" ]; then
 			printf '%s\n' "$target" >"$TARGET"
 		fi
+		# devd starts this while the old desktop's Weston is still painting.
+		if [ "$target" = reader ]; then
+			i=0
+			while pidof weston >/dev/null 2>&1; do
+				i=$((i + 1))
+				[ "$i" -le 10 ] || break
+				sleep 1
+			done
+		fi
 		printf '%s\n' "$target" >/run/oseink-session
 		exec "$(presenter "$target")"
 		;;

@@ -43,7 +43,7 @@ Env: `OSEINK_VIEWER_URL` (default `http://127.0.0.1:8006/`), `OSEINK_COMPOSE_PRO
 | `panel_screenshot` | PNG of the live `:8006` e-ink viewer (primary for the panel) |
 | `display_screenshot` | PNG of the live QEMU VGA display, plus decoded tty0 text |
 | `console_read` | Text of tty0 (VGA console) and ttyS0 (serial). `which` is `all`, `vga`, or `ttyS0` |
-| `guest_type` | Click panel, type into the VGA console, return the e-ink screenshot |
+| `guest_type` | Click the panel and type into the desktop seat. While Weston holds that seat, the keys do not go to the VGA console |
 | `viewer_full_refresh` | Click Full refresh, return screenshot |
 | `panel_status` | Container + viewer health |
 | `emulator_up` / `emulator_down` | Compose up/down |

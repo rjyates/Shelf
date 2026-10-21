@@ -201,9 +201,9 @@ server.tool(
 
 server.tool(
   "guest_type",
-  "Click the e-ink viewer and type into the guest VGA console (VNC). Returns the e-ink screenshot. Read what was typed with display_screenshot or console_read.",
+  "Click the panel and type into the desktop seat. Returns the e-ink screenshot. Those keys do not go to the VGA console while Weston holds the seat.",
   {
-    text: z.string().min(1).describe("Keys to type into the guest console"),
+    text: z.string().min(1).describe("Keys to type into the desktop seat"),
     submit: z.boolean().optional().describe("Press Enter after typing"),
   },
   async ({ text: typed, submit }) => {

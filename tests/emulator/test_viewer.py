@@ -73,7 +73,15 @@ def test_boot_paints_damage_frames_not_the_console():
     assert 'fetch("/guest/damage.json"' in text
     assert "applyDamage" in text
     assert "parseDamage" in text
-    assert "shortcut:" in text
+    assert 'fetch("/input"' in text
+    assert 'pointerType === "pen"' in text
+    assert "KEYA" not in text
+    assert "KeyA: 30" in text
+    assert "Enter: 28" in text
+    assert "Slash: 53" in text
+    assert "focusOnClick = false" in text
+    assert "panelEl.focus()" in text
+    assert "needsShift" in text
 
 
 def test_guest_writer_publishes_a_v1_gray8_frame(tmp_path):
@@ -202,6 +210,7 @@ def test_viewer_sets_color_and_interaction_separately():
     assert "return 0" in hook
     location = (VIEWER / "profile-location.conf").read_text(encoding="utf-8")
     assert "location = /profile" in location
+    assert "location = /input" in location
     assert "127.0.0.1:8765" in location
 
 
@@ -211,13 +220,13 @@ def _free_port():
         return sock.getsockname()[1]
 
 
-def _request(port, method, body=None):
-    data = None if body is None else json.dumps(body).encode()
+def _request(port, method, body=None, path="/profile", raw=None):
+    data = raw if raw is not None else (None if body is None else json.dumps(body).encode())
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/profile",
+        f"http://127.0.0.1:{port}{path}",
         data=data,
         method=method,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json" if raw is None else "text/plain"},
     )
     try:
         with urllib.request.urlopen(req, timeout=2) as res:
@@ -239,6 +248,7 @@ def test_profile_endpoint_updates_color_and_input_independently(tmp_path):
             "OSEINK_PROFILE_CHOICES": str(CHOICES),
             "OSEINK_PROFILE_DEST": str(dest),
             "OSEINK_PROFILE_STAMP": str(tmp_path / "profile.stamp"),
+            "OSEINK_INPUT_DIR": str(tmp_path / "input"),
             "OSEINK_PROFILE_HOST": "127.0.0.1",
             "OSEINK_PROFILE_PORT": str(port),
         }
@@ -347,6 +357,22 @@ def test_profile_endpoint_updates_color_and_input_independently(tmp_path):
             status, _ = _request(port, "POST", bad)
             assert status == 400
             assert dest.read_text(encoding="utf-8") == kept
+
+        status, _ = _request(port, "POST", path="/input", raw=b"k 30 1")
+        assert status == 204
+        status, _ = _request(port, "POST", path="/input", raw=b"t 3 4 1")
+        assert status == 204
+        status, _ = _request(port, "POST", path="/input", raw=b"s 1 2 1 40")
+        assert status == 204
+        queued = sorted(p.name for p in (tmp_path / "input").iterdir() if p.name.isdigit())
+        assert queued == ["00000001", "00000002", "00000003"]
+        assert (tmp_path / "input" / "00000001").read_text(encoding="utf-8") == "k 30 1\n"
+        assert (tmp_path / "input" / "00000002").read_text(encoding="utf-8") == "t 3 4 1\n"
+        assert (tmp_path / "input" / "00000003").read_text(encoding="utf-8") == "s 1 2 1 40\n"
+        before_q = sorted(p.name for p in (tmp_path / "input").iterdir())
+        status, _ = _request(port, "POST", path="/input", raw=b"nope")
+        assert status == 400
+        assert sorted(p.name for p in (tmp_path / "input").iterdir()) == before_q
     finally:
         proc.kill()
         proc.wait(timeout=5)

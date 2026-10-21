@@ -129,6 +129,7 @@ def test_devd_watches_share_and_restarts_shell():
     assert "/oseink/run/boot-target" in text
     assert "/oseink/bin/oseink-shell" in text
     assert "oseink-devd:reload" in text
+    assert "pidof weston" in text
     shell = (DISTRO / "overlay" / "bin" / "oseink-shell").read_text(encoding="utf-8")
     assert "S60oseink-session" in shell
     assert "foreground" in shell

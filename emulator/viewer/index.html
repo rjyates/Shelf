@@ -12,9 +12,9 @@
       <p id="status" class="hint" aria-live="polite">Connecting to the guest…</p>
       <div class="bezel">
         <div class="stack">
-          <!-- RFB under the panel for console input. The canvas paints damage frames. -->
+          <!-- VNC stays under the panel. The canvas takes button, touch, and stylus. -->
           <div id="screen"></div>
-          <canvas id="panel" width="400" height="300" aria-label="E-ink panel"></canvas>
+          <canvas id="panel" width="400" height="300" tabindex="0" aria-label="E-ink panel"></canvas>
         </div>
       </div>
       <div class="controls">
