@@ -49,7 +49,7 @@ When phase 8 (playback) and phase 9 (alignment) start, read that repo for the EP
 
 [Cinephage](https://github.com/MoldyTaint/Cinephage) is the shape of the acquisition service: one process, one database, one web UI, from a request through import into the library. Books only. Shelf does not manage video, subtitles, or live TV, and it does not ship indexer definitions or books. The operator points it at files they already have, a drop folder, an OPDS server, or a download client they already run.
 
-SteamOS is the session pattern only: a constrained default environment, a full desktop on the same OS, and a setting for which one boots. The session switch is a boot-target file and a BusyBox restart, not gamescope, SDDM, or systemd.
+SteamOS is the session pattern only: a constrained default environment, a full desktop on the same OS, and a setting for which one boots. A reboot reads the boot-target file. The one-off switch is a BusyBox restart that leaves that file alone. It is not gamescope, SDDM, or systemd.
 
 [Crosspoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) is the reader-policy reference: stored position, layout cache, clearing refresh, button-first input, highlights, and dither. Paths and what to leave behind are in [references/crosspoint-reader.md](references/crosspoint-reader.md). The work is in phases 4, 6, 7, and 11. That file does not add a phase.
 
@@ -63,7 +63,7 @@ SteamOS is the session pattern only: a constrained default environment, a full d
 - Desktop pixels: a repaint hook in the Weston headless backend is the only desktop writer of the damage protocol. It grays the pixman damage region, picks `quality`, `fast`, or `full` from rect size, time since the last frame, and a partial-area budget, and stalls `finish_frame` until the panel delay has elapsed. There is no app-facing waveform API. Busy times are in Panel timing.
 - Reader/notes presenter: a damage-protocol client that sets the mode itself. It is not a Weston client. Session switch stops one presenter and starts the other.
 - Input: seatd and libinput for both sessions. One session holds the seat. Buttons are evdev keys. Touch and stylus are libinput devices.
-- Session manager: a BusyBox init script and `/oseink/run/boot-target`, contents `reader` (default) or `desktop`. Switching rewrites the file and restarts the presenter without rebooting the guest.
+- Session manager: a BusyBox init script and `/oseink/run/boot-target`, contents `reader` (default) or `desktop`. A reboot starts the presenter named in that file. Writing the file does not switch the running session. The one-off switch restarts the other presenter, leaves the file alone, and is the Home key in both sessions.
 - Device storage: SQLite for the library cache, the outbox, and positions. Book files live on the local filesystem.
 - Shelf deploy: one Docker image, one container, SQLite, book files on a local disk. Compose is the install path, same expectation as BookOrbit and Cinephage.
 - Shelf stack: TypeScript on Node 22. The admin UI is served by that same process. Alignment tools run as subprocesses (ffmpeg and a forced-alignment binary), not as a second service.
@@ -150,10 +150,12 @@ Done when the desktop session runs in the emulator, ordinary window updates stil
 
 ### 3. Reader/notes shell
 
-Minimal full-screen reader/notes environment: home, and a settings stub for the boot target and switch to desktop. EPUB and PDF engines are phase 4.
+Minimal full-screen reader/notes environment: home, and a settings stub for the boot target and switch to desktop. EPUB and PDF engines are phase 4. Issues: [#30](https://github.com/rjyates/oseink/issues/30) one-off switch, [#31](https://github.com/rjyates/oseink/issues/31) home and settings, [#32](https://github.com/rjyates/oseink/issues/32) mouse, touch, and stylus. Milestone: Reader/notes shell.
 
 - The same binary and UI work on both capability profiles at chrome level (navigation and settings).
-- Buttons alone can switch session and change the boot target.
+- Buttons alone can switch session and change the boot target. Up and Down move the row. Enter activates it. Left returns from settings to home. Home is the one-off switch in both sessions.
+- The boot target is what a reboot starts. Changing it does not leave the current session.
+- Touch and stylus activate the same rows. A connected mouse draws a cursor and clicks those rows. Mouse is not an `input` profile value.
 
 Done when that chrome is the default session on button-only gray and on touch-and-stylus color, and buttons alone can switch session and change the boot target.
 
