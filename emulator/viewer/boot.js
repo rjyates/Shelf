@@ -163,3 +163,86 @@ rfb.addEventListener("disconnect", (event) => {
 rfb.addEventListener("securityfailure", () => {
   status.textContent = "VNC security failure.";
 });
+
+function note(text) {
+  const el = document.getElementById("profile-note");
+  if (el) el.textContent = text;
+}
+
+function markProfile(current, choices) {
+  const colorOn = current.color === "kaleido" || current.color === "full";
+  for (const btn of document.querySelectorAll("[data-color]")) {
+    const on = btn.dataset.color === "color" ? colorOn : !colorOn;
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  const flags = new Set(choices.input[current.input] || []);
+  for (const btn of document.querySelectorAll("[data-input]")) {
+    btn.setAttribute("aria-pressed", flags.has(btn.dataset.input) ? "true" : "false");
+  }
+}
+
+function selection() {
+  const colorBtn = document.querySelector('[data-color][aria-pressed="true"]');
+  const input = [];
+  for (const btn of document.querySelectorAll('[data-input][aria-pressed="true"]')) {
+    input.push(btn.dataset.input);
+  }
+  return { color: colorBtn ? colorBtn.dataset.color : "", input };
+}
+
+async function initProfile() {
+  let choices;
+  let current;
+  try {
+    choices = await (await fetch("/profile-choices.json")).json();
+    current = await (await fetch("/profile")).json();
+    markProfile(current, choices);
+  } catch {
+    return;
+  }
+
+  let saving = false;
+  async function save() {
+    if (saving) return;
+    saving = true;
+    try {
+      const res = await fetch("/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(selection()),
+      });
+      if (!res.ok) throw new Error("Could not save the profile.");
+      current = await (await fetch("/profile")).json();
+      markProfile(current, choices);
+      note("Saved the profile.");
+    } catch (err) {
+      note(err.message || "Could not save the profile.");
+    } finally {
+      saving = false;
+    }
+  }
+
+  for (const btn of document.querySelectorAll("[data-color]")) {
+    btn.addEventListener("click", () => {
+      for (const other of document.querySelectorAll("[data-color]")) {
+        other.setAttribute("aria-pressed", other === btn ? "true" : "false");
+      }
+      void save();
+    });
+  }
+
+  for (const btn of document.querySelectorAll("[data-input]")) {
+    btn.addEventListener("click", () => {
+      const turningOff = btn.getAttribute("aria-pressed") === "true";
+      const pressed = document.querySelectorAll('[data-input][aria-pressed="true"]').length;
+      if (turningOff && pressed === 1) {
+        note("Pick at least one.");
+        return;
+      }
+      btn.setAttribute("aria-pressed", turningOff ? "false" : "true");
+      void save();
+    });
+  }
+}
+
+void initProfile();

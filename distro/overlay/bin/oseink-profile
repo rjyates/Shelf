@@ -34,7 +34,7 @@ dpi=$(get dpi)
 
 one_of "$color" gray kaleido full || exit 1
 one_of "$levels" 2 16 || exit 1
-one_of "$input" buttons touch stylus touch_and_stylus || exit 1
+one_of "$input" buttons touch stylus touch_and_stylus buttons_and_touch buttons_and_stylus buttons_and_touch_and_stylus || exit 1
 one_of "$light" yes no || exit 1
 is_pos "$width" || exit 1
 is_pos "$height" || exit 1

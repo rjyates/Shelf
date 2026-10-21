@@ -1,3 +1,4 @@
+import json
 import os
 import select
 import subprocess
@@ -126,6 +127,7 @@ def _drain(proc, buf, seconds):
 @pytest.mark.skipif(not KERNEL.is_file() or not ROOTFS.is_file(), reason="run distro/build.sh first")
 @pytest.mark.skipif(not _have_qemu(), reason="needs qemu-system-x86_64")
 def test_guest_reads_profile_at_session_start():
+    original = PROFILE.read_text(encoding="utf-8")
     command = [
         "qemu-system-x86_64",
         "-m",
@@ -180,8 +182,63 @@ def test_guest_reads_profile_at_session_start():
         while time.time() < deadline:
             text = _drain(proc, buf, 2)
             if GRAY_LINE in text:
-                return
-        pytest.fail("guest did not read the profile:\n" + "".join(buf)[-3000:])
+                break
+        else:
+            pytest.fail("guest did not read the profile:\n" + "".join(buf)[-3000:])
+
+        assert proc.stdin is not None
+        proc.stdin.write(b"cat /proc/sys/kernel/random/boot_id\n")
+        proc.stdin.flush()
+        text = _drain(proc, buf, 3)
+        boot_id = None
+        for line in text.splitlines():
+            line = line.strip()
+            if len(line) == 36 and line.count("-") == 4:
+                boot_id = line
+        assert boot_id, "could not read boot_id:\n" + text[-1500:]
+
+        changed = json.loads(original)
+        changed["color"] = "kaleido"
+        changed["input"] = "buttons_and_touch"
+        color_line = (
+            f"{changed['color']} {changed['gray_levels']} {changed['input']} "
+            f"{changed['frontlight']} {changed['width']} {changed['height']} {changed['dpi']}"
+        )
+        # Write the profile, then the share stamp. The image's devd restarts
+        # the shell when share content changes.
+        text = json.dumps(changed, indent=2) + "\n"
+        PROFILE.write_text(text, encoding="utf-8")
+        stamp = OVERLAY / "share" / "profile.stamp"
+        stamp.write_text(text, encoding="utf-8")
+
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            proc.stdin.write(b"cat /run/oseink-profile\n")
+            proc.stdin.flush()
+            text = _drain(proc, buf, 2)
+            if color_line in text:
+                break
+        else:
+            pytest.fail("guest did not reread the profile:\n" + "".join(buf)[-3000:])
+
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            proc.stdin.write(b"cat /proc/sys/kernel/random/boot_id\n")
+            proc.stdin.flush()
+            text = _drain(proc, buf, 2)
+            ids = [
+                line.strip()
+                for line in text.splitlines()
+                if len(line.strip()) == 36 and line.strip().count("-") == 4
+            ]
+            if len(ids) >= 2:
+                assert ids[-1] == boot_id, "kernel boot changed after profile write:\n" + text[-1500:]
+                break
+        else:
+            pytest.fail("guest did not reread boot_id:\n" + "".join(buf)[-1500:])
     finally:
+        PROFILE.write_text(original, encoding="utf-8")
+        stamp = OVERLAY / "share" / "profile.stamp"
+        stamp.unlink(missing_ok=True)
         proc.kill()
         proc.wait(timeout=10)

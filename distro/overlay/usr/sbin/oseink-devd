@@ -1,7 +1,8 @@
 #!/bin/sh
-# Watch the shared overlay and restart the shell when its binary or assets change.
-# Kernel / initramfs changes still need a new image; this only touches userspace.
+# Watch the shared overlay and restart the shell when its binary, assets, or
+# capability profile change. Kernel / initramfs changes still need a new image.
 WATCH="/oseink/bin /oseink/share"
+PROFILE=/oseink/run/profile.json
 SHELL_BIN=/oseink/bin/oseink-shell
 PIDFILE=/run/oseink-shell.pid
 
@@ -11,6 +12,9 @@ fingerprint() {
 		find $WATCH -type f 2>/dev/null | sort | while read -r f; do
 			md5sum "$f"
 		done
+		if [ -f "$PROFILE" ]; then
+			md5sum "$PROFILE"
+		fi
 	} | md5sum | awk '{print $1}'
 }
 

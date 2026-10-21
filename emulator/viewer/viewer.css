@@ -96,7 +96,15 @@ h1 {
 
 .controls {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
   gap: 0.75rem;
+}
+
+.controls-label {
+  color: var(--muted);
+  font-size: 0.95rem;
 }
 
 button {
@@ -117,6 +125,25 @@ button:hover {
 button:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
+}
+
+button[data-color],
+button[data-input] {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+button[data-color]:hover,
+button[data-input]:hover {
+  background: #d2cbbd;
+}
+
+button[data-color][aria-pressed="true"],
+button[data-color][aria-pressed="true"]:hover,
+button[data-input][aria-pressed="true"],
+button[data-input][aria-pressed="true"]:hover {
+  color: var(--paper);
+  background: var(--bezel);
 }
 
 button:disabled {

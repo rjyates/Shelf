@@ -1,0 +1,13 @@
+{
+  "bw": "gray",
+  "color_on": "kaleido",
+  "input": {
+    "buttons": ["buttons"],
+    "touch": ["touch"],
+    "stylus": ["stylus"],
+    "touch_and_stylus": ["touch", "stylus"],
+    "buttons_and_touch": ["buttons", "touch"],
+    "buttons_and_stylus": ["buttons", "stylus"],
+    "buttons_and_touch_and_stylus": ["buttons", "touch", "stylus"]
+  }
+}
