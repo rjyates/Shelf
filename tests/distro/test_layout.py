@@ -19,6 +19,8 @@ def test_external_tree_shape():
     assert devd.is_file() and devd.stat().st_mode & 0o111
     shell = DISTRO / "overlay" / "bin" / "oseink-shell"
     assert shell.is_file() and shell.stat().st_mode & 0o111
+    damage = DISTRO / "overlay" / "bin" / "oseink-damage"
+    assert damage.is_file() and damage.stat().st_mode & 0o111
     assert (DISTRO / "overlay" / "share" / "banner").is_file()
 
 
@@ -92,5 +94,9 @@ def test_devd_watches_share_and_restarts_shell():
     assert "/oseink/share/banner" in shell
     assert "/run/oseink-shell" in shell
     assert "/dev/tty0" in shell
-    assert "damage.json" not in shell
+    assert "/oseink/bin/oseink-damage" in shell
+    assert "mknod" not in shell
+    writer = (DISTRO / "overlay" / "bin" / "oseink-damage").read_text(encoding="utf-8")
+    assert "damage.json" in writer
+    assert "mknod" not in writer
     assert (DISTRO / "overlay" / "run" / ".gitkeep").is_file()

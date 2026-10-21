@@ -138,6 +138,22 @@ assert(MODES.full.flash === true, "full flashes");
 }
 
 {
+  let paints = 0;
+  const flashing = new Panel({
+    width: 8,
+    height: 8,
+    delayMs: 0,
+    dither: false,
+  });
+  flashing.paint = () => {
+    paints += 1;
+  };
+  await flashing.full(solid(flashing, 0.2), { flash: true });
+  assert(paints === 2, `full flash paints black then white (paints=${paints})`);
+  assert(flashing.flashPhase === "done", "painted flash still finishes");
+}
+
+{
   const msg = parseDamage(
     '{"v":1,"mode":"quality","x":0,"y":0,"w":8,"h":8,"panel_w":400,"panel_h":300,"seq":9}',
   );

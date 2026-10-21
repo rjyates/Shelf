@@ -165,6 +165,20 @@ export class Panel {
 
   async full(target, opts) {
     if (this.delayMs > 0) await sleep(this.delayMs);
+    const flash = !opts || opts.flash !== false;
+    if (flash && this.paint) {
+      this.ink.fill(0);
+      this.flashPhase = "black";
+      this.paint();
+      await sleep(90);
+      this.ink.fill(1);
+      this.flashPhase = "white";
+      this.paint();
+      await sleep(90);
+      this.applyFull(target, { flash: false });
+      this.flashPhase = "done";
+      return;
+    }
     this.applyFull(target, opts);
   }
 
