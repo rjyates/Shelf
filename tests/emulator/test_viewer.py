@@ -11,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[2]
 VIEWER = ROOT / "emulator" / "viewer"
 DOCKERFILE = ROOT / "emulator" / "Dockerfile"
 COMPOSE = ROOT / "emulator" / "compose.yml"
-SHELL = ROOT / "distro" / "overlay" / "bin" / "oseink-shell"
 PROFILE = ROOT / "distro" / "overlay" / "run" / "profile.json"
 CHOICES = VIEWER / "profile-choices.json"
 WRITER = VIEWER / "profile-writer.py"
@@ -141,12 +140,18 @@ def test_guest_writer_publishes_a_v1_gray8_frame(tmp_path):
 
 
 def test_shell_publishes_damage_and_keeps_the_console():
-    text = SHELL.read_text(encoding="utf-8")
+    text = (ROOT / "distro" / "overlay" / "bin" / "oseink-reader").read_text(encoding="utf-8")
     assert "/dev/tty0" in text
     assert "/oseink/share/banner" in text
     assert "page.gray" not in text
     assert "damage.json" not in text
     assert "/oseink/bin/oseink-damage" in text
+    desktop = (ROOT / "distro" / "overlay" / "bin" / "oseink-desktop").read_text(encoding="utf-8")
+    assert "/dev/tty0" in desktop
+    assert "menu.gray" in desktop
+    assert "fast" in desktop
+    assert "damage.json" not in desktop
+    assert "/oseink/bin/oseink-damage" in desktop
     writer = (ROOT / "distro" / "overlay" / "bin" / "oseink-damage").read_text(encoding="utf-8")
     assert "damage.json" in writer
     assert "frame.gray" in writer

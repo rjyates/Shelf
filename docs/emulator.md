@@ -22,9 +22,11 @@ The userspace shell and assets under `distro/overlay/` reload while the VM stays
 
 ## How the panel gets pixels
 
-`oseink-shell` reads the capability profile, then `oseink-damage` writes `/oseink/run/damage.json` and `frame.gray` (a v1 message: `quality`, `fast`, or `full`, a rect, and gray8 pixels). Compose serves that directory at `/guest/`. The viewer polls it and applies the frame with `emulator/viewer/damage.js`. The picture is that frame. VNC stays connected so a click still reaches the VGA console. Apps do not open a panel device. MCP can write the same files; see [emulator-mcp.md](emulator-mcp.md). Desktop repaint is a later phase. The boot-target switch is the next issue.
+`oseink-shell` is the session entry. BusyBox init starts `oseink-devd`, which starts that shell. The shell runs `/oseink/etc/init.d/S60oseink-session`, and the script execs the presenter named in `/oseink/run/boot-target`: `reader` (default) or `desktop`. The reader stub publishes one `quality` frame (`share/demo/page.gray`). The desktop stub publishes one `fast` frame (`share/demo/menu.gray`). `oseink-damage` writes `/oseink/run/damage.json` and `frame.gray` (a v1 message: `quality`, `fast`, or `full`, a rect, and gray8 pixels). Compose serves that directory at `/guest/`. The viewer polls it and applies the frame with `emulator/viewer/damage.js` (delay, ghosting, full-refresh flash). The picture is that frame. VNC stays connected so a click still reaches the VGA console. Apps do not open a panel device. MCP can write the same files; see [emulator-mcp.md](emulator-mcp.md).
 
-`oseink-devd` restarts `/oseink/bin/oseink-shell` when that binary, `/oseink/share/`, or `/oseink/run/profile.json` changes. The devd in the current image watches the binary and share only, so the profile picker also updates `profile.stamp` under share. Kernel or initramfs changes need a new build. Session modes (reader/notes vs desktop) are defined in [product.md](product.md).
+Writing `reader` or `desktop` into the boot-target file restarts the presenter. The guest command is `/oseink/etc/init.d/S60oseink-session restart reader` (or `desktop`). The image is not rebuilt and the VM is not rebooted. Desktop repaint is a later phase.
+
+`oseink-devd` restarts `/oseink/bin/oseink-shell` when that binary, `/oseink/share/`, `/oseink/run/profile.json`, or `/oseink/run/boot-target` changes. The devd in the current image watches the binary and share only, so a boot-target write is noticed by the running stub, which exits and lets that devd start the shell again. The profile picker also updates `profile.stamp` under share. Kernel or initramfs changes need a new build. Session modes (reader/notes vs desktop) are defined in [product.md](product.md).
 
 ## Agent MCP
 

@@ -1,8 +1,10 @@
 #!/bin/sh
-# Watch the shared overlay and restart the shell when its binary, assets, or
-# capability profile change. Kernel / initramfs changes still need a new image.
+# Watch the shared overlay and restart the shell when its binary, assets,
+# capability profile, or boot target change. Kernel / initramfs changes still
+# need a new image. The devd in the current image watches bin and share only.
 WATCH="/oseink/bin /oseink/share"
 PROFILE=/oseink/run/profile.json
+BOOT=/oseink/run/boot-target
 SHELL_BIN=/oseink/bin/oseink-shell
 PIDFILE=/run/oseink-shell.pid
 
@@ -14,6 +16,9 @@ fingerprint() {
 		done
 		if [ -f "$PROFILE" ]; then
 			md5sum "$PROFILE"
+		fi
+		if [ -f "$BOOT" ]; then
+			md5sum "$BOOT"
 		fi
 	} | md5sum | awk '{print $1}'
 }
@@ -31,7 +36,7 @@ stop_shell() {
 		kill "$(cat "$PIDFILE")" 2>/dev/null || true
 		rm -f "$PIDFILE"
 	fi
-	killall oseink-shell 2>/dev/null || true
+	killall oseink-shell oseink-reader oseink-desktop 2>/dev/null || true
 }
 
 prev=$(fingerprint)
