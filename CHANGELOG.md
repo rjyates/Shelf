@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/rjyates/oseink/compare/v1.13.0...v1.14.0) (2026-10-21)
+
+
+### Features
+
+* **desktop:** send panel input to the seat ([ec9a940](https://github.com/rjyates/oseink/commit/ec9a940ab5d6952147597971413b1135be5e1606))
+
 # [1.13.0](https://github.com/rjyates/oseink/compare/v1.12.0...v1.13.0) (2026-10-21)
 
 
