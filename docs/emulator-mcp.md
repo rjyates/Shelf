@@ -2,7 +2,7 @@
 
 MCP server so **any** AI agent can see and drive the e-ink panel on the Docker emulator. One launch script: `tools/emulator-mcp/run.sh` (installs deps on first run).
 
-When debugging the panel or guest, call `panel_screenshot` before guessing from logs. The picture on `:8006` is the guest damage frame (`/guest/damage.json` and its gray8 pixels).
+When debugging the panel or guest, call `panel_screenshot` before guessing from logs. The picture on `:8006` is the guest damage frame (`/guest/damage.json` and its gray8 pixels). That page covers the QEMU VGA console. Call `display_screenshot` for the framebuffer and `console_read` for tty0 and the serial tty.
 
 Live tools need the qemu container (`emulator_up`, or `docker compose -p oseink up -d --build --force-recreate` from `emulator/`). They talk to Docker / `:8006` only — no host overlay bypass.
 
@@ -40,8 +40,10 @@ Env: `OSEINK_VIEWER_URL` (default `http://127.0.0.1:8006/`), `OSEINK_COMPOSE_PRO
 
 | Tool | Job |
 | --- | --- |
-| `panel_screenshot` | PNG of the live `:8006` e-ink viewer (primary) |
-| `guest_type` | Click panel, type into the guest, return screenshot |
+| `panel_screenshot` | PNG of the live `:8006` e-ink viewer (primary for the panel) |
+| `display_screenshot` | PNG of the live QEMU VGA display, plus decoded tty0 text |
+| `console_read` | Text of tty0 (VGA console) and ttyS0 (serial). `which` is `all`, `vga`, or `ttyS0` |
+| `guest_type` | Click panel, type into the VGA console, return the e-ink screenshot |
 | `viewer_full_refresh` | Click Full refresh, return screenshot |
 | `panel_status` | Container + viewer health |
 | `emulator_up` / `emulator_down` | Compose up/down |
@@ -52,4 +54,4 @@ Env: `OSEINK_VIEWER_URL` (default `http://127.0.0.1:8006/`), `OSEINK_COMPOSE_PRO
 
 ## Agent rule
 
-If the task touches the emulator panel, guest UI, e-ink modes, or “what does the screen show,” use `panel_screenshot` (and `guest_type` when you need input). Do not rely on logs alone.
+If the task touches the emulator panel, guest UI, or e-ink modes, use `panel_screenshot` (and `guest_type` when you need input). If it touches the VGA console or a tty, use `display_screenshot` and `console_read`. Do not rely on logs alone.

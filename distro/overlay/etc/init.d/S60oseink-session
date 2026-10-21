@@ -1,7 +1,7 @@
 #!/bin/sh
 # Start the presenter named in the boot-target file.
 # reader (default) or desktop. A restart does not rebuild the image or reboot.
-# The desktop presenter is a damage stub.
+# Desktop starts Weston. Reader stays a damage client.
 if [ -x /oseink/bin/oseink-reader ]; then
 	ROOT=/oseink
 else
