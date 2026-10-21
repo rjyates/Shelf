@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/rjyates/oseink/compare/v1.9.0...v1.10.0) (2026-10-21)
+
+
+### Features
+
+* **emulator:** paint session frames through damage ([56f08c5](https://github.com/rjyates/oseink/commit/56f08c5a6b1ad294931390969fa553aae8d69ec4))
+
 # [1.9.0](https://github.com/rjyates/oseink/compare/v1.8.0...v1.9.0) (2026-10-21)
 
 
