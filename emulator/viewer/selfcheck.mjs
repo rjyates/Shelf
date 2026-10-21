@@ -52,6 +52,10 @@ function assert(cond, msg) {
 }
 
 // --- issue 7 mode mapping ---
+assert(MODES.fast.delayMs === 120, "fast busy 120ms");
+assert(MODES.quality.delayMs === 450, "quality busy 450ms");
+assert(MODES.full.delayMs === 2000, "full busy 2000ms");
+assert(MODES.full.delayMs > MODES.quality.delayMs, "full slower than quality");
 assert(MODES.quality.delayMs > MODES.fast.delayMs, "quality slower than fast");
 assert(MODES.quality.grayLevels > MODES.fast.grayLevels, "quality has more gray levels");
 assert(MODES.fast.ghost > MODES.quality.ghost, "fast leaves harsher residual");
@@ -151,6 +155,20 @@ assert(MODES.full.flash === true, "full flashes");
   await flashing.full(solid(flashing, 0.2), { flash: true });
   assert(paints === 2, `full flash paints black then white (paints=${paints})`);
   assert(flashing.flashPhase === "done", "painted flash still finishes");
+}
+
+{
+  const flashing = new Panel({
+    width: 8,
+    height: 8,
+    delayMs: 40,
+    dither: false,
+  });
+  flashing.paint = () => {};
+  const started = performance.now();
+  await flashing.full(solid(flashing, 0.2), { flash: true });
+  const elapsed = performance.now() - started;
+  assert(elapsed >= 30 && elapsed < 160, `full playback stays inside the busy time (elapsed=${elapsed})`);
 }
 
 {

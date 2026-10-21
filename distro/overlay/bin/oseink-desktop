@@ -72,6 +72,9 @@ while [ ! -S /run/seatd.sock ]; do
 	sleep 1
 done
 
+# seatd is already this session's seat. libseat must not look for logind.
+export LIBSEAT_BACKEND=seatd
+
 /usr/bin/weston \
 	--config=/oseink/etc/weston.ini \
 	--socket=wayland-0 \

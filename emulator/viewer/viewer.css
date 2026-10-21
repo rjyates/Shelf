@@ -3,6 +3,8 @@
   --ink: #1a1814;
   --bezel: #2c2a26;
   --muted: #5c574e;
+  --panel-w: 400;
+  --panel-h: 300;
 }
 
 * {
@@ -48,7 +50,7 @@ h1 {
 }
 
 .bezel {
-  width: 100%;
+  width: min(100%, calc(72vh * var(--panel-w) / var(--panel-h) + 28px));
   padding: 14px;
   background: var(--bezel);
   border-radius: 4px;
@@ -58,28 +60,30 @@ h1 {
 .stack {
   position: relative;
   width: 100%;
+  aspect-ratio: var(--panel-w) / var(--panel-h);
   background: var(--paper);
   line-height: 0;
 }
 
 /* VNC under the panel: receives input. Panel is what you see. */
 #screen {
-  position: relative;
+  position: absolute;
+  inset: 0;
   width: 100%;
-  min-height: 240px;
+  height: 100%;
   z-index: 1;
+  overflow: hidden;
 }
 
 #screen > div {
   width: 100% !important;
-  height: auto !important;
-  min-height: 240px;
+  height: 100% !important;
   background: transparent !important;
 }
 
 #screen canvas {
   width: 100% !important;
-  height: auto !important;
+  height: 100% !important;
   display: block;
 }
 
@@ -150,4 +154,20 @@ button[data-input][aria-pressed="true"]:hover {
 button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.controls input[type="number"] {
+  font: inherit;
+  font-size: 0.95rem;
+  width: 5.5rem;
+  padding: 0.45rem 0.6rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid #1a1814;
+  border-radius: 2px;
+}
+
+.controls input[type="number"]:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }

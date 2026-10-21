@@ -14,7 +14,7 @@
         <div class="stack">
           <!-- RFB under the panel for console input. The canvas paints damage frames. -->
           <div id="screen"></div>
-          <canvas id="panel" width="640" height="480" aria-label="E-ink panel"></canvas>
+          <canvas id="panel" width="400" height="300" aria-label="E-ink panel"></canvas>
         </div>
       </div>
       <div class="controls">
@@ -24,6 +24,13 @@
         <span class="controls-label" id="color-label">Color</span>
         <button type="button" data-color="bw" aria-pressed="false">Black and white</button>
         <button type="button" data-color="color" aria-pressed="false">Color</button>
+      </div>
+      <div class="controls" role="group" aria-labelledby="size-label">
+        <span class="controls-label" id="size-label">Size</span>
+        <label class="controls-label" for="panel-w">Width</label>
+        <input id="panel-w" type="number" min="1" max="4096" inputmode="numeric" value="400" />
+        <label class="controls-label" for="panel-h">Height</label>
+        <input id="panel-h" type="number" min="1" max="4096" inputmode="numeric" value="300" />
       </div>
       <div class="controls" role="group" aria-labelledby="input-label">
         <span class="controls-label" id="input-label">Interaction</span>

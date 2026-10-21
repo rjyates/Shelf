@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""POST /profile {"color":"bw"|"color","input":["buttons","touch"]} updates those fields."""
+"""POST /profile updates color, input, and size. Width and height are optional."""
 
 import json
 import os
@@ -12,6 +12,7 @@ DEST = Path(os.environ.get("OSEINK_PROFILE_DEST", "/shared/run/profile.json"))
 STAMP = Path(os.environ.get("OSEINK_PROFILE_STAMP", "/shared/share/profile.stamp"))
 HOST = os.environ.get("OSEINK_PROFILE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OSEINK_PROFILE_PORT", "8765"))
+MAX_EDGE = 4096
 
 
 def canonical(doc):
@@ -34,6 +35,15 @@ def encode_input(flags, table):
     raise ValueError
 
 
+def panel_edge(body, key, previous):
+    if key not in body:
+        return previous
+    val = body[key]
+    if isinstance(val, bool) or not isinstance(val, int) or val < 1 or val > MAX_EDGE:
+        raise ValueError
+    return val
+
+
 def apply_selection(doc, body, choices):
     mode = body["color"]
     # shortcut: color writes kaleido, keep full when the file already says full, until the picker splits those
@@ -46,6 +56,8 @@ def apply_selection(doc, body, choices):
     updated = dict(doc)
     updated["color"] = color
     updated["input"] = encode_input(body["input"], choices["input"])
+    updated["width"] = panel_edge(body, "width", doc["width"])
+    updated["height"] = panel_edge(body, "height", doc["height"])
     return updated
 
 

@@ -17,14 +17,14 @@
 
 /** @typedef {"quality"|"fast"|"full"} DamageMode */
 
-/** Placeholder delays (200 / 35 / 140). docs/product.md "Panel timing" is the table issue 25 installs. */
+/** Room-temperature busy times. Same numbers as distro/panel/oseink-refresh.h. */
 export const MODES = {
-  // Page turns: slower grayscale, soft residual (GC16 / GL16 class).
-  quality: { grayLevels: 16, delayMs: 200, ghost: 0.32, flash: false },
-  // Menus: quicker mono / few levels, harsher residual (A2 / DU class).
-  fast: { grayLevels: 2, delayMs: 35, ghost: 0.58, flash: false },
-  // Full refresh: flash then clear ghosts (FORCE_FULL / RESET class).
-  full: { grayLevels: 16, delayMs: 140, ghost: 0, flash: true },
+  // Page turns: slower grayscale, soft residual (GC16 class).
+  quality: { grayLevels: 16, delayMs: 450, ghost: 0.32, flash: false },
+  // Typing and menus: mono, harsher residual (A2 class).
+  fast: { grayLevels: 2, delayMs: 120, ghost: 0.58, flash: false },
+  // Full refresh: flash, then the ghost is gone (INIT / RESET class).
+  full: { grayLevels: 16, delayMs: 2000, ghost: 0, flash: true },
 };
 
 export function parseDamage(raw) {

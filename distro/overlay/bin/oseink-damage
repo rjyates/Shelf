@@ -1,12 +1,15 @@
 #!/bin/sh
 # Publish one v1 gray8 damage frame. The panel reads this file; nothing opens a device.
-# shortcut: pixels are share/demo/page.gray (400x300), draw a frame when the profile size changes
+# page.gray is 400x300. Another profile size is that page, nearest-neighbor scaled.
+# shortcut: only the demo page scales, a different source still has to match width*height
 # Usage: oseink-damage WIDTH HEIGHT [RUNDIR [PIXELS [MODE]]]
 width=${1:?}
 height=${2:?}
 run=${3:-/oseink/run}
 src=${4:-/oseink/share/demo/page.gray}
 mode=${5:-quality}
+sw=400
+sh=300
 
 case $width in *[!0-9]*|'') exit 1 ;; esac
 case $height in *[!0-9]*|'') exit 1 ;; esac
@@ -15,8 +18,57 @@ case $mode in quality|fast|full) ;; *) exit 1 ;; esac
 [ -f "$src" ] || exit 1
 
 need=$((width * height))
+demo=$((sw * sh))
 got=$(wc -c < "$src" | awk '{print $1}')
-[ "$got" -eq "$need" ] || exit 1
+
+# Nearest-neighbor. Bytes go out as base64 so a 0 gray level survives awk.
+scale_frame() {
+	b64=$4.b64
+	od -An -tu1 -v "$1" | awk -v sw="$sw" -v sh="$sh" -v dw="$2" -v dh="$3" '
+	BEGIN {
+		alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+		ORS = ""
+	}
+	function put(c) {
+		printf "%s", c
+		if (++col == 76) { printf "\n"; col = 0 }
+	}
+	function emit(count,    a, b, c, v) {
+		a = hold[0]
+		b = count > 1 ? hold[1] : 0
+		c = count > 2 ? hold[2] : 0
+		v = a * 65536 + b * 256 + c
+		put(substr(alpha, int(v / 262144) % 64 + 1, 1))
+		put(substr(alpha, int(v / 4096) % 64 + 1, 1))
+		if (count > 1) put(substr(alpha, int(v / 64) % 64 + 1, 1)); else put("=")
+		if (count > 2) put(substr(alpha, v % 64 + 1, 1)); else put("=")
+		hn = 0
+	}
+	function take(val) {
+		hold[hn++] = val
+		if (hn == 3) emit(3)
+	}
+	{ for (i = 1; i <= NF; i++) pix[n++] = $i + 0 }
+	END {
+		if (n != sw * sh) exit 2
+		for (y = 0; y < dh; y++) {
+			sy = int(y * sh / dh)
+			for (x = 0; x < dw; x++) {
+				sx = int(x * sw / dw)
+				take(pix[sy * sw + sx])
+			}
+		}
+		if (hn) emit(hn)
+		printf "\n"
+	}
+	' > "$b64"
+	if [ "$?" -ne 0 ]; then
+		rm -f "$b64"
+		return 1
+	fi
+	base64 -d < "$b64" > "$4" || { rm -f "$b64"; return 1; }
+	rm -f "$b64"
+}
 
 mkdir -p "$run"
 seqfile=$run/damage.seq
@@ -28,8 +80,18 @@ case $seq in *[!0-9]*|'') seq=0 ;; esac
 seq=$((seq + 1))
 printf '%s\n' "$seq" > "$seqfile"
 
-cp "$src" "$run/frame.gray.tmp"
-mv "$run/frame.gray.tmp" "$run/frame.gray"
+tmp=$run/frame.gray.tmp
+if [ "$got" -eq "$need" ]; then
+	cp "$src" "$tmp"
+elif [ "$got" -eq "$demo" ]; then
+	scale_frame "$src" "$width" "$height" "$tmp" || exit 1
+	sized=$(wc -c < "$tmp" | awk '{print $1}')
+	[ "$sized" -eq "$need" ] || exit 1
+else
+	echo "oseink-damage: $src is $got bytes, want $need" >&2
+	exit 1
+fi
+mv "$tmp" "$run/frame.gray"
 printf '%s\n' "{\"v\":1,\"mode\":\"$mode\",\"x\":0,\"y\":0,\"w\":$width,\"h\":$height,\"panel_w\":$width,\"panel_h\":$height,\"seq\":$seq,\"format\":\"gray8\",\"pixels\":\"frame.gray\"}" \
 	> "$run/damage.json.tmp"
 mv "$run/damage.json.tmp" "$run/damage.json"

@@ -51,6 +51,8 @@ When phase 8 (playback) and phase 9 (alignment) start, read that repo for the EP
 
 SteamOS is the session pattern only: a constrained default environment, a full desktop on the same OS, and a setting for which one boots. The session switch is a boot-target file and a BusyBox restart, not gamescope, SDDM, or systemd.
 
+[Crosspoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) is the reader-policy reference: stored position, layout cache, clearing refresh, button-first input, highlights, and dither. Paths and what to leave behind are in [references/crosspoint-reader.md](references/crosspoint-reader.md). The work is in phases 4, 6, 7, and 11. That file does not add a phase.
+
 ## Locked technical choices
 
 - Device image: Buildroot. The emulator guest is x86_64 under KVM. Hardware images are a later board port of the same userspace.
@@ -101,7 +103,7 @@ Rules:
 - `kaleido` and `full` use different color paths. Kaleido is a filter overlay. Full color is a color particle panel. The shell treats them as different profile values.
 - Stylus present: store ink as vector strokes on that book and sync them as annotations. Stylus absent: hide ink tools. Touch can still create a highlight from a selection. Buttons can set a bookmark.
 - Frontlight absent: hide the light control.
-- The emulator's panel simulator must accept this same profile so a gray button-only device and a color touch-and-stylus device can both be tested before hardware exists. The viewer at `:8006` sets color and input separately. Color is black and white (`gray`) or color (`kaleido`, or `full` when the file already says so). Input is any combination of buttons, touch, and stylus. The published file is `/oseink/run/profile.json` (on the emulator, `distro/overlay/run/profile.json`). The guest reads that file at session start, the same way a device reads the boot probe. Changing it in the viewer restarts the session. Compose does not set the profile.
+- The emulator's panel simulator must accept this same profile so a gray button-only device and a color touch-and-stylus device can both be tested before hardware exists. The viewer at `:8006` sets color, input, and size separately. Color is black and white (`gray`) or color (`kaleido`, or `full` when the file already says so). Input is any combination of buttons, touch, and stylus. Size is width and height in pixels, from 1 to 4096. The published file is `/oseink/run/profile.json` (on the emulator, `distro/overlay/run/profile.json`). The guest reads that file at session start, the same way a device reads the boot probe. Changing it in the viewer restarts the session. Compose does not set the profile.
 
 ## Panel timing
 
@@ -121,7 +123,7 @@ Room-temperature stand-ins come from the E Ink mode declaration (A2, GC16, INIT)
 
 DU is the slower black-and-white sibling of A2, about 260ms. `fast` uses the A2 time, which is the typing and menu path.
 
-`emulator/viewer/damage.js` still has the placeholder table: `quality` 200ms, `fast` 35ms, `full` 140ms. In that table a full clear is shorter than a grayscale update. [#25](https://github.com/rjyates/oseink/issues/25) installs the table above.
+The hook and `emulator/viewer/damage.js` use the busy times above. The first rect that covers the panel is `full`. A later one is `quality`, so a desktop redraw does not flash again. A rect under one eighth of the panel is `fast` when the previous frame was under 450ms ago, and `quality` otherwise. Partials also become `full` after they add up to four panel-areas. That budget can move.
 
 ## Phases
 
@@ -157,13 +159,17 @@ Done when that chrome is the default session on button-only gray and on touch-an
 
 ### 4. Local reader
 
-Builds on the reader/notes session.
+Builds on the reader/notes session. The policies below come from [references/crosspoint-reader.md](references/crosspoint-reader.md).
 
-- Shell opens a local folder of EPUBs and PDFs. EPUB pages come from Readium. PDF pages come from MuPDF.
-- Page turns, library, and settings work under every `input` value.
-- Pages, covers, and highlights render as gray8. Color is the color-plane phase.
+- Shell opens a local folder of EPUBs and PDFs. EPUB pages come from Readium. PDF pages come from MuPDF. Readium's page output covers the typography checks in that reference: the CSS subset, tables, hyphenation, CJK, RTL, widows and orphans, and footnote hit targets.
+- The stored EPUB position is a CFI. The page number is derived from the current layout. A relayout may change the page number and keeps the CFI. PDF keeps a page index. The local cache uses the content hash from the identity rule, so a rename does not fork the position.
+- The page cache key is the full typography and viewport spec. The first page is shown before the rest of the chapter is laid out. Idle time continues the cache. A spec change drops it.
+- Page turns, library, settings, and the reading chrome work under every `input` value. The reading chrome shows the chapter page, the position in the book, the title, and the battery. Buttons perform every one of those actions. Touch adds zones: one page-turn direction uses the whole page; both directions use the left third versus the rest, swapped for RTL. The center third opens the menu. Edge swipes are back, home, and menu. Hit targets grow sideways so they stay out of the page-turn rows.
+- The reader presenter sets the damage mode. Page turns use `fast`, then one clearing refresh on a cadence the user can set (1, 5, 10, 15, 30, or never; default 15). Images and anti-aliased text use `quality`. `full` is the flash that clears residue. One update paints the page, including gray. The phase 2 desktop hook keeps its area budget.
+- Pages, covers, and highlights render as gray8, then dither to `gray_levels` in the damage buffer. Ordered dither for flat color. Error diffusion for images and covers. A cover thumbnail is made at the size it will be drawn. A highlight is a CFI range. A broken file shows a failure a button can leave.
+- Color is the color-plane phase.
 
-Done when the emulator can boot two profiles, button-only gray and touch-and-stylus color, and the same shell binary is usable on both inside the reader/notes session.
+Done when the emulator can boot two profiles, button-only gray and touch-and-stylus color, and the same shell binary opens a local EPUB and a local PDF on both: the first page appears before the chapter cache finishes, a button turns the page and leaves a broken file, and a font change keeps the CFI and the highlight range.
 
 ### 5. GPU offload
 
@@ -179,19 +185,19 @@ Done when a GPU-less emulator still matches phase 4, and a guest whose probe rep
 
 - `docker compose up` starts shelf.
 - A user, a library folder, and a scan.
-- Metadata from Open Library only.
+- Metadata from Open Library only. A file whose metadata lookup fails still appears, and the scan records that the result is degraded.
 - OPDS catalog and an authenticated file download.
 - Admin UI to see the library.
 
-Done when a book dropped in the folder appears in OPDS and downloads as the original file.
+Done when a book dropped in the folder appears in OPDS and downloads as the original file, including a file whose metadata lookup failed.
 
 ### 7. Progress sync
 
-- Protocol in `protocol/` for position, bookmark, and highlight.
-- Shell outbox drains when the radio is up.
+- Protocol in `protocol/` for position, bookmark, and highlight. The EPUB position is the CFI. The highlight is a CFI range plus a stable id.
+- The shell writes a delete to the outbox before it removes the local row. The outbox write is crash-safe. Wi-Fi comes up to drain the outbox, then goes down.
 - Field-level `updated_at` merge on the server.
 
-Done when two emulator instances, or one emulator and the admin UI, share a position and a highlight for one user after an offline edit on each side.
+Done when two emulator instances, or one emulator and the admin UI, share a position and a highlight for one user after an offline edit on each side, and an offline delete still arrives.
 
 ### 8. Stream, download, and read-along playback
 
@@ -226,7 +232,7 @@ Done when a wanted book from a configured source imports once, gets metadata, an
 Covers, highlights, and pen ink exist as gray8 by this point. This phase is when they gain color.
 
 - A damage message may carry a color plane beside gray8.
-- Covers, highlight marks, and pen ink use `kaleido` or `full` from the profile. Body text stays gray and dithered to `gray_levels`.
+- Covers, highlight marks, and pen ink use `kaleido` or `full` from the profile. The highlight's stored anchor stays the CFI range. Body text stays gray and dithered to `gray_levels`.
 - A gray profile writes gray8 only.
 
 Done when a color profile shows a cover or a highlight in color on `:8006`, and a gray profile stays gray8.
@@ -241,3 +247,5 @@ Done when a stylus profile round-trips a stroke through shelf, and a gray profil
 ## Deferred
 
 Leave these out until a later decision changes this file: comics, text-to-speech, achievements, social reading, Hardcover and Readwise export, OIDC, a hosted multi-tenant service, shipping KOReader (or any third-party reader) as the built-in reader/notes session, and any panel-specific fork of the reader UI.
+
+Sleep that keeps the last finished frame on the panel, and a wake that does not flash it, wait for a board port. They are not a phase in this list. Frontlight stays in phase 12, and only when the profile says the light is present.
