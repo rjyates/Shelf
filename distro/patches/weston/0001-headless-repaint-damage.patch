@@ -1,0 +1,153 @@
+--- a/libweston/backend-headless/headless.c
++++ b/libweston/backend-headless/headless.c
+@@ -33,6 +33,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/time.h>
++#include <time.h>
+ #include <stdbool.h>
+ 
+ #include <libweston/libweston.h>
+@@ -48,6 +49,7 @@
+ #include "shared/cairo-util.h"
+ #include "shared/xalloc.h"
+ #include "shared/timespec-util.h"
++#include "oseink-refresh.h"
+ #include "linux-dmabuf.h"
+ #include "output-capture.h"
+ #include "presentation-time-server-protocol.h"
+@@ -82,6 +84,7 @@
+ 	struct weston_mode mode;
+ 	struct wl_event_source *finish_frame_timer;
+ 	struct weston_renderbuffer *renderbuffer;
++	struct oseink_refresh damage;
+ 
+ 	struct frame *frame;
+ 	struct {
+@@ -156,6 +159,73 @@
+ }
+ 
+ static int
++oseink_damage_busy(struct headless_output *output, pixman_region32_t *damage)
++{
++	struct weston_renderer *renderer = output->base.compositor->renderer;
++	pixman_image_t *image;
++	pixman_box32_t *rects;
++	int n, i, scale, ox, oy, busy;
++	int x0, y0, x1, y1;
++	int stride;
++	struct timespec ts;
++	long now_ms;
++	static bool warned;
++
++	if (!renderer || renderer->type != WESTON_RENDERER_PIXMAN || !renderer->pixman)
++		return -1;
++	if (!output->renderbuffer)
++		return -1;
++
++	rects = pixman_region32_rectangles(damage, &n);
++	if (!rects || n <= 0)
++		return -1;
++
++	x0 = rects[0].x1;
++	y0 = rects[0].y1;
++	x1 = rects[0].x2;
++	y1 = rects[0].y2;
++	for (i = 1; i < n; i++) {
++		if (rects[i].x1 < x0)
++			x0 = rects[i].x1;
++		if (rects[i].y1 < y0)
++			y0 = rects[i].y1;
++		if (rects[i].x2 > x1)
++			x1 = rects[i].x2;
++		if (rects[i].y2 > y1)
++			y1 = rects[i].y2;
++	}
++
++	scale = output->base.current_scale > 0 ? output->base.current_scale : 1;
++	ox = (int)output->base.pos.c.x;
++	oy = (int)output->base.pos.c.y;
++	x0 = (x0 - ox) * scale;
++	y0 = (y0 - oy) * scale;
++	x1 = (x1 - ox) * scale;
++	y1 = (y1 - oy) * scale;
++
++	image = renderer->pixman->renderbuffer_get_image(output->renderbuffer);
++	if (!image || PIXMAN_FORMAT_BPP(pixman_image_get_format(image)) != 32)
++		return -1;
++	stride = pixman_image_get_stride(image);
++	if (stride < 4)
++		return -1;
++
++	clock_gettime(CLOCK_MONOTONIC, &ts);
++	now_ms = (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
++	busy = oseink_refresh_publish(&output->damage,
++				      pixman_image_get_data(image),
++				      stride / 4,
++				      x0, y0, x1 - x0, y1 - y0,
++				      now_ms,
++				      "/oseink/run");
++	if (busy < 0 && !warned) {
++		warned = true;
++		weston_log("oseink damage: no frame written\n");
++	}
++	return busy;
++}
++
++static int
+ headless_output_repaint(struct weston_output *output_base)
+ {
+ 	struct headless_output *output = to_headless_output(output_base);
+@@ -176,9 +246,13 @@
+ 	ec->renderer->repaint_output(&output->base, &damage,
+ 				     output->renderbuffer);
+ 
++	/* The timer is the panel stall. The next frame waits out this busy time. */
++	delay_msec = oseink_damage_busy(output, &damage);
++	if (delay_msec < 0)
++		delay_msec = millihz_to_nsec(output->mode.refresh) / 1000000;
++
+ 	pixman_region32_fini(&damage);
+ 
+-	delay_msec = millihz_to_nsec(output->mode.refresh) / 1000000;
+ 	wl_event_source_timer_update(output->finish_frame_timer, delay_msec);
+ 
+ 	return 0;
+@@ -225,6 +299,7 @@
+ 
+ 	b = output->backend;
+ 
++	oseink_refresh_fini(&output->damage);
+ 	wl_event_source_remove(output->finish_frame_timer);
+ 
+ 	switch (b->compositor->renderer->type) {
+@@ -369,6 +444,11 @@
+ 		return -1;
+ 	}
+ 
++	if (output->base.current_mode)
++		oseink_refresh_init(&output->damage,
++				    output->base.current_mode->width,
++				    output->base.current_mode->height);
++
+ 	switch (b->compositor->renderer->type) {
+ 	case WESTON_RENDERER_GL:
+ 		ret = headless_output_enable_gl(output);
+@@ -383,6 +463,7 @@
+ 	}
+ 
+ 	if (ret < 0) {
++		oseink_refresh_fini(&output->damage);
+ 		wl_event_source_remove(output->finish_frame_timer);
+ 		return -1;
+ 	}
+--- a/libweston/backend-headless/meson.build
++++ b/libweston/backend-headless/meson.build
+@@ -6,6 +6,7 @@
+ 
+ srcs_headless = [
+ 	'headless.c',
++	'oseink-refresh.c',
+ 	presentation_time_server_protocol_h,
+ ]
+ plugin_headless = shared_library(

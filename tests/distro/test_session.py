@@ -240,7 +240,6 @@ def test_guest_boots_saved_session_and_switches_without_reboot():
             while time.time() < deadline:
                 last = seat_line()
                 got = _damage()
-                seq = got[0]["seq"] if got else 0
                 if (
                     len(last) == 5
                     and last[0] == "desktop"
@@ -248,9 +247,16 @@ def test_guest_boots_saved_session_and_switches_without_reboot():
                     and last[2] != "x"
                     and last[3] != "x"
                     and last[4] != "x"
-                    and seq == seq_floor
+                    and got
+                    and got[0].get("v") == 1
+                    and got[0].get("format") == "gray8"
+                    and got[0].get("mode") in ("quality", "fast", "full")
+                    and got[0].get("seq", 0) > seq_floor
+                    and got[0].get("panel_w") == width
+                    and got[0].get("panel_h") == height
+                    and len(got[1]) == width * height
                 ):
-                    return seq
+                    return got[0]["seq"]
             log = guest("cat /run/oseink-weston.log /run/oseink-seatd.log", 3)
             pytest.fail(
                 "desktop did not start Weston:\n"

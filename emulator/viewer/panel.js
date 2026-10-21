@@ -164,21 +164,25 @@ export class Panel {
   }
 
   async full(target, opts) {
-    if (this.delayMs > 0) await sleep(this.delayMs);
     const flash = !opts || opts.flash !== false;
+    // Flash steps share the busy time. The ink is settled when this returns.
     if (flash && this.paint) {
+      const total = this.delayMs > 0 ? this.delayMs : 180;
+      const blackMs = Math.floor(total / 2);
+      const whiteMs = total - blackMs;
       this.ink.fill(0);
       this.flashPhase = "black";
       this.paint();
-      await sleep(90);
+      if (blackMs > 0) await sleep(blackMs);
       this.ink.fill(1);
       this.flashPhase = "white";
       this.paint();
-      await sleep(90);
+      if (whiteMs > 0) await sleep(whiteMs);
       this.applyFull(target, { flash: false });
       this.flashPhase = "done";
       return;
     }
+    if (this.delayMs > 0) await sleep(this.delayMs);
     this.applyFull(target, opts);
   }
 
