@@ -156,7 +156,7 @@ Pick a word and see its meaning at the bottom of the page. Buttons move a word c
 
 ### People and places
 
-A list of the people, places, and terms in the book, with where each appears. Spoiler-safe by default: it shows only what comes before your current place.
+A list of the people, places, and terms in the book, with where each appears. Spoiler-safe by default: it shows only what comes before your current place. Off unless the reader turns it on, per book or for all books, so a reader who wants a plain page never sees it.
 
 - Phase: no phase.
 - Fit: building the list is a server job, like alignment in phase 9. Shelf computes it once per book, and the device only displays it.
@@ -223,10 +223,60 @@ Warmer or cooler light, maybe warmer at night.
 
 ### Sleep picture
 
-When the device sleeps, the panel keeps the cover of the book you are reading.
+When the device sleeps, the panel shows a picture the user picks: the cover of the current book, a page from a notebook, their own image, or a rotation through a folder of images.
 
-- Phase: deferred. Sleep waits for a board port.
-- Fit: matches the deferred rule that sleep keeps the last finished frame. We would draw the cover as that frame.
+- Phase: deferred. Sleep waits for a board port. The setting and the image handling can be designed earlier.
+- Fit: matches the deferred rule that sleep keeps the last finished frame. We draw the chosen picture as that frame. User images are scaled to the panel size from the profile, then dithered once with error diffusion. A sleep picture costs nothing while asleep, since e-ink holds an image with no power.
+
+## What people unlock on other readers
+
+People jailbreak locked e-readers to get a terminal, their own software, and the features below. oseink already ships the first two: the desktop session is a real Linux machine, with no jailbreak needed. The rest are ideas for the reader session, written our way.
+
+### Reading log
+
+A private record of your reading: a calendar of the days you read, time spent per book, pages per hour, and books finished this year. Tapping or entering a day shows what you read that day.
+
+- Phase: no phase. After phase 4, which has the page turns to count.
+- Fit: on the device, in SQLite, never shared. No streaks, goals, or badges, since achievements are deferred. A plain record, not a game. Syncing it to shelf is optional and would need a protocol type in phase 7 or later. The pages-per-hour figure also feeds "time left" in the footer.
+
+### Your own fonts
+
+Copy font files into a folder on the device, or upload them to shelf, and they show up in the reader's font list beside the built-in ones.
+
+- Phase: 4.
+- Fit: Readium can use user fonts. The font is part of the typography spec, so changing it drops the page cache and keeps the CFI, which phase 4's "done when" already tests.
+
+### Add-ons
+
+A way to make the reader your own without forking it. Two levels:
+
+1. **Packs** (data only, no code): fonts, dictionaries, sleep pictures, notebook page templates, reading layouts. Drop a pack in a folder and the reader picks it up. Low risk, since a pack cannot draw to the panel or run anything.
+2. **Plugins** (code): new screens, new sources, new tools. Much larger. A plugin would have to draw through our toolkit and the damage protocol, never the panel directly, and must work with buttons alone. It needs a language, a sandbox, and a stable API we are willing to maintain.
+
+- Phase: no phase. Packs could follow phase 4. Plugins need their own decision in product.md.
+- Fit: anyone who wants full control already has the desktop session. Plugins only make sense for things that belong inside the reader session itself. Open question.
+
+### Manga and comics
+
+A comics mode: CBZ and CBR files, right-to-left page order for manga, two-page spreads on a large panel, zoom to a panel, and a dither tuned for line art and screentone.
+
+- Phase: none. **Comics are on the product.md Deferred list.** This idea needs that decision reopened first.
+- Fit: for sources, the same rule as books applies. Shelf does not ship sources or indexers. A user could point shelf at their own files or at a comics server they already run that speaks OPDS. A built-in browser of online manga sites would conflict with that rule.
+
+### Online book sources
+
+Browse and borrow from outside sources, not only your own shelf.
+
+- **Free, DRM-free catalogs** (public-domain libraries that publish OPDS feeds): these fit today. Phase 10 acquisition already lists a remote OPDS server as a source. Shelf adds the feed, and the books arrive through the normal catalog.
+- **Library lending apps (Libby and similar)**: loans come locked with DRM, delivered to a store reader or through Adobe's DRM, and there is no open API. DRM is out (see the Crosspoint reference). This would need a reversal of that rule, and probably isn't possible without a vendor agreement.
+- Fit: browsing happens in shelf's admin UI, or on the device through shelf's catalog, so the radio rule (Wi-Fi up to fetch, then down) still holds.
+
+### Articles to read later
+
+Save a web article or follow a feed, and shelf turns it into an EPUB that syncs to the device like any book.
+
+- Phase: no phase.
+- Fit: shelf is books only today, following the acquisition model in product.md. This would widen that scope. Open question.
 
 ## Ruled out
 
@@ -250,6 +300,10 @@ Listed so they are not proposed again by accident.
 - Calm, cards, or rail for home? At what panel size does the rail take over?
 - Is handwriting recognition in scope, so handwritten notes show up in search?
 - Should a button jump a whole library page at once, and which one, given Left already means back?
+- Do we reopen the comics deferral for manga? Which formats come first?
+- Packs only, or code plugins too? If plugins, in what language and with what sandbox?
+- Should shelf widen past books to saved articles and feeds?
+- Does the reading log stay on the device only, or sync to shelf?
 - Does Books open to the library, or straight back into the last book?
 - Is Settings a third row on home, or reached another way so home has only two choices?
 - Where do Words live if the dictionary never ships: hide the row, or leave it out of Notes?
