@@ -48,6 +48,13 @@ Three ways to draw the same home. Which one a device gets depends on panel size 
 - **Cards**: Books and Notes as two cards, each showing its two most recent items with thumbnails. Nothing else on home. Home redraws only when it is opened, so the thumbnails cost one `quality` frame.
 - **Rail**: on a large panel, Books, Notes, and Settings sit in a rail down the left side, and the chosen library fills the rest. Up and Down move along the rail. Right moves into the content. Left returns to the rail.
 
+### Lists turn pages, they do not scroll
+
+Every library (Books, Notes, search results) shows one full page of items at a time, with "page 2 of 5" at the bottom. Moving past the last row turns to the next page. Scrolling on e-ink is many partial redraws and leaves ghosting. A page turn is one frame.
+
+- Phase: 4, with the first library.
+- Fit: a library page turn is a `quality` frame. Moving the highlight within a page stays `fast`. Buttons: Down past the last row is the next page, Up past the first is the previous one. A touch swipe turns the page too.
+
 ### Search everything
 
 One search across books and notes together. A search for a word shows the books that match, your marks in them, and notebook pages that mention it, in one list. This is the "books and notes are equals" rule applied to search.
@@ -74,6 +81,9 @@ Everything you wrote or marked, in one place, whichever book it came from.
 - **Today**: one row that opens today's notebook page, made on first open. A daily journal with no folder setup. Stylus profile, phase 12.
 - **New notebook**: the first row in Notes, so making one is a single Enter. No trip into a menu.
 - Most recent first by default. Folders are optional, so nothing ever lands in an "uncategorized" pile.
+- A notebook's cover is its own page: the last page you wrote on, or one you choose. Drawn from the vector strokes at thumbnail size, like a book cover is made at draw size. A small tag shows the page count.
+- Pin a notebook (or a book) and it stays at the top of its library.
+- Titles, not files. No `.note` extensions and no file sizes in the library. Inside a folder, one line at the top shows the path back out.
 - On a button-only gray device, Notes still works: marks and words, no notebooks, no ink tools.
 - A mark links both ways. From the book you can jump to the mark in Notes, and from Notes back into the book.
 - Phase: 4 for marks. 7 when they sync. 12 for notebooks.
@@ -239,6 +249,7 @@ Listed so they are not proposed again by accident.
 
 - Calm, cards, or rail for home? At what panel size does the rail take over?
 - Is handwriting recognition in scope, so handwritten notes show up in search?
+- Should a button jump a whole library page at once, and which one, given Left already means back?
 - Does Books open to the library, or straight back into the last book?
 - Is Settings a third row on home, or reached another way so home has only two choices?
 - Where do Words live if the dictionary never ships: hide the row, or leave it out of Notes?
