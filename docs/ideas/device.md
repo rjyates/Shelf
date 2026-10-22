@@ -40,11 +40,27 @@ The idea we are building around. Home is a clean, quiet screen with two choices:
 - Phase 3 home has only Settings. Books arrives with phase 4 (local reader). Notes starts in phase 4 with highlights and typed notes, and gains notebooks in phase 12.
 - Open question: should Books open straight to the last book, or always to the library first? One option is a single "Resume" row inside Books, not on home.
 
+### Home layouts
+
+Three ways to draw the same home. Which one a device gets depends on panel size from the profile, never on a device model. Not decided.
+
+- **Calm**: the sketch above. Two choices, a status line each, no covers. Fewest redraws. Fits small button-only panels.
+- **Cards**: Books and Notes as two cards, each showing its two most recent items with thumbnails. Nothing else on home. Home redraws only when it is opened, so the thumbnails cost one `quality` frame.
+- **Rail**: on a large panel, Books, Notes, and Settings sit in a rail down the left side, and the chosen library fills the rest. Up and Down move along the rail. Right moves into the content. Left returns to the rail.
+
+### Search everything
+
+One search across books and notes together. A search for a word shows the books that match, your marks in them, and notebook pages that mention it, in one list. This is the "books and notes are equals" rule applied to search.
+
+- Phase: no phase. After phase 4, once the on-screen keyboard exists. Handwritten queries on a stylus profile in phase 12.
+- Fit: Readium searches book text. Marks and typed notes are in SQLite. Handwritten pages need recognition to be searchable, which is its own open question.
+
 ### The Books library
 
 - A list by default, with a cover grid as a choice. On a small button-only panel, a list is quicker to move through and moving the highlight stays `fast`.
 - Sort by recent, title, or author. Filter by unread, in progress, or finished.
 - Progress shown as a thin bar on each row. The percentage is derived from the CFI and the current layout. It is not stored.
+- Small corner tags on each cover or row: the format (EPUB, PDF, and later a read-along tag for phase 8) and the progress. Plain text in the gray8 buffer, no color needed.
 - Shelves: groups the user makes. A book can sit on more than one. Local in SQLite first. Syncing them needs a protocol type in phase 7 or later.
 - Phase: 4 for a local folder. 6 and 7 for books from shelf.
 
@@ -55,6 +71,9 @@ Everything you wrote or marked, in one place, whichever book it came from.
 - **Notebooks**: standalone pen notebooks. Shown only when the profile has a stylus (phase 12).
 - **Marks**: every highlight and note, grouped by book or listed by date. Enter on a mark opens the book at that spot (its CFI range).
 - **Words**: words you looked up, with the sentence each came from. Depends on the dictionary idea below.
+- **Today**: one row that opens today's notebook page, made on first open. A daily journal with no folder setup. Stylus profile, phase 12.
+- **New notebook**: the first row in Notes, so making one is a single Enter. No trip into a menu.
+- Most recent first by default. Folders are optional, so nothing ever lands in an "uncategorized" pile.
 - On a button-only gray device, Notes still works: marks and words, no notebooks, no ink tools.
 - A mark links both ways. From the book you can jump to the mark in Notes, and from Notes back into the book.
 - Phase: 4 for marks. 7 when they sync. 12 for notebooks.
@@ -212,9 +231,14 @@ Listed so they are not proposed again by accident.
 | A store, recommendations, ads | Shelf does not ship books. | product.md, Locked choices |
 | Online lookups (encyclopedia, translation) | The reader works with the radio off and no server. | product.md, Locked choices (Radio) |
 | AI summaries | Same radio rule. Paid APIs are also out of budget. | product.md, Locked choices (Radio) |
+| Email or an app launcher on the reader home | Apps live in the desktop session. Email also needs the radio up. | product.md, Session model |
+| A shortcut to a third-party store reader | Third-party readers run on the desktop and do not replace the built-in reader. | product.md, Session model |
+| A general file browser in the reader | Phase 4 opens a local folder of books. The desktop has real file tools. | product.md, phase 4 and Session model |
 
 ## Open questions
 
+- Calm, cards, or rail for home? At what panel size does the rail take over?
+- Is handwriting recognition in scope, so handwritten notes show up in search?
 - Does Books open to the library, or straight back into the last book?
 - Is Settings a third row on home, or reached another way so home has only two choices?
 - Where do Words live if the dictionary never ships: hide the row, or leave it out of Notes?
