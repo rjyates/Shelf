@@ -55,7 +55,7 @@ class HistoryTests(unittest.TestCase):
     def test_only_relevant_commits_bump_a_component(self):
         with tempfile.TemporaryDirectory() as folder:
             def git(*args):
-                return subprocess.check_output(["git", "-C", folder, *args], text=True).strip()
+                return subprocess.check_output(["git", "-C", folder, *args], text=True, encoding="utf-8").strip()
             git("init", "--quiet")
             def commit(path, message):
                 file = Path(folder) / path
@@ -85,6 +85,13 @@ class HistoryTests(unittest.TestCase):
                 moved = ci.make_plan(before_move, "HEAD")
             self.assertTrue(moved["selection"]["server"])
             self.assertTrue(moved["selection"]["mobile"], "Removing a mobile file must still validate mobile")
+            before_unicode = git("rev-parse", "HEAD")
+            commit("mobile/assets/café.txt", "chore(mobile): add localized asset")
+            with patch.object(ci, "git", side_effect=git):
+                paths = ci.changed(before_unicode, "HEAD")
+            self.assertIn("mobile/assets/café.txt", paths)
+            self.assertTrue(ci.affected(paths)["mobile"])
+            self.assertFalse(ci.affected(paths)["server"])
 
 
 if __name__ == "__main__":
