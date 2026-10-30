@@ -16,6 +16,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_mobile_does_not_build_server(self):
         self.assertEqual(ci.affected(["mobile/lib/main.dart"]), {"server": False, "mobile": True, "android": True, "ios": True})
+        self.assertEqual(ci.affected([".flutter-version"]), {"server": False, "mobile": True, "android": True, "ios": True})
 
     def test_platform_changes_are_isolated(self):
         self.assertEqual(ci.affected(["mobile/android/app/build.gradle.kts"]), {"server": False, "mobile": True, "android": True, "ios": False})
@@ -36,6 +37,18 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(ci.bump("server-v1.2.3", ["feat(server)!: replace protocol"]), "2.0.0")
         self.assertEqual(ci.bump("mobile-v1.2.3", ["fix: change\n\nBREAKING CHANGE: remove auth"]), "2.0.0")
         self.assertEqual(ci.bump(None, []), "0.1.0")
+
+
+class SemanticTests(unittest.TestCase):
+    def test_squash_title_cannot_drop_a_breaking_footer_or_feature(self):
+        for message, invalid, valid in [
+            ("feat(server): add reader", "fix: add reader", "feat: add reader"),
+            ("refactor(server): replace API\n\nBREAKING CHANGE: remove v1", "refactor: replace API", "refactor!: replace API"),
+        ]:
+            with patch.object(ci, "git", side_effect=lambda *args: "abc123" if args[0] == "rev-list" else message):
+                with self.assertRaisesRegex(ValueError, "PR title must preserve"):
+                    ci.check_semantics("base", "head", invalid)
+                ci.check_semantics("base", "head", valid)
 
 
 class HistoryTests(unittest.TestCase):

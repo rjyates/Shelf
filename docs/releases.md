@@ -14,7 +14,7 @@ Use Conventional Commits for every commit and PR title. PR semantic validation, 
 | Changed paths | Jobs |
 | --- | --- |
 | `server/`, `web/`, `deploy/`, Compose, Rust toolchain | Server tests, web syntax, Compose validation, Docker build and smoke test |
-| Shared `mobile/` application, assets, or dependencies | Mobile analysis/tests, Android build, macOS iOS build |
+| Shared `mobile/` application, assets, dependencies, or `.flutter-version` | Mobile analysis/tests, Android build, macOS iOS build |
 | `mobile/android/` only | Mobile analysis/tests and Android build |
 | `mobile/ios/` only | Mobile analysis/tests and macOS iOS build |
 | `protocol/`, shared CI scripts/tests/workflows | Both components and both platforms |
@@ -23,6 +23,8 @@ Use Conventional Commits for every commit and PR title. PR semantic validation, 
 ## Version calculation
 
 Only commits affecting a component contribute to its version and changelog. `feat` produces a minor; a `!` marker or `BREAKING CHANGE:` footer produces a major. Every other change to a shipped component produces a patch, including refactors and dependency updates. The first release of each component is `0.1.0`.
+
+A PR title must retain the highest release impact of its commits: use `feat` when it contains a feature, and `!` when any commit declares a breaking change. CI enforces this before squash merging so commit footers cannot be lost. Prefer focused component PRs; a mixed-component squash commit applies its release impact to each affected component.
 
 Publication compares with the latest reachable component tag so an earlier failed or skipped release is not lost. Main runs are serialized. Published versions are immutable; retries leave existing GitHub releases unchanged.
 

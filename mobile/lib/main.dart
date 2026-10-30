@@ -96,7 +96,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       );
       if (mounted && revoked == false) {
         setState(
-          () => _error = 'Signed out on this phone. The server could not be reached to revoke other sessions.',
+          () => _error = 'Signed out on this phone. Other server sessions could not be revoked.',
         );
       }
     } catch (error) {

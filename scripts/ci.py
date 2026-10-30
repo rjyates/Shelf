@@ -17,10 +17,13 @@ def git(*args):
 def affected(paths):
     result = {"server": False, "mobile": False, "android": False, "ios": False}
     for path in paths:
+        if path == ".flutter-version":
+            result.update(mobile=True, android=True, ios=True)
+            continue
         if path in {"tests/web.test.mjs", "scripts/smoke.py"}:
             result["server"] = True
             continue
-        if path.startswith(("server/", "web/", "deploy/")) or path in {"compose.yaml", ".dockerignore", "rust-toolchain.toml"}:
+        if path.startswith(("server/", "web/", "deploy/")) or path in {"compose.yaml", ".dockerignore", "rust-toolchain.toml", "LICENSE"}:
             result["server"] = True
         if path.startswith("mobile/"):
             if path in {"mobile/README.md", "mobile/.gitignore"}:
@@ -32,7 +35,7 @@ def affected(paths):
                 result["ios"] = True
             elif path not in {"mobile/README.md", "mobile/.gitignore"}:
                 result["android"] = result["ios"] = True
-        if path.startswith(("protocol/", "scripts/", "tests/", ".github/workflows/")) or path == ".flutter-version":
+        if path.startswith(("protocol/", "scripts/", "tests/", ".github/workflows/")):
             result = dict.fromkeys(result, True)
     return result
 
@@ -51,13 +54,20 @@ def last_tag(component, head):
     return max(valid)[1] if valid else None
 
 
+def severity(message):
+    if re.match(r"^[a-z]+(?:\([^\n]+\))?!:", message) or re.search(r"^BREAKING[ -]CHANGE:", message, re.M):
+        return 2
+    return 1 if message.startswith("feat:") or message.startswith("feat(") else 0
+
+
 def bump(previous, messages):
     if previous is None:
         return "0.1.0"
     major, minor, patch = map(int, previous.split("-v")[1].split("."))
-    if any(re.match(r"^[a-z]+(?:\([^\n]+\))?!:", message) or re.search(r"^BREAKING[ -]CHANGE:", message, re.M) for message in messages):
+    impact = max(map(severity, messages), default=0)
+    if impact == 2:
         major, minor, patch = major + 1, 0, 0
-    elif any(message.startswith("feat:") or message.startswith("feat(") for message in messages):
+    elif impact == 1:
         minor, patch = minor + 1, 0
     else:
         patch += 1
@@ -77,13 +87,18 @@ def commits(component, base, head):
 
 def check_semantics(base, head, title=None):
     errors = []
+    impact = 0
     if title is not None and not CONVENTIONAL.fullmatch(title):
         errors.append("PR title must use type(scope): description.")
     revision = f"{base}..{head}" if base and set(base) != {"0"} else head
     for sha in git("rev-list", revision).splitlines():
-        subject = git("show", "-s", "--format=%s", sha)
+        body = git("show", "-s", "--format=%B", sha)
+        subject = body.splitlines()[0] if body else ""
+        impact = max(impact, severity(body))
         if not CONVENTIONAL.fullmatch(subject):
             errors.append(f"Commit {sha[:8]} must use type(scope): description.")
+    if title is not None and severity(title) < impact:
+        errors.append("PR title must preserve the highest feature or breaking-change impact of its commits; use feat for features and ! for breaking changes.")
     if errors:
         raise ValueError("\n".join(errors))
 
@@ -130,7 +145,11 @@ def main():
         plan = make_plan(args.base, args.head, args.pr)
         Path("release-plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
         if output := os.environ.get("GITHUB_OUTPUT"):
+            flutter = Path(".flutter-version").read_text(encoding="utf-8").strip()
+            if not re.fullmatch(r"\d+\.\d+\.\d+", flutter):
+                raise ValueError(".flutter-version must contain an exact Flutter version")
             with open(output, "a", encoding="utf-8") as handle:
+                handle.write(f"flutter_version={flutter}\n")
                 for key, value in plan["selection"].items():
                     handle.write(f"{key}={str(value).lower()}\n")
                 for component, item in plan["components"].items():
