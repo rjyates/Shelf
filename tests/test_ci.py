@@ -1,5 +1,6 @@
 import importlib.util
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,11 @@ from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("ci", Path(__file__).parents[1] / "scripts" / "ci.py")
 ci = importlib.util.module_from_spec(spec)
+sys.modules["ci"] = ci
 spec.loader.exec_module(ci)
+publish_spec = importlib.util.spec_from_file_location("publish", Path(__file__).parents[1] / "scripts" / "publish.py")
+publish = importlib.util.module_from_spec(publish_spec)
+publish_spec.loader.exec_module(publish)
 
 
 class SelectionTests(unittest.TestCase):
@@ -92,6 +97,22 @@ class HistoryTests(unittest.TestCase):
             self.assertIn("mobile/assets/café.txt", paths)
             self.assertTrue(ci.affected(paths)["mobile"])
             self.assertFalse(ci.affected(paths)["server"])
+
+
+class ImageIndexTests(unittest.TestCase):
+    def test_server_release_requires_amd64_and_arm64(self):
+        def manifest(*platforms):
+            return {"manifests": [{"digest": f"sha256:{arch}", "platform": {"os": "linux", "architecture": arch}} for arch in platforms]}
+
+        self.assertEqual(
+            {item["architecture"] for item in publish.released_platforms(manifest("amd64", "arm64"))},
+            {"amd64", "arm64"},
+        )
+        attested = manifest("amd64", "arm64")
+        attested["manifests"].append({"digest": "sha256:attest", "platform": {"os": "unknown", "architecture": "unknown"}})
+        self.assertEqual(len(publish.released_platforms(attested)), 2)
+        with self.assertRaisesRegex(RuntimeError, "linux/arm64"):
+            publish.released_platforms(manifest("amd64"))
 
 
 if __name__ == "__main__":

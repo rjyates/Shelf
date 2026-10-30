@@ -21,7 +21,7 @@ Every PR validates its title and all commit subjects. Require PRs, current passi
 
 The CI workflow always starts. Change detection selects the expensive jobs, and an always-reporting gate fails if any selected job fails or is cancelled. Publication is main-only and depends on the gate. Export and publish the tested Docker image rather than rebuild it. Generate a release-specific changelog, source revision, and checksums next to the artifacts without a changelog bot bypassing main protections.
 
-Mobile-only changes run shared analysis and tests and build both platforms with the same mobile version. This includes platform-specific changes: Android and iPhone are one release family, while the server remains independent. Android uses development signing initially. iOS is an unsigned application archive; it is not an installable IPA or App Store submission.
+Mobile-only changes run shared analysis and tests and build both platforms with the same mobile version. This includes platform-specific changes: Android and iPhone are one release family, while the server remains independent. Android uses development signing initially. iOS is an unsigned IPA that a sideload tool can re-sign; it is not an App Store submission.
 
 ## Consequences
 

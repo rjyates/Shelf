@@ -1,10 +1,17 @@
 FROM rust:1.99.1-bookworm AS build
 WORKDIR /src
+COPY server/Cargo.toml server/Cargo.lock server/
+# Dependency crates stay cached when only the application sources change.
+RUN mkdir server/src \
+    && printf 'fn main() {}\n' > server/src/main.rs \
+    && : > server/src/lib.rs \
+    && cargo build --manifest-path server/Cargo.toml --locked --release
 COPY server/ server/
 COPY web/ web/
 ARG VERSION=dev
 ENV SHELF_VERSION=${VERSION}
-RUN cargo build --manifest-path server/Cargo.toml --locked --release
+RUN find server/src server/schema.sql web -type f -exec touch {} + \
+    && cargo build --manifest-path server/Cargo.toml --locked --release
 
 FROM debian:bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/rjyates/Shelf"
