@@ -7,8 +7,10 @@ environment:
   sdk: ^3.13.7
 
 dependencies:
+  file_selector: ^1.1.0
   flutter:
     sdk: flutter
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:

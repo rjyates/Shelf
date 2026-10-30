@@ -1,3 +1,7 @@
+import 'package:file_selector/file_selector.dart';
+
+import 'reader.dart';
+
 import 'package:flutter/material.dart';
 
 import 'api.dart';
@@ -242,6 +246,48 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  Future<void> _import() async {
+    try {
+      final file = await openFile(
+        acceptedTypeGroups: [
+          const XTypeGroup(
+            label: 'EPUB books',
+            extensions: ['epub'],
+            uniformTypeIdentifiers: ['org.idpf.epub-container'],
+          ),
+        ],
+      );
+      if (file == null) return;
+      if (await file.length() > 50 * 1024 * 1024) {
+        throw ShelfException('Choose an EPUB under 50 MiB.');
+      }
+      final duplicate = await widget.api.importEpub(await file.readAsBytes());
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              duplicate
+                  ? 'This EPUB is already in your library.'
+                  : 'EPUB imported.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    }
+  }
+
+  Future<void> _read(Book book) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ReaderScreen(api: widget.api, book: book),
+      ),
+    );
+    await _refresh();
+  }
+
   Future<void> _record(Book book) async {
     final pages = await showDialog<int>(
       context: context,
@@ -299,6 +345,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
       actions: [
         IconButton(
+          onPressed: _import,
+          tooltip: 'Import EPUB',
+          icon: const Icon(Icons.file_upload_outlined),
+        ),
+        IconButton(
           onPressed: _signOut,
           tooltip: 'Sign out',
           icon: const Icon(Icons.logout),
@@ -346,6 +397,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (book.hasCover)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Image.network(
+                        widget.api.base
+                            .resolve('/api/v1/books/${book.id}/cover')
+                            .toString(),
+                        headers: widget.api.readerHeaders,
+                        height: 140,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, error, stack) =>
+                            const Icon(Icons.menu_book_outlined, size: 48),
+                      ),
+                    ),
                   Text(
                     book.title,
                     style: Theme.of(context).textTheme.headlineSmall,
@@ -355,12 +420,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                   const SizedBox(height: 12),
                   LinearProgressIndicator(
-                    value: book.pagesRead / book.totalPages,
+                    value: book.isEpub
+                        ? book.percentage
+                        : book.pagesRead / book.totalPages!,
                     color: moss,
                     backgroundColor: surface,
                     minHeight: 5,
-                    semanticsLabel:
-                        '${book.title}: ${book.pagesRead} of ${book.totalPages} pages',
+                    semanticsLabel: book.isEpub
+                        ? '${book.title}: ${(book.percentage * 100).round()}% read'
+                        : '${book.title}: ${book.pagesRead} of ${book.totalPages} pages',
                   ),
                   const SizedBox(height: 8),
                   Wrap(
@@ -369,10 +437,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     spacing: 12,
                     runSpacing: 4,
                     children: [
-                      Text('${book.pagesRead} / ${book.totalPages} pages'),
+                      Text(
+                        book.isEpub
+                            ? '${(book.percentage * 100).round()}% read · EPUB'
+                            : '${book.pagesRead} / ${book.totalPages} pages',
+                      ),
                       TextButton(
-                        onPressed: () => _record(book),
-                        child: const Text('Record progress'),
+                        onPressed: () =>
+                            book.isEpub ? _read(book) : _record(book),
+                        child: Text(
+                          book.isEpub ? 'Read book' : 'Record progress',
+                        ),
                       ),
                     ],
                   ),
@@ -420,7 +495,7 @@ class _ProgressDialogState extends State<ProgressDialog> {
         ),
         validator: (value) {
           final pages = int.tryParse(value ?? '');
-          return pages == null || pages < 0 || pages > widget.book.totalPages
+          return pages == null || pages < 0 || pages > widget.book.totalPages!
               ? 'Enter a page within the book’s page count.'
               : null;
         },

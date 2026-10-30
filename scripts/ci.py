@@ -20,7 +20,7 @@ def affected(paths):
         if path == ".flutter-version":
             result.update(mobile=True, android=True, ios=True)
             continue
-        if path in {"tests/web.test.mjs", "scripts/smoke.py", "scripts/compose_smoke.py"}:
+        if path in {"tests/web.test.mjs", "tests/reader.test.mjs", "scripts/smoke.py", "scripts/compose_smoke.py"}:
             result["server"] = True
             continue
         if path.startswith(("server/", "web/", "deploy/")) or path in {"compose.yaml", ".dockerignore", "rust-toolchain.toml", "LICENSE"}:

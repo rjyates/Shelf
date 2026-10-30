@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#171916" />
+    <title>Shelf · Reader</title>
+    <link rel="stylesheet" href="/reader.css" />
+    <script src="/vendor/jszip.min.js" defer></script>
+    <script src="/vendor/epub.min.js" defer></script>
+    <script src="/vendor/purify.min.js" defer></script>
+    <script src="/reader.js" type="module"></script>
+  </head>
+  <body>
+    <header>
+      <a href="/#library">← Library</a>
+      <h1 id="title">Opening your book…</h1>
+      <label
+        >Text size
+        <select id="size">
+          <option value="100">Small</option>
+          <option value="120" selected>Medium</option>
+          <option value="140">Large</option>
+          <option value="170">Extra large</option>
+        </select></label
+      >
+    </header>
+    <div class="navigation">
+      <label
+        >Chapter
+        <select id="chapters" disabled>
+          <option>Loading chapters…</option>
+        </select></label
+      ><span id="status" role="status" aria-live="polite"
+        >Preparing your reading room…</span
+      >
+    </div>
+    <main id="pages" aria-label="Book content"></main>
+    <footer>
+      <button id="previous" disabled>← Previous</button
+      ><span id="progress">0%</span><button id="next" disabled>Next →</button>
+    </footer>
+  </body>
+</html>

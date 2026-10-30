@@ -1,0 +1,1 @@
+sample.epub contains original synthetic Shelf text for automated import/reader tests. It contains no user books or third-party book text. book.json and epub-book.json are shared API contract fixtures.

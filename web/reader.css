@@ -1,0 +1,110 @@
+@font-face {
+  font-family: Instrument;
+  src: url("/fonts/serif.ttf");
+}
+@font-face {
+  font-family: Plex;
+  src: url("/fonts/sans.ttf");
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: #171916;
+  color: #e4dcc8;
+  font-family: Plex, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+header,
+.navigation,
+footer {
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  border-bottom: 1px solid #555948;
+  flex-wrap: wrap;
+}
+header h1 {
+  font-family: Instrument, serif;
+  font-weight: 400;
+  font-size: 28px;
+  margin: 0;
+  flex: 1;
+  min-width: 140px;
+}
+a {
+  color: #b5a16b;
+}
+label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+}
+select,
+button {
+  background: #21241f;
+  color: #e4dcc8;
+  border: 1px solid #85836f;
+  border-radius: 3px;
+  padding: 10px;
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+:focus-visible {
+  outline: 2px solid #b5a16b;
+  outline-offset: 3px;
+}
+.navigation {
+  font-size: 13px;
+  justify-content: space-between;
+  padding-block: 10px;
+}
+.navigation select {
+  max-width: min(65vw, 460px);
+}
+#status {
+  color: #c1baa4;
+}
+#pages {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+footer {
+  border-top: 1px solid #555948;
+  border-bottom: 0;
+  justify-content: space-between;
+  padding-block: 12px;
+}
+#progress {
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 600px) {
+  header,
+  .navigation,
+  footer {
+    padding: 12px;
+  }
+  header h1 {
+    font-size: 23px;
+  }
+  header label {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .navigation {
+    gap: 8px;
+  }
+}

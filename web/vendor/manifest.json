@@ -1,0 +1,26 @@
+[
+  {
+    "package": "epubjs",
+    "version": "0.3.93",
+    "file": "epub.min.js",
+    "sha256": "06eae15745107b4aa508c95538275251f69bfb9f1175621fc458d9f42ed082d4",
+    "tarball": "https://registry.npmjs.org/epubjs/-/epubjs-0.3.93.tgz",
+    "integrity": "sha512-c06pNSdBxcXv3dZSbXAVLE1/pmleRhOT6mXNZo6INKmvuKpYB65MwU/lO7830czCtjIiK9i+KR+3S+p0wtljrw=="
+  },
+  {
+    "package": "jszip",
+    "version": "3.10.2",
+    "file": "jszip.min.js",
+    "sha256": "7f839b2d4688b845c105ebf5d2f9803075f91ea0fe72bdaac176c3a04dd3d2c1",
+    "tarball": "https://registry.npmjs.org/jszip/-/jszip-3.10.2.tgz",
+    "integrity": "sha512-3l+rb15IOWtUhU0H5MFqES/T6Kh7abYwjosBey/vD6hDt8zoEffkSC5Ws5SGtgVw3gBx2NEbhTeSW1+kWkpyTQ=="
+  },
+  {
+    "package": "dompurify",
+    "version": "3.4.17",
+    "file": "purify.min.js",
+    "sha256": "cd37898f9782adf54820c413191b5691803f0f137c799d6edcfd38523b4c2c31",
+    "tarball": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.17.tgz",
+    "integrity": "sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w=="
+  }
+]
