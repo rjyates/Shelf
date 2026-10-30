@@ -143,7 +143,21 @@ void main() {
             request.headers.value(HttpHeaders.authorizationHeader),
             'Bearer test-session-only',
           );
-          if (request.method == 'GET') {
+          if (request.uri.path.endsWith('/import')) {
+            expect(
+              request.headers.contentType?.mimeType,
+              'application/epub+zip',
+            );
+            expect(
+              await request.fold<List<int>>(
+                [],
+                (bytes, chunk) => bytes..addAll(chunk),
+              ),
+              [80, 75, 3, 4],
+            );
+            request.response.statusCode = HttpStatus.created;
+            request.response.write(jsonEncode({'id': 2, 'duplicate': false}));
+          } else if (request.method == 'GET') {
             request.response.write(
               jsonEncode([
                 {
@@ -177,10 +191,12 @@ void main() {
         final books = await api.books();
         expect(books.single.title, 'Piranesi');
         await api.progress(books.single, 163);
+        expect(await api.importEpub([80, 75, 3, 4]), isFalse);
         expect(requests, [
           'POST /api/v1/login',
           'GET /api/v1/books',
           'POST /api/v1/books/1/progress',
+          'POST /api/v1/books/import',
         ]);
       } finally {
         api.close();

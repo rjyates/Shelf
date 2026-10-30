@@ -1,0 +1,1 @@
+Self-hosted reader dependencies fetched from the official npm registry with tarball integrity verification: epubjs 0.3.93, JSZip 3.10.2, DOMPurify 3.4.17. Corresponding licenses and provenance are included. No CDN requests are made at runtime.

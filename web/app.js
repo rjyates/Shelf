@@ -23,6 +23,7 @@ function showAuth(setup) {
   $("auth").hidden = false;
   $("content").hidden = true;
   $("open-add").hidden = true;
+  $("open-import").hidden = true;
   $("signout").hidden = true;
   for (const id of ["add-dialog", "progress-dialog"])
     if ($(id).open) $(id).close();
@@ -44,6 +45,7 @@ async function refresh() {
   $("auth").hidden = true;
   $("content").hidden = false;
   $("open-add").hidden = false;
+  $("open-import").hidden = false;
   $("signout").hidden = false;
   for (const [id, key] of [
     ["books", "books"],
@@ -94,7 +96,9 @@ function render() {
   const visible = catalogue.filter((book) =>
     library
       ? `${book.title} ${book.author}`.toLowerCase().includes(query)
-      : book.pages_read > 0 && book.pages_read < book.total_pages,
+      : book.format === "epub"
+        ? book.position && book.percentage < 1
+        : book.pages_read > 0 && book.pages_read < book.total_pages,
   );
   $("books").replaceChildren();
   $("empty").hidden = visible.length > 0;
@@ -109,6 +113,10 @@ function render() {
       : "Open Library to record your progress on a book."
     : "Add a book to begin building your library.";
   $("empty-add").hidden = catalogue.length > 0;
+  const fraction = (book) =>
+    book.format === "epub"
+      ? book.percentage
+      : book.pages_read / book.total_pages;
   for (const book of visible) {
     const article = element("article", undefined, "book");
     const cover = element("div", undefined, "cover");
@@ -117,17 +125,25 @@ function render() {
       element("span", book.title),
       element("small", "SHELF / CATALOGUE"),
     );
+    if (book.has_cover) {
+      cover.replaceChildren();
+      const image = element("img");
+      image.src = `/api/v1/books/${book.id}/cover`;
+      image.alt = "";
+      image.loading = "lazy";
+      cover.append(image);
+    }
     const info = element("div");
     info.append(
       element("h3", book.title),
       element("p", book.author || "Author not recorded", "author"),
     );
     const progress = element("progress");
-    progress.max = book.total_pages;
-    progress.value = book.pages_read;
+    progress.max = 1;
+    progress.value = fraction(book);
     progress.setAttribute(
       "aria-label",
-      `${book.title}: ${book.pages_read} of ${book.total_pages} pages`,
+      `${book.title}: ${Math.round(fraction(book) * 100)}%`,
     );
     const update = element("button", "Record progress", "quiet");
     update.addEventListener("click", () => {
@@ -143,10 +159,21 @@ function render() {
       progress,
       element(
         "p",
-        `${book.pages_read} / ${book.total_pages} pages · ${Math.round((book.pages_read / book.total_pages) * 100)}%`,
+        book.format === "epub"
+          ? `${Math.round(book.percentage * 100)}% read · EPUB`
+          : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`,
         "fine",
       ),
-      update,
+      book.format === "epub"
+        ? Object.assign(
+            element(
+              "a",
+              book.position ? "Continue reading →" : "Read book →",
+              "quiet",
+            ),
+            { href: `/reader?id=${book.id}` },
+          )
+        : update,
     );
     article.append(cover, info);
     $("books").append(article);
@@ -155,20 +182,16 @@ function render() {
   for (const book of catalogue) {
     const row = element("div", undefined, "progress-row");
     const bar = element("progress");
-    bar.max = book.total_pages;
-    bar.value = book.pages_read;
+    bar.max = 1;
+    bar.value = fraction(book);
     bar.setAttribute(
       "aria-label",
-      `${book.title}: ${book.pages_read} of ${book.total_pages} pages`,
+      `${book.title}: ${Math.round(fraction(book) * 100)}%`,
     );
     row.append(
       element("span", book.title),
       bar,
-      element(
-        "span",
-        `${Math.round((book.pages_read / book.total_pages) * 100)}%`,
-        "fine",
-      ),
+      element("span", `${Math.round(fraction(book) * 100)}%`, "fine"),
     );
     $("progress-list").append(row);
   }
@@ -284,3 +307,39 @@ async function start() {
   }
 }
 start();
+
+$("open-import").addEventListener("click", () => $("epub-files").click());
+$("epub-files").addEventListener("change", async () => {
+  const files = [...$("epub-files").files];
+  $("open-import").disabled = true;
+  let added = 0,
+    duplicates = 0;
+  const errors = [];
+  for (const file of files) {
+    message(`Importing ${file.name}…`);
+    try {
+      if (file.size > 50 * 1024 * 1024)
+        throw new Error("The file exceeds 50 MiB.");
+      const result = await api("books/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/epub+zip" },
+        body: file,
+      });
+      if (result.duplicate) duplicates++;
+      else added++;
+    } catch (error) {
+      errors.push(`${file.name}: ${error.message}`);
+    }
+  }
+  $("epub-files").value = "";
+  $("open-import").disabled = false;
+  location.hash = "library";
+  try {
+    await refresh();
+  } catch (error) {
+    errors.push(error.message);
+  }
+  message(
+    `${added} imported. ${duplicates} already in your library. ${errors.join(" ")}`,
+  );
+});

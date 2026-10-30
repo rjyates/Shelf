@@ -1,3 +1,4 @@
+mod epub;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -99,13 +100,24 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/logout", post(logout))
         .route("/api/v1/books", get(books).post(add_book))
         .route("/api/v1/books/{id}/progress", post(update_progress))
+        .route("/api/v1/books/import", post(epub::import).layer(DefaultBodyLimit::max(50 * 1024 * 1024)))
+        .route("/api/v1/books/{id}/file", get(epub::file))
+        .route("/api/v1/books/{id}/cover", get(epub::cover))
+        .route("/api/v1/books/{id}/location", post(epub::location))
+        .route("/reader", get(epub::reader))
+        .route("/reader-security.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/reader-security.mjs")) }))
+        .route("/reader.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/reader.js")) }))
+        .route("/reader.css", get(|| async { ([(header::CONTENT_TYPE,"text/css")], include_str!("../../web/reader.css")) }))
+        .route("/vendor/epub.min.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/vendor/epub.min.js")) }))
+        .route("/vendor/jszip.min.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/vendor/jszip.min.js")) }))
+        .route("/vendor/purify.min.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/vendor/purify.min.js")) }))
         .route("/api/v1/stats", get(stats))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(axum::middleware::map_response(|mut response: Response| async {
             let headers = response.headers_mut();
             headers.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
             headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
-            headers.insert(header::CONTENT_SECURITY_POLICY, "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap());
+            if !headers.contains_key(header::CONTENT_SECURITY_POLICY) { headers.insert(header::CONTENT_SECURITY_POLICY, "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap()); }
             response
         }))
         .with_state(AppState { database, login_attempts: Arc::new(Mutex::new(VecDeque::new())) }))
@@ -255,8 +267,17 @@ struct Book {
     id: i64,
     title: String,
     author: String,
-    total_pages: i64,
+    total_pages: Option<i64>,
     pages_read: i64,
+    #[serde(flatten)]
+    epub: Option<EpubInfo>,
+}
+#[derive(Serialize)]
+struct EpubInfo {
+    format: &'static str,
+    percentage: f64,
+    position: Option<String>,
+    has_cover: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -269,8 +290,8 @@ struct NewBook {
 async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Vec<Book>>> {
     state.db(move |db| {
         let user = authenticate(db, &headers)?;
-        let mut query = db.prepare("SELECT id,title,author,total_pages,pages_read FROM books WHERE user_id=? ORDER BY id DESC")?;
-        let books = query.query_map([user], |r| Ok(Book { id:r.get(0)?,title:r.get(1)?,author:r.get(2)?,total_pages:r.get(3)?,pages_read:r.get(4)? }))?.collect::<Result<Vec<_>,_>>()?;
+        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,f.book_id,f.percentage,f.position,f.cover IS NOT NULL FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
+        let books = query.query_map([user], |r| Ok(Book { id:r.get(0)?,title:r.get(1)?,author:r.get(2)?,total_pages:r.get(3)?,pages_read:r.get(4)?, epub: if r.get::<_,Option<i64>>(5)?.is_some() {Some(EpubInfo {format:"epub",percentage:r.get(6)?,position:r.get(7)?,has_cover:r.get(8)?})} else {None} }))?.collect::<Result<Vec<_>,_>>()?;
         Ok(Json(books))
     }).await
 }
@@ -324,6 +345,8 @@ async fn update_progress(
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
+            let imported: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?)",params![id,user],|r|r.get(0))?;
+            if imported { return Err(ApiError(StatusCode::BAD_REQUEST,"Use the EPUB reader to record progress.")); }
             let total: Option<i64> = db
                 .query_row(
                     "SELECT total_pages FROM books WHERE id=? AND user_id=?",
@@ -353,7 +376,7 @@ async fn stats(
 ) -> ApiResult<Json<serde_json::Value>> {
     state.db(move |db| {
         let user = authenticate(db, &headers)?;
-        let values: (i64,i64,i64,i64) = db.query_row("SELECT count(*),coalesce(sum(pages_read),0),coalesce(sum(pages_read=total_pages),0),coalesce(sum(pages_read>0 AND pages_read<total_pages),0) FROM books WHERE user_id=?", [user], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+        let values: (i64,i64,i64,i64) = db.query_row("SELECT count(*),coalesce(sum(b.pages_read),0),coalesce(sum(CASE WHEN f.book_id IS NULL THEN b.pages_read=b.total_pages ELSE f.percentage=1 END),0),coalesce(sum(CASE WHEN f.book_id IS NULL THEN b.pages_read>0 AND b.pages_read<b.total_pages ELSE f.position IS NOT NULL AND f.percentage<1 END),0) FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=?", [user], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
         Ok(Json(serde_json::json!({"books":values.0,"pages_read":values.1,"finished":values.2,"reading":values.3})))
     }).await
 }

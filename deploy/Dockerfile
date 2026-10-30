@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build /src/server/target/release/shelf-server /usr/local/bin/shelf-server
 COPY LICENSE /usr/share/licenses/shelf/LICENSE
 COPY web/fonts/*LICENSE.txt /usr/share/licenses/shelf/fonts/
+COPY web/vendor/ /usr/share/licenses/shelf/reader/
 ENV SHELF_DATA=/data SHELF_LISTEN=0.0.0.0:8080
 USER 10001:10001
 EXPOSE 8080

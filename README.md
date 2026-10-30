@@ -2,11 +2,11 @@
 
 A self-hosted Rust book server with a dark academia web interface and one Flutter/Dart app for Android and iPhone.
 
-The first milestone provides account setup, a persistent book catalogue, and manually recorded page progress. Book Orbit is the functional reference; readers, file import, audio, offline access, and external sync are still on the [feature roadmap](docs/parity.md). See the [approved v3 design](docs/design/v3.md).
+Shelf supports account setup, a persistent catalogue, manual page progress, and EPUB importing and reading with saved positions. EPUB support is new since v0.1.0; build this branch from source until its server and mobile releases are published. Book Orbit is the functional reference; other readers, audio, offline access, and external sync remain on the [feature roadmap](docs/parity.md). See the [approved v3 design](docs/design/v3.md).
 
 ## Run with Docker
 
-After the first server release is published, copy this into `compose.yaml`:
+Copy this into `compose.yaml`:
 
 ```yaml
 services:
@@ -29,13 +29,13 @@ Run:
 docker compose up -d
 ```
 
-Open [localhost:8080](http://localhost:8080) and create your account. There is no default password, database service, or required environment file. `/data` stores the SQLite database and sessions. The books mount is reserved for the upcoming file-import milestone; adding a book currently records metadata only.
+Open [localhost:8080](http://localhost:8080) and create your account. There is no default password, database service, or required environment file. `/data` stores the SQLite database, sessions, imported EPUB bytes, covers, and saved reader positions. Back up this volume. The optional books mount is reserved for future folder scanning; it is not automatically imported.
 
 For repeatable installations, use the version-pinned Compose file attached to a [server release](https://github.com/rjyates/Shelf/releases). The initial container targets Linux amd64.
 
 ### Build the unreleased source
 
-Until a server image has been published, build locally from this repository:
+To try changes that have not been released, build locally from this repository:
 
 ```sh
 docker build -f deploy/Dockerfile -t shelf-local .
@@ -47,6 +47,14 @@ docker run --rm -p 127.0.0.1:8080:8080 -v shelf-data:/data shelf-local
 The quick start binds to loopback for private setup. To connect a phone, complete account setup locally, then put the server behind an HTTPS reverse proxy and enter that HTTPS address in the app. Set `SHELF_SECURE_COOKIE=true` on the server when using HTTPS. The mobile app rejects remote plain HTTP and never disables certificate validation. Do not expose initial setup on a public address.
 
 The foundation supports one account. Sessions expire after seven days; signing out revokes that account's sessions on all devices. Mobile sessions stay in memory and require sign-in after the app closes. Sign-in attempts are limited to twenty per minute across the server. Multiple users, persisted mobile sessions, and device management are later milestones.
+
+## Import and read EPUBs
+
+In Library, choose **Import EPUBs** and select your files. On mobile, use the import icon and your phone's document picker. Exact duplicates reuse the existing entry without resetting progress. Title, author, and an available JPEG/PNG cover come from the EPUB; no metadata provider receives the file.
+
+Choose **Read book** to open the shared reader. Use the chapter menu, Previous/Next, arrow keys, and text-size selector. The reader saves an EPUB CFI and percentage to your account; reopening a book restores that position, including across online devices. Page totals remain for manually added books; EPUB percentages do not invent printed page counts. Update older mobile clients before using an EPUB library.
+
+Uploads are limited to 50 MiB, with bounded archive resources. Encrypted/obfuscated resources and scripted interactivity are unsupported. Book scripts, popups, external links, and external resources are blocked in the reader. Location generation happens when opening a book and can take a moment. Offline reading, annotations, and conflict-aware synchronization remain planned.
 
 ## Develop and test
 
@@ -88,4 +96,4 @@ Android artifacts initially use development signing. iOS builds run on GitHub ma
 - [Feature parity and next milestones](docs/parity.md)
 - [Build and release decisions](docs/decisions/0002-component-releases-and-selective-ci.md)
 
-Shelf's original code is licensed under AGPL-3.0-only. Book Orbit is credited as a functional reference; its implementation is not included in this foundation. Bundled fonts retain their Open Font License notices.
+Shelf's original code is licensed under AGPL-3.0-only. Book Orbit is credited as a functional reference; its implementation is not included in this foundation. Bundled fonts retain their Open Font License notices. Reader dependencies retain the notices in `web/vendor/`; see [the shared reader decision](docs/decisions/0003-shared-epub-reader.md).

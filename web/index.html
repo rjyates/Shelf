@@ -1,87 +1,224 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#171916">
-  <title>Shelf · Your reading room</title>
-  <link rel="stylesheet" href="/app.css">
-  <script src="/app.js" type="module"></script>
-</head>
-<body>
-  <a class="skip" href="#main">Skip to content</a>
-  <aside class="sidebar">
-    <a class="brand" href="#overview"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 7C11 3 6 3 2 4v22c5-1 10 0 14 3 4-3 9-4 14-3V4c-4-1-9-1-14 3v22M6 9c3 0 5 1 7 2M6 14c3 0 5 1 7 2M19 11c2-1 4-2 7-2M19 16c2-1 4-2 7-2"/></svg> shelf</a>
-    <p class="eyebrow">YOUR READING ROOM</p>
-    <nav aria-label="Main navigation">
-      <a href="#overview" data-view="overview"><span aria-hidden="true">⌂</span> Overview</a>
-      <a href="#library" data-view="library"><span aria-hidden="true">▤</span> Library</a>
-      <a href="#insights" data-view="insights"><span aria-hidden="true">⌁</span> Reading insights</a>
-    </nav>
-    <div class="side-note"><span class="sprig" aria-hidden="true"><svg viewBox="0 0 48 72"><path d="M9 69C26 48 23 25 34 3M16 57C1 57 5 43 18 49M23 44C40 45 42 30 26 36M25 29C10 29 14 15 29 21M30 15C43 18 47 7 35 7"/></svg></span><p>A home for the books<br>that stay with you.</p></div>
-    <button id="signout" class="quiet" hidden>Sign out</button>
-    <p class="edition">SHELF / FIRST EDITION</p>
-  </aside>
-  <main id="main">
-    <header class="masthead">
-      <svg class="celestial" viewBox="0 0 640 230" aria-hidden="true"><g fill="none" stroke="currentColor"><circle cx="440" cy="-30" r="220"/><circle cx="440" cy="-30" r="160"/><circle cx="440" cy="-30" r="100"/><ellipse cx="410" cy="40" rx="280" ry="80" transform="rotate(-18 410 40)"/><path d="M220 20v20m-10-10h20m290 120v24m-12-12h24m-170-64v12m-6-6h12"/></g></svg>
-      <p class="eyebrow" id="breadcrumb">YOUR READING ROOM / OVERVIEW</p>
-      <h1 id="heading">An evening well read.</h1>
-      <p class="subtitle" id="subtitle">A little further into another world.</p>
-      <button id="open-add" class="primary" hidden>＋ Add book</button>
-    </header>
-    <p id="message" role="status" aria-live="polite" hidden></p>
-    <section id="auth" class="panel auth" hidden>
-      <p class="eyebrow" id="auth-label">WELCOME TO SHELF</p>
-      <h2 id="auth-heading">Open your reading room.</h2>
-      <p id="auth-help">Sign in to your library.</p>
-      <form id="auth-form">
-        <label>Username<input name="username" autocomplete="username" maxlength="100" required></label>
-        <label>Password<input name="password" type="password" autocomplete="current-password" maxlength="1024" required></label>
-        <button class="primary" id="auth-submit">Sign in</button>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#171916" />
+    <title>Shelf · Your reading room</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <aside class="sidebar">
+      <a class="brand" href="#overview"
+        ><svg viewBox="0 0 32 32" aria-hidden="true">
+          <path
+            d="M16 7C11 3 6 3 2 4v22c5-1 10 0 14 3 4-3 9-4 14-3V4c-4-1-9-1-14 3v22M6 9c3 0 5 1 7 2M6 14c3 0 5 1 7 2M19 11c2-1 4-2 7-2M19 16c2-1 4-2 7-2"
+          />
+        </svg>
+        shelf</a
+      >
+      <p class="eyebrow">YOUR READING ROOM</p>
+      <nav aria-label="Main navigation">
+        <a href="#overview" data-view="overview"
+          ><span aria-hidden="true">⌂</span> Overview</a
+        >
+        <a href="#library" data-view="library"
+          ><span aria-hidden="true">▤</span> Library</a
+        >
+        <a href="#insights" data-view="insights"
+          ><span aria-hidden="true">⌁</span> Reading insights</a
+        >
+      </nav>
+      <div class="side-note">
+        <span class="sprig" aria-hidden="true"
+          ><svg viewBox="0 0 48 72">
+            <path
+              d="M9 69C26 48 23 25 34 3M16 57C1 57 5 43 18 49M23 44C40 45 42 30 26 36M25 29C10 29 14 15 29 21M30 15C43 18 47 7 35 7"
+            /></svg
+        ></span>
+        <p>A home for the books<br />that stay with you.</p>
+      </div>
+      <button id="signout" class="quiet" hidden>Sign out</button>
+      <p class="edition">SHELF / FIRST EDITION</p>
+    </aside>
+    <main id="main">
+      <header class="masthead">
+        <svg class="celestial" viewBox="0 0 640 230" aria-hidden="true">
+          <g fill="none" stroke="currentColor">
+            <circle cx="440" cy="-30" r="220" />
+            <circle cx="440" cy="-30" r="160" />
+            <circle cx="440" cy="-30" r="100" />
+            <ellipse
+              cx="410"
+              cy="40"
+              rx="280"
+              ry="80"
+              transform="rotate(-18 410 40)"
+            />
+            <path
+              d="M220 20v20m-10-10h20m290 120v24m-12-12h24m-170-64v12m-6-6h12"
+            />
+          </g>
+        </svg>
+        <p class="eyebrow" id="breadcrumb">YOUR READING ROOM / OVERVIEW</p>
+        <h1 id="heading">An evening well read.</h1>
+        <p class="subtitle" id="subtitle">
+          A little further into another world.
+        </p>
+        <div class="masthead-actions">
+          <button id="open-add" class="primary" hidden>＋ Add book</button>
+          <button id="open-import" class="quiet" hidden>Import EPUBs</button
+          ><input
+            id="epub-files"
+            type="file"
+            accept=".epub,application/epub+zip"
+            multiple
+            hidden
+          />
+        </div>
+      </header>
+      <p id="message" role="status" aria-live="polite" hidden></p>
+      <section id="auth" class="panel auth" hidden>
+        <p class="eyebrow" id="auth-label">WELCOME TO SHELF</p>
+        <h2 id="auth-heading">Open your reading room.</h2>
+        <p id="auth-help">Sign in to your library.</p>
+        <form id="auth-form">
+          <label
+            >Username<input
+              name="username"
+              autocomplete="username"
+              maxlength="100"
+              required
+          /></label>
+          <label
+            >Password<input
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              maxlength="1024"
+              required
+          /></label>
+          <button class="primary" id="auth-submit">Sign in</button>
+        </form>
+        <p class="fine">Your library stays on your server.</p>
+      </section>
+      <div id="content" hidden>
+        <section class="stats" aria-label="Library totals">
+          <div>
+            <span id="stat-books">0</span>
+            <p>Books on your shelf</p>
+          </div>
+          <div>
+            <span id="stat-reading">0</span>
+            <p>Currently reading</p>
+          </div>
+          <div>
+            <span id="stat-finished">0</span>
+            <p>Books finished</p>
+          </div>
+          <div>
+            <span id="stat-pages">0</span>
+            <p>Pages turned</p>
+          </div>
+        </section>
+        <section class="panel" id="library-panel">
+          <div class="section-head">
+            <h2 id="section-title"><span>01 /</span> Currently reading</h2>
+            <a href="#library" id="view-library">View library →</a>
+          </div>
+          <label class="search" id="search-label" hidden
+            >Search your library<input
+              id="search"
+              type="search"
+              placeholder="Book title or author"
+          /></label>
+          <div id="books" class="book-grid"></div>
+          <div id="empty" class="empty">
+            <span class="sprig" aria-hidden="true"
+              ><svg viewBox="0 0 48 72">
+                <path
+                  d="M9 69C26 48 23 25 34 3M16 57C1 57 5 43 18 49M23 44C40 45 42 30 26 36M25 29C10 29 14 15 29 21M30 15C43 18 47 7 35 7"
+                /></svg
+            ></span>
+            <h3>Your next chapter starts here.</h3>
+            <p>Add a book to begin building your library.</p>
+            <button id="empty-add" class="primary">Add your first book</button>
+          </div>
+        </section>
+        <section id="insights-panel" class="panel" hidden>
+          <div class="section-head">
+            <h2><span>02 /</span> Reading progress</h2>
+          </div>
+          <div id="progress-list"></div>
+          <p class="fine">
+            Totals reflect the page progress you record. Session history,
+            streaks, and annual goals are planned.
+          </p>
+        </section>
+        <footer>
+          YOUR BOOKS. YOUR SERVER. YOUR READING ROOM.<span
+            >Catalogue foundation · API v1</span
+          >
+        </footer>
+      </div>
+    </main>
+    <dialog id="add-dialog" aria-labelledby="add-heading">
+      <form id="add-form">
+        <div class="section-head">
+          <h2 id="add-heading">A place on your shelf.</h2>
+          <button
+            type="button"
+            id="close-add"
+            class="quiet"
+            aria-label="Close add book"
+          >
+            ✕
+          </button>
+        </div>
+        <p>
+          Add the book's details. File import is coming in a later milestone.
+        </p>
+        <label>Title<input name="title" maxlength="500" required /></label>
+        <label>Author<input name="author" maxlength="300" /></label>
+        <label
+          >Total pages<input
+            name="total_pages"
+            type="number"
+            min="1"
+            max="1000000"
+            required
+        /></label>
+        <p id="add-error" role="alert" hidden></p>
+        <button class="primary">Add to library</button>
       </form>
-      <p class="fine">Your library stays on your server.</p>
-    </section>
-    <div id="content" hidden>
-      <section class="stats" aria-label="Library totals">
-        <div><span id="stat-books">0</span><p>Books on your shelf</p></div>
-        <div><span id="stat-reading">0</span><p>Currently reading</p></div>
-        <div><span id="stat-finished">0</span><p>Books finished</p></div>
-        <div><span id="stat-pages">0</span><p>Pages turned</p></div>
-      </section>
-      <section class="panel" id="library-panel">
-        <div class="section-head"><h2 id="section-title"><span>01 /</span> Currently reading</h2><a href="#library" id="view-library">View library →</a></div>
-        <label class="search" id="search-label" hidden>Search your library<input id="search" type="search" placeholder="Book title or author"></label>
-        <div id="books" class="book-grid"></div>
-        <div id="empty" class="empty"><span class="sprig" aria-hidden="true"><svg viewBox="0 0 48 72"><path d="M9 69C26 48 23 25 34 3M16 57C1 57 5 43 18 49M23 44C40 45 42 30 26 36M25 29C10 29 14 15 29 21M30 15C43 18 47 7 35 7"/></svg></span><h3>Your next chapter starts here.</h3><p>Add a book to begin building your library.</p><button id="empty-add" class="primary">Add your first book</button></div>
-      </section>
-      <section id="insights-panel" class="panel" hidden>
-        <div class="section-head"><h2><span>02 /</span> Reading progress</h2></div>
-        <div id="progress-list"></div>
-        <p class="fine">Totals reflect the page progress you record. Session history, streaks, and annual goals are planned.</p>
-      </section>
-      <footer>YOUR BOOKS. YOUR SERVER. YOUR READING ROOM.<span>Catalogue foundation · API v1</span></footer>
-    </div>
-  </main>
-  <dialog id="add-dialog" aria-labelledby="add-heading">
-    <form id="add-form">
-      <div class="section-head"><h2 id="add-heading">A place on your shelf.</h2><button type="button" id="close-add" class="quiet" aria-label="Close add book">✕</button></div>
-      <p>Add the book's details. File import is coming in a later milestone.</p>
-      <label>Title<input name="title" maxlength="500" required></label>
-      <label>Author<input name="author" maxlength="300"></label>
-      <label>Total pages<input name="total_pages" type="number" min="1" max="1000000" required></label>
-      <p id="add-error" role="alert" hidden></p>
-      <button class="primary">Add to library</button>
-    </form>
-  </dialog>
-  <dialog id="progress-dialog" aria-labelledby="progress-heading">
-    <form id="progress-form">
-      <div class="section-head"><h2 id="progress-heading">Record your progress.</h2><button type="button" id="close-progress" class="quiet" aria-label="Close progress">✕</button></div>
-      <p id="progress-book"></p>
-      <label>Pages read<input id="progress-pages" name="pages_read" type="number" min="0" required></label>
-      <p id="progress-error" role="alert" hidden></p>
-      <button class="primary">Save progress</button>
-    </form>
-  </dialog>
-</body>
+    </dialog>
+    <dialog id="progress-dialog" aria-labelledby="progress-heading">
+      <form id="progress-form">
+        <div class="section-head">
+          <h2 id="progress-heading">Record your progress.</h2>
+          <button
+            type="button"
+            id="close-progress"
+            class="quiet"
+            aria-label="Close progress"
+          >
+            ✕
+          </button>
+        </div>
+        <p id="progress-book"></p>
+        <label
+          >Pages read<input
+            id="progress-pages"
+            name="pages_read"
+            type="number"
+            min="0"
+            required
+        /></label>
+        <p id="progress-error" role="alert" hidden></p>
+        <button class="primary">Save progress</button>
+      </form>
+    </dialog>
+  </body>
 </html>

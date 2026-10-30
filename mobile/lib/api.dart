@@ -15,6 +15,9 @@ class Book {
     required this.author,
     required this.totalPages,
     required this.pagesRead,
+    this.hasCover = false,
+    this.isEpub = false,
+    this.percentage = 0,
   });
   factory Book.fromJson(Map<String, dynamic> json) {
     final id = json['id'];
@@ -22,16 +25,24 @@ class Book {
     final author = json['author'];
     final total = json['total_pages'];
     final read = json['pages_read'];
+    final epub = json['format'] == 'epub';
+    final percentage = json['percentage'];
     if (id is! int ||
         id < 1 ||
         title is! String ||
         title.trim().isEmpty ||
         author is! String ||
-        total is! int ||
-        total < 1 ||
+        (!epub && (total is! int || total < 1)) ||
+        (epub &&
+            (total != null ||
+                percentage is! num ||
+                !percentage.isFinite ||
+                percentage < 0 ||
+                percentage > 1)) ||
         read is! int ||
         read < 0 ||
-        read > total) {
+        (!epub && read > (total as int)) ||
+        (epub && read != 0)) {
       throw ShelfException(
         'Your server returned an invalid book entry. Check the server version.',
       );
@@ -40,14 +51,20 @@ class Book {
       id: id,
       title: title,
       author: author,
-      totalPages: total,
+      totalPages: total as int?,
+      isEpub: epub,
+      hasCover: epub && json['has_cover'] == true,
+      percentage: epub ? (percentage as num).toDouble() : 0,
       pagesRead: read,
     );
   }
   final int id;
   final String title;
   final String author;
-  final int totalPages;
+  final int? totalPages;
+  final bool isEpub;
+  final bool hasCover;
+  final double percentage;
   final int pagesRead;
 }
 
@@ -128,6 +145,47 @@ class ShelfApi {
       );
     }
     return data;
+  }
+
+  Map<String, String> get readerHeaders => {
+    if (_token != null) HttpHeaders.authorizationHeader: 'Bearer $_token',
+  };
+
+  Future<bool> importEpub(List<int> bytes) async {
+    if (bytes.isEmpty || bytes.length > 50 * 1024 * 1024) {
+      throw ShelfException('Choose an EPUB under 50 MiB.');
+    }
+    try {
+      final request = await _client.postUrl(
+        base.resolve('/api/v1/books/import'),
+      );
+      request.followRedirects = false;
+      request.headers.contentType = ContentType('application', 'epub+zip');
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      request.add(bytes);
+      final response = await request.close().timeout(
+        const Duration(seconds: 90),
+      );
+      final text = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 30));
+      final data = jsonDecode(text);
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw ShelfException(
+          data is Map
+              ? data['error'] as String? ?? 'Import failed.'
+              : 'Import failed.',
+        );
+      }
+      return (data as Map)['duplicate'] == true;
+    } on ShelfException {
+      rethrow;
+    } on Exception {
+      throw ShelfException(
+        'The EPUB could not be imported. Check your connection.',
+      );
+    }
   }
 
   Future<void> login(String username, String password) async {

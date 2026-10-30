@@ -80,7 +80,9 @@ jobs:
       - run: cargo clippy --manifest-path server/Cargo.toml --locked --all-targets -- -D warnings
       - run: cargo test --manifest-path server/Cargo.toml --locked
       - run: node --check web/app.js
-      - run: node --test tests/web.test.mjs
+      - run: npm ci --prefix web
+      - run: node --check web/reader.js
+      - run: node --test tests/web.test.mjs tests/reader.test.mjs
       - name: Build the release candidate image
         env:
           VERSION: ${{ needs.plan.outputs.server_version }}
