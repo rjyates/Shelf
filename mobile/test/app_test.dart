@@ -50,6 +50,42 @@ void main() {
     );
   });
 
+  test('does not follow a redirect while signing in', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      request.response.statusCode = HttpStatus.found;
+      request.response.headers.set(
+        HttpHeaders.locationHeader,
+        'http://example.invalid',
+      );
+      await request.response.close();
+    });
+    final client = HttpOverrides.runWithHttpOverrides(
+      () => HttpClient(),
+      _RealHttpOverrides(),
+    );
+    final api = ShelfApi(
+      Uri.parse('http://127.0.0.1:${server.port}'),
+      client: client,
+    );
+    try {
+      await expectLater(
+        api.login('reader', 'test-password-only'),
+        throwsA(
+          isA<ShelfException>().having(
+            (e) => e.message,
+            'message',
+            contains('redirects are not followed'),
+          ),
+        ),
+      );
+    } finally {
+      api.close();
+      await subscription.cancel();
+      await server.close(force: true);
+    }
+  });
+
   test(
     'client signs in, fetches books, and records progress over the API',
     () async {

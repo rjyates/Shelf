@@ -91,9 +91,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
         api.close();
         return;
       }
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute<void>(builder: (_) => LibraryScreen(api: api!)));
+      final revoked = await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(builder: (_) => LibraryScreen(api: api!)),
+      );
+      if (mounted && revoked == false) {
+        setState(
+          () => _error = 'Signed out on this phone. The server could not be reached to revoke other sessions.',
+        );
+      }
     } catch (error) {
       api?.close();
       if (mounted) {
@@ -274,15 +279,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _signOut() async {
+    var revoked = true;
     try {
       await widget.api.logout();
-      if (mounted) {
-        Navigator.pop(context);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() => _error = error.toString());
-      }
+    } catch (_) {
+      revoked = false;
+    }
+    if (mounted) {
+      Navigator.pop(context, revoked);
     }
   }
 

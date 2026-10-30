@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+
 concurrency:
   group: shelf-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

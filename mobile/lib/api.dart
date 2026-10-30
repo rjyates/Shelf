@@ -84,12 +84,19 @@ class ShelfApi {
       method,
       base.resolve('/api/v1/$path'),
     );
+    request.followRedirects = false;
     request.headers.contentType = ContentType.json;
     if (_token != null) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
     }
     if (body != null) request.write(jsonEncode(body));
     final response = await request.close();
+    if (response.statusCode >= 300 && response.statusCode < 400) {
+      await response.drain<void>();
+      throw ShelfException(
+        'Enter the final HTTPS server address; redirects are not followed.',
+      );
+    }
     final text = await utf8.decoder.bind(response).join();
     final dynamic data = text.isEmpty ? null : jsonDecode(text);
     if (response.statusCode >= 400) {
