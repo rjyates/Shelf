@@ -1,0 +1,31 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Shelf API", "version": "1.0.0", "description": "Foundation API. Catalogue entries are metadata; file ingestion and reader positions are later milestones."},
+  "servers": [{"url": "/api/v1"}],
+  "security": [{"bearer": []}, {"cookie": []}],
+  "paths": {
+    "/health": {"get": {"security": [], "responses": {"200": {"description": "Health, server version, and api_version=1"}}}},
+    "/setup": {
+      "get": {"security": [], "responses": {"200": {"description": "Object containing setup_required boolean"}}},
+      "post": {"security": [], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Credentials"}}}}, "responses": {"201": {"description": "First account created"}, "409": {"description": "Setup already complete"}, "400": {"description": "Invalid credentials"}}}
+    },
+    "/login": {"post": {"security": [], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Credentials"}}}}, "responses": {"200": {"description": "Object containing token, plus HttpOnly SameSite=Strict session cookie. Both expire after seven days."}, "401": {"description": "Incorrect credentials"}, "429": {"description": "Server-wide sign-in limit reached"}}}},
+    "/logout": {"post": {"responses": {"204": {"description": "All account sessions revoked"}, "401": {"description": "No valid session"}}}},
+    "/books": {
+      "get": {"responses": {"200": {"description": "Owned catalogue entries, newest first", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Book"}}}}}, "401": {"description": "No valid session"}}},
+      "post": {"requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["title", "author", "total_pages"], "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 500}, "author": {"type": "string", "maxLength": 300}, "total_pages": {"type": "integer", "minimum": 1, "maximum": 1000000}}}}}}, "responses": {"201": {"description": "Object containing new book id"}, "400": {"description": "Invalid book details"}, "401": {"description": "No valid session"}}}
+    },
+    "/books/{id}/progress": {"post": {"parameters": [{"in": "path", "name": "id", "required": true, "schema": {"type": "integer"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["pages_read"], "properties": {"pages_read": {"type": "integer", "minimum": 0}}}}}}, "responses": {"204": {"description": "Progress saved"}, "400": {"description": "Progress outside book page range"}, "401": {"description": "No valid session"}, "404": {"description": "Book not owned or not found"}}}},
+    "/stats": {"get": {"responses": {"200": {"description": "Object containing integer books, pages_read, finished, and reading totals for this account"}, "401": {"description": "No valid session"}}}}
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {"type": "http", "scheme": "bearer"},
+      "cookie": {"type": "apiKey", "in": "cookie", "name": "shelf_session"}
+    },
+    "schemas": {
+      "Credentials": {"type": "object", "additionalProperties": false, "required": ["username", "password"], "properties": {"username": {"type": "string", "minLength": 1, "maxLength": 100}, "password": {"type": "string", "maxLength": 1024, "description": "Setup requires at least twelve UTF-8 bytes. Login accepts the existing password."}}},
+      "Book": {"type": "object", "required": ["id", "title", "author", "total_pages", "pages_read"], "properties": {"id": {"type": "integer"}, "title": {"type": "string"}, "author": {"type": "string"}, "total_pages": {"type": "integer", "minimum": 1}, "pages_read": {"type": "integer", "minimum": 0}}}
+    }
+  }
+}

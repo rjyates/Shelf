@@ -1,0 +1,11 @@
+**/.git
+**/target
+**/build
+**/.dart_tool
+.tools
+mobile
+docs
+data
+books
+**/.env*
+**/*.db*

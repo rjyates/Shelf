@@ -1,0 +1,12 @@
+services:
+  shelf:
+    image: ghcr.io/rjyates/shelf-server:latest
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - shelf-data:/data
+      - ./books:/books:ro
+    restart: unless-stopped
+
+volumes:
+  shelf-data:

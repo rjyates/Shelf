@@ -1,0 +1,9 @@
+#!/bin/sh
+if command -v python >/dev/null 2>&1; then PYTHON=python; else PYTHON=python3; fi
+"$PYTHON" - "$1" <<'PY'
+import re, sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    subject = next((line.strip() for line in handle if line.strip() and not line.startswith('#')), '')
+if not re.fullmatch(r'(feat|fix|perf|build|ci|docs|style|refactor|test|chore|revert)(\([A-Za-z0-9._/-]+\))?!?: \S.*', subject):
+    sys.exit('Use a Conventional Commit: type(scope): description')
+PY

@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.ttf binary
+*.bat text eol=crlf
+web/fonts/*LICENSE.txt -whitespace
+mobile/assets/fonts/*LICENSE.txt -whitespace
