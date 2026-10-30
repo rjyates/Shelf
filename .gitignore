@@ -1,3 +1,16 @@
 .venv/
 __pycache__/
 node_modules/
+server/target/
+.tools/
+data/
+books/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+.DS_Store
+artifacts/
+release-out/
