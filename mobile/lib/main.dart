@@ -363,8 +363,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         '${book.title}: ${book.pagesRead} of ${book.totalPages} pages',
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    runSpacing: 4,
                     children: [
                       Text('${book.pagesRead} / ${book.totalPages} pages'),
                       TextButton(

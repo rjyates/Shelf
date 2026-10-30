@@ -16,13 +16,34 @@ class Book {
     required this.totalPages,
     required this.pagesRead,
   });
-  factory Book.fromJson(Map<String, dynamic> json) => Book(
-    id: json['id'] as int,
-    title: json['title'] as String,
-    author: json['author'] as String,
-    totalPages: json['total_pages'] as int,
-    pagesRead: json['pages_read'] as int,
-  );
+  factory Book.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final title = json['title'];
+    final author = json['author'];
+    final total = json['total_pages'];
+    final read = json['pages_read'];
+    if (id is! int ||
+        id < 1 ||
+        title is! String ||
+        title.trim().isEmpty ||
+        author is! String ||
+        total is! int ||
+        total < 1 ||
+        read is! int ||
+        read < 0 ||
+        read > total) {
+      throw ShelfException(
+        'Your server returned an invalid book entry. Check the server version.',
+      );
+    }
+    return Book(
+      id: id,
+      title: title,
+      author: author,
+      totalPages: total,
+      pagesRead: read,
+    );
+  }
   final int id;
   final String title;
   final String author;
@@ -118,9 +139,23 @@ class ShelfApi {
     _token = (data as Map<String, dynamic>)['token'] as String;
   }
 
-  Future<List<Book>> books() async => ((await request('books')) as List)
-      .map((item) => Book.fromJson(item as Map<String, dynamic>))
-      .toList();
+  Future<List<Book>> books() async {
+    final data = await request('books');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid catalogue. Check the server version.',
+      );
+    }
+    return data.map((item) {
+      if (item is! Map<String, dynamic>) {
+        throw ShelfException(
+          'Your server returned an invalid book entry. Check the server version.',
+        );
+      }
+      return Book.fromJson(item);
+    }).toList();
+  }
+
   Future<void> addBook(String title, String author, int totalPages) async {
     await request(
       'books',

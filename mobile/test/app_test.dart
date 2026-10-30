@@ -7,6 +7,48 @@ import 'package:shelf_mobile/api.dart';
 import 'package:shelf_mobile/main.dart';
 
 void main() {
+  test('rejects malformed server data before rendering progress', () {
+    final valid = <String, dynamic>{
+      'id': 1,
+      'title': 'Piranesi',
+      'author': 'Susanna Clarke',
+      'total_pages': 245,
+      'pages_read': 163,
+    };
+    for (final change in [
+      {'total_pages': 0},
+      {'pages_read': 246},
+      {'pages_read': -1},
+      {'title': null},
+    ]) {
+      expect(
+        () => Book.fromJson({...valid, ...change}),
+        throwsA(isA<ShelfException>()),
+      );
+    }
+  });
+  testWidgets('catalogue remains usable at narrow width and double text size', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(320, 800),
+            textScaler: TextScaler.linear(2),
+          ),
+          child: LibraryScreen(api: _CatalogueApi()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Piranesi'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   test('reads the same book contract fixture as the Rust server', () {
     final fixture = jsonDecode(
       File('../protocol/fixtures/book.json').readAsStringSync(),
@@ -150,3 +192,17 @@ void main() {
 }
 
 class _RealHttpOverrides extends HttpOverrides {}
+
+class _CatalogueApi extends ShelfApi {
+  _CatalogueApi() : super(Uri.parse('https://example.invalid'));
+  @override
+  Future<List<Book>> books() async => [
+    Book(
+      id: 1,
+      title: 'Piranesi',
+      author: 'Susanna Clarke',
+      totalPages: 245,
+      pagesRead: 163,
+    ),
+  ];
+}
