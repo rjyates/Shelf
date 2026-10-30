@@ -357,6 +357,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   LinearProgressIndicator(
                     value: book.pagesRead / book.totalPages,
                     color: moss,
+                    backgroundColor: surface,
+                    minHeight: 5,
                     semanticsLabel:
                         '${book.title}: ${book.pagesRead} of ${book.totalPages} pages',
                   ),
