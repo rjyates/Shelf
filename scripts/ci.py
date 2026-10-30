@@ -20,7 +20,7 @@ def affected(paths):
         if path == ".flutter-version":
             result.update(mobile=True, android=True, ios=True)
             continue
-        if path in {"tests/web.test.mjs", "scripts/smoke.py"}:
+        if path in {"tests/web.test.mjs", "scripts/smoke.py", "scripts/compose_smoke.py"}:
             result["server"] = True
             continue
         if path.startswith(("server/", "web/", "deploy/")) or path in {"compose.yaml", ".dockerignore", "rust-toolchain.toml", "LICENSE"}:
@@ -29,12 +29,7 @@ def affected(paths):
             if path in {"mobile/README.md", "mobile/.gitignore"}:
                 continue
             result["mobile"] = True
-            if path.startswith("mobile/android/"):
-                result["android"] = True
-            elif path.startswith("mobile/ios/"):
-                result["ios"] = True
-            elif path not in {"mobile/README.md", "mobile/.gitignore"}:
-                result["android"] = result["ios"] = True
+            result["android"] = result["ios"] = True
         if path.startswith(("protocol/", "scripts/", "tests/", ".github/workflows/")):
             result = dict.fromkeys(result, True)
     return result
@@ -127,7 +122,7 @@ def notes(plan, component):
     for entry in item["commits"]:
         lines.append(f"- {entry['message'].splitlines()[0]} ({entry['sha'][:8]})")
     if component == "mobile":
-        lines.extend(["", "Android artifacts use development signing. The iOS archive is unsigned and cannot be installed directly or uploaded to the App Store.", "Only changed platform builds are attached; an unchanged platform retains its previously published build."])
+        lines.extend(["", "Android and iPhone artifacts share this mobile version. Android uses development signing. The iOS archive is unsigned and cannot be installed directly or uploaded to the App Store."])
     return "\n".join(lines) + "\n"
 
 

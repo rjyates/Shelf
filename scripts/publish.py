@@ -46,9 +46,10 @@ def publish(component, plan):
         manifest.write_text(json.dumps({"image": f"{image}:{version}", "digests": json.loads(inspection), "source": plan["sha"], "platform": "linux/amd64"}, indent=2), encoding="utf-8")
         artifacts.extend([compose, manifest])
     else:
-        artifacts.extend(sorted(Path("artifacts").glob("mobile-*/*")))
-        if len(artifacts) == 1:
-            raise RuntimeError("No mobile artifacts found; refusing to publish.")
+        mobile = [Path("artifacts/mobile-android/app-release.apk"), Path("artifacts/mobile-ios/shelf-ios-unsigned.zip")]
+        if not all(path.is_file() for path in mobile):
+            raise RuntimeError("Both Android and iPhone artifacts are required for a shared mobile release.")
+        artifacts.extend(mobile)
     checksums = out / "SHA256SUMS"
     checksums.write_text("".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in artifacts), encoding="utf-8")
     artifacts.append(checksums)

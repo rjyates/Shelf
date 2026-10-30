@@ -88,9 +88,13 @@ jobs:
       - name: Verify Compose and container startup
         run: |
           docker compose config --quiet
-          docker run -d --name shelf-smoke -p 127.0.0.1:8080:8080 "shelf-tested:$GITHUB_SHA"
+          docker tag "shelf-tested:$GITHUB_SHA" ghcr.io/rjyates/shelf-server:latest
+          docker compose -p shelf-ci up -d --pull never
           python3 scripts/smoke.py
-          docker stop shelf-smoke
+          python3 scripts/compose_smoke.py
+      - name: Stop the disposable Compose project
+        if: always()
+        run: docker compose -p shelf-ci down
       - name: Export the tested image
         if: github.event_name == 'push'
         run: docker save "shelf-tested:$GITHUB_SHA" -o /tmp/shelf-image.tar
