@@ -60,6 +60,18 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(plan["components"]["server"]["version"], "1.0.1")
             self.assertEqual(len(plan["components"]["server"]["commits"]), 1)
             self.assertTrue(plan["selection"]["mobile"])
+            git("tag", "server-v1.0.1")
+            git("tag", "mobile-v0.1.0")
+            before_move = git("rev-parse", "HEAD")
+            with patch.object(ci, "git", side_effect=git):
+                retry = ci.make_plan(base, "HEAD")
+            self.assertFalse(any(retry["selection"].values()), "A published revision must not release again")
+            git("mv", "mobile/lib/main.dart", "server/src/moved.dart")
+            git("-c", "user.name=CI Test", "-c", "user.email=ci@example.invalid", "commit", "-qm", "refactor: move shared source")
+            with patch.object(ci, "git", side_effect=git):
+                moved = ci.make_plan(before_move, "HEAD")
+            self.assertTrue(moved["selection"]["server"])
+            self.assertTrue(moved["selection"]["mobile"], "Removing a mobile file must still validate mobile")
 
 
 if __name__ == "__main__":

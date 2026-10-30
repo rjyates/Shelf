@@ -40,7 +40,8 @@ def affected(paths):
 def changed(base, head, merge_base=False):
     if not base or set(base) == {"0"}:
         return git("ls-tree", "-r", "--name-only", head).splitlines()
-    return git("diff", "--name-only", "--diff-filter=ACDMRT", f"{base}{'...' if merge_base else '..'}{head}").splitlines()
+    # A rename affects both the source and destination components.
+    return git("diff", "--no-renames", "--name-only", "--diff-filter=ACDMRT", f"{base}{'...' if merge_base else '..'}{head}").splitlines()
 
 
 def last_tag(component, head):
