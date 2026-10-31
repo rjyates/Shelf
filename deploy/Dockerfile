@@ -18,15 +18,18 @@ LABEL org.opencontainers.image.source="https://github.com/rjyates/Shelf"
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --create-home shelf \
+    && groupadd --system --gid 10001 shelf \
+    && useradd --system --uid 10001 --gid 10001 --create-home shelf \
     && mkdir -p /data /books && chown shelf:shelf /data /books
 COPY --from=build /src/server/target/release/shelf-server /usr/local/bin/shelf-server
 COPY LICENSE /usr/share/licenses/shelf/LICENSE
 COPY web/fonts/*LICENSE.txt /usr/share/licenses/shelf/fonts/
 COPY web/vendor/ /usr/share/licenses/shelf/reader/
+COPY deploy/entrypoint.sh /usr/local/bin/shelf-entrypoint
+# Starts as root so a host folder mounted on /data can be made writable, then drops privileges.
+RUN chmod 755 /usr/local/bin/shelf-entrypoint
 ENV SHELF_DATA=/data SHELF_LISTEN=0.0.0.0:8080
-USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
   CMD curl --fail --silent http://127.0.0.1:8080/api/v1/health || exit 1
-ENTRYPOINT ["shelf-server"]
+ENTRYPOINT ["/usr/local/bin/shelf-entrypoint"]
