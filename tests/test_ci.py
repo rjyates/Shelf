@@ -1,5 +1,6 @@
 import importlib.util
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,11 @@ from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("ci", Path(__file__).parents[1] / "scripts" / "ci.py")
 ci = importlib.util.module_from_spec(spec)
+sys.modules["ci"] = ci
 spec.loader.exec_module(ci)
+publish_spec = importlib.util.spec_from_file_location("publish", Path(__file__).parents[1] / "scripts" / "publish.py")
+publish = importlib.util.module_from_spec(publish_spec)
+publish_spec.loader.exec_module(publish)
 
 
 class SelectionTests(unittest.TestCase):
@@ -92,6 +97,71 @@ class HistoryTests(unittest.TestCase):
             self.assertIn("mobile/assets/café.txt", paths)
             self.assertTrue(ci.affected(paths)["mobile"])
             self.assertFalse(ci.affected(paths)["server"])
+
+    def test_main_plan_releases_one_component_without_the_other(self):
+        with tempfile.TemporaryDirectory() as folder:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", folder, *args], text=True, encoding="utf-8").strip()
+
+            def commit(path, message):
+                file = Path(folder) / path
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(message)
+                git("add", path)
+                git("-c", "user.name=CI Test", "-c", "user.email=ci@example.invalid", "commit", "-qm", message)
+
+            git("init", "--quiet")
+            commit("server/src/lib.rs", "feat: initial server")
+            commit("mobile/lib/main.dart", "feat: initial mobile")
+            git("tag", "server-v1.0.0")
+            git("tag", "mobile-v1.0.0")
+            base = git("rev-parse", "HEAD")
+            commit("deploy/Dockerfile", "fix: adjust the server image")
+            with patch.object(ci, "git", side_effect=git):
+                server_only = ci.make_plan(base, "HEAD")
+            self.assertEqual(server_only["selection"], {"server": True, "mobile": False, "android": False, "ios": False})
+            git("tag", "server-v1.0.1")
+            after_server = git("rev-parse", "HEAD")
+            commit("mobile/lib/main.dart", "fix: adjust the mobile app")
+            with patch.object(ci, "git", side_effect=git):
+                mobile_only = ci.make_plan(after_server, "HEAD")
+            self.assertEqual(mobile_only["selection"], {"server": False, "mobile": True, "android": True, "ios": True})
+
+
+class PublishWorkflowTests(unittest.TestCase):
+    def test_publish_is_not_blocked_by_a_skipped_sibling_job(self):
+        workflow = Path(__file__).parents[1].joinpath(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        publish = workflow[workflow.index("  publish:\n"):]
+        self.assertIn("!cancelled()", publish)
+        self.assertIn("needs.plan.result == 'success'", publish)
+        self.assertIn("needs.gate.result == 'success'", publish)
+        self.assertNotIn("success()", publish)
+        self.assertIn("needs.plan.outputs.server == 'true' || needs.plan.outputs.mobile == 'true'", publish)
+        self.assertNotIn("needs.plan.outputs.server == 'true' && needs.plan.outputs.mobile == 'true'", publish)
+        for job, condition in (
+            ("server", "needs: plan\n    if: needs.plan.outputs.server == 'true'"),
+            ("server-image", "needs: plan\n    if: needs.plan.outputs.server == 'true'"),
+            ("mobile", "needs: plan\n    if: needs.plan.outputs.mobile == 'true'"),
+            ("android", "needs: [plan, mobile]\n    if: needs.plan.outputs.android == 'true'"),
+            ("ios", "needs: [plan, mobile]\n    if: needs.plan.outputs.ios == 'true'"),
+        ):
+            self.assertIn(f"  {job}:\n    {condition}\n", workflow)
+
+
+class ImageIndexTests(unittest.TestCase):
+    def test_server_release_requires_amd64_and_arm64(self):
+        def manifest(*platforms):
+            return {"manifests": [{"digest": f"sha256:{arch}", "platform": {"os": "linux", "architecture": arch}} for arch in platforms]}
+
+        self.assertEqual(
+            {item["architecture"] for item in publish.released_platforms(manifest("amd64", "arm64"))},
+            {"amd64", "arm64"},
+        )
+        attested = manifest("amd64", "arm64")
+        attested["manifests"].append({"digest": "sha256:attest", "platform": {"os": "unknown", "architecture": "unknown"}})
+        self.assertEqual(len(publish.released_platforms(attested)), 2)
+        with self.assertRaisesRegex(RuntimeError, "linux/arm64"):
+            publish.released_platforms(manifest("amd64"))
 
 
 if __name__ == "__main__":

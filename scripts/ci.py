@@ -122,7 +122,7 @@ def notes(plan, component):
     for entry in item["commits"]:
         lines.append(f"- {entry['message'].splitlines()[0]} ({entry['sha'][:8]})")
     if component == "mobile":
-        lines.extend(["", "Android and iPhone artifacts share this mobile version. Android uses development signing. The iOS archive is unsigned and cannot be installed directly or uploaded to the App Store."])
+        lines.extend(["", "Android and iPhone artifacts share this mobile version. Android uses development signing. The iPhone file is an unsigned IPA; sideload it with a tool that re-signs using your Apple ID. It cannot be installed as-is or uploaded to the App Store."])
     return "\n".join(lines) + "\n"
 
 

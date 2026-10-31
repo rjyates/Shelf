@@ -29,9 +29,9 @@ Run:
 docker compose up -d
 ```
 
-Open [localhost:8080](http://localhost:8080) and create your account. There is no default password, database service, or required environment file. `/data` stores the SQLite database, sessions, imported EPUB bytes, covers, and saved reader positions. Back up this volume. The optional books mount is reserved for future folder scanning; it is not automatically imported.
+Open [localhost:8080](http://localhost:8080) and create your account. There is no default password, database service, or required environment file. `/data` stores the SQLite database, sessions, imported EPUB bytes, covers, and saved reader positions. Back up this volume. A host directory works in place of the named volume, for example `./data:/data`. A root-owned folder is given to uid 10001 on startup. A folder you already own is left alone, and the server runs as that user. The optional books mount is reserved for future folder scanning; it is not automatically imported.
 
-For repeatable installations, use the version-pinned Compose file attached to a [server release](https://github.com/rjyates/Shelf/releases). The initial container targets Linux amd64.
+For repeatable installations, use the version-pinned Compose file attached to a [server release](https://github.com/rjyates/Shelf/releases). The published image includes Linux amd64 and arm64.
 
 ### Build the unreleased source
 
@@ -87,7 +87,7 @@ Enable the local commit hook with `git config core.hooksPath .githooks`. CI enfo
 
 Every shipped component change releases at least a patch; features produce a minor and breaking changes a major. The first release starts at `0.1.0`. A server-only change does not build or release mobile. Shared API changes check both. Releases publish from main only after semantic checks, relevant tests, and relevant builds pass. See [release policy](docs/releases.md).
 
-Android artifacts initially use development signing. iOS builds run on GitHub macOS runners and produce an unsigned application zip, not an installable IPA. Store signing and publishing are deferred.
+Android artifacts initially use development signing. iOS builds run on GitHub macOS runners and produce an unsigned IPA. Install it with a sideload tool that re-signs the app using your Apple ID. Store signing and publishing are deferred.
 
 ## Project references
 

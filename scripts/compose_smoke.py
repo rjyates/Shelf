@@ -2,10 +2,14 @@
 from pathlib import Path
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
+
+IMAGE = "ghcr.io/rjyates/shelf-server:latest"
 
 
 def request(path, body=None, token=None, raw=False):
@@ -34,9 +38,50 @@ def ready():
             time.sleep(1)
 
 
+def host_directory_mount():
+    """A root-owned folder mounted on /data must accept a new database."""
+    parent = tempfile.mkdtemp(prefix="shelf-bind-")
+    name = "shelf-bind-ci"
+    try:
+        subprocess.run(
+            ["docker", "run", "--rm", "--entrypoint", "mkdir", "-v", f"{parent}:/out", IMAGE, "-p", "/out/data"],
+            check=True,
+        )
+        data = str(Path(parent) / "data")
+        subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["docker", "run", "-d", "--name", name, "-p", "127.0.0.1:18080:8080", "-v", f"{data}:/data", IMAGE],
+            check=True,
+        )
+        for attempt in range(30):
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:18080/api/v1/health", timeout=2) as response:
+                    assert json.load(response)["status"] == "ok"
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError, AssertionError):
+                if attempt == 29:
+                    logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True)
+                    raise AssertionError(f"bind-mounted /data did not become healthy\n{logs.stdout}\n{logs.stderr}")
+                time.sleep(1)
+        assert os.stat(Path(data) / "shelf.db").st_uid == 10001
+        status = subprocess.check_output(["docker", "exec", name, "cat", "/proc/1/status"], text=True)
+        uid = next(line.split()[1] for line in status.splitlines() if line.startswith("Uid:"))
+        assert uid == "10001"
+        print("Root-owned host directory mount created /data/shelf.db as uid 10001.")
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["docker", "run", "--rm", "--entrypoint", "chown", "-v", f"{parent}:/data", IMAGE, "-R", f"{os.getuid()}:{os.getgid()}", "/data"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        shutil.rmtree(parent, ignore_errors=True)
+
+
 if __name__ == "__main__":
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("This test is only for the disposable GitHub Actions Compose project.")
+    host_directory_mount()
     ready()
     credentials = {"username": "ci-reader", "password": "disposable-ci-test-password"}
     assert request("setup")["setup_required"] is True

@@ -69,6 +69,8 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.99.1
@@ -83,10 +85,36 @@ jobs:
       - run: npm ci --prefix web
       - run: node --check web/reader.js
       - run: node --test tests/web.test.mjs tests/reader.test.mjs
+
+  server-image:
+    needs: plan
+    if: needs.plan.outputs.server == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            artifact: server-image
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            artifact: server-image-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
       - name: Build the release candidate image
-        env:
-          VERSION: ${{ needs.plan.outputs.server_version }}
-        run: docker build -f deploy/Dockerfile --build-arg VERSION="$VERSION" -t "shelf-tested:$GITHUB_SHA" .
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          build-args: VERSION=${{ needs.plan.outputs.server_version }}
+          tags: shelf-tested:${{ github.sha }}
+          load: true
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=shelf-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,ignore-error=true,scope=shelf-${{ matrix.arch }}
       - name: Verify Compose and container startup
         run: |
           docker compose config --quiet
@@ -103,7 +131,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: github.event_name == 'push'
         with:
-          name: server-image
+          name: ${{ matrix.artifact }}
           path: /tmp/shelf-image.tar
           retention-days: 3
 
@@ -135,6 +163,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ needs.plan.outputs.flutter_version }}
@@ -161,23 +190,26 @@ jobs:
         with:
           flutter-version: ${{ needs.plan.outputs.flutter_version }}
           cache: true
-      - name: Build unsigned iPhone artifact
+      - name: Build unsigned iPhone IPA
         working-directory: mobile
         env:
           VERSION: ${{ needs.plan.outputs.mobile_version }}
         run: |
           flutter pub get --enforce-lockfile
           flutter build ios --release --no-codesign --build-name="$VERSION" --build-number="$GITHUB_RUN_NUMBER"
-          ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app ../shelf-ios-unsigned.zip
+          rm -rf /tmp/shelf-ipa
+          mkdir -p /tmp/shelf-ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app /tmp/shelf-ipa/Payload/
+          ditto -c -k --sequesterRsrc --keepParent /tmp/shelf-ipa/Payload "$GITHUB_WORKSPACE/shelf-ios-unsigned.ipa"
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: mobile-ios
-          path: shelf-ios-unsigned.zip
+          path: shelf-ios-unsigned.ipa
 
   gate:
     name: ci-gate
     if: always()
-    needs: [plan, server, mobile, android, ios]
+    needs: [plan, server, server-image, mobile, android, ios]
     runs-on: ubuntu-24.04
     steps:
       - name: Require success for every selected component
@@ -189,15 +221,22 @@ jobs:
           jobs = json.loads(os.environ['RESULTS'])
           assert jobs['plan']['result'] == 'success', 'Planning or semantic checks failed'
           selected = jobs['plan']['outputs']
-          for name in ('server', 'mobile', 'android', 'ios'):
-              if selected[name] == 'true':
+          required = {name: selected[name] == 'true' for name in ('server', 'mobile', 'android', 'ios')}
+          required['server-image'] = required['server']
+          for name, needed in required.items():
+              if needed:
                   assert jobs[name]['result'] == 'success', f'{name} did not pass'
           PY
 
   publish:
     needs: [plan, gate]
+    # A skipped earlier job makes the default success check fail for every later job.
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      !cancelled() &&
+      needs.plan.result == 'success' &&
+      needs.gate.result == 'success' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
       (needs.plan.outputs.server == 'true' || needs.plan.outputs.mobile == 'true')
     runs-on: ubuntu-24.04
     permissions:
