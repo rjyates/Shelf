@@ -258,9 +258,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       );
       if (file == null) return;
-      if (await file.length() > 50 * 1024 * 1024) {
-        throw ShelfException('Choose an EPUB under 50 MiB.');
-      }
       final duplicate = await widget.api.importEpub(await file.readAsBytes());
       await _refresh();
       if (mounted) {
@@ -306,24 +303,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
-  Future<void> _add() async {
-    final result = await showDialog<(String, String, int)>(
-      context: context,
-      builder: (_) => const AddBookDialog(),
-    );
-    if (result == null) {
-      return;
-    }
-    try {
-      await widget.api.addBook(result.$1, result.$2, result.$3);
-      await _refresh();
-    } catch (error) {
-      if (mounted) {
-        setState(() => _error = error.toString());
-      }
-    }
-  }
-
   Future<void> _signOut() async {
     var revoked = true;
     try {
@@ -345,21 +324,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
       actions: [
         IconButton(
-          onPressed: _import,
-          tooltip: 'Import EPUB',
-          icon: const Icon(Icons.file_upload_outlined),
-        ),
-        IconButton(
           onPressed: _signOut,
           tooltip: 'Sign out',
           icon: const Icon(Icons.logout),
         ),
       ],
     ),
-    floatingActionButton: FloatingActionButton(
-      onPressed: _add,
-      tooltip: 'Add book',
-      child: const Icon(Icons.add),
+    floatingActionButton: FloatingActionButton.extended(
+      onPressed: _import,
+      label: const Text('Add book'),
+      icon: const Icon(Icons.add),
     ),
     body: RefreshIndicator(
       onRefresh: _refresh,
@@ -513,85 +487,6 @@ class _ProgressDialogState extends State<ProgressDialog> {
           }
         },
         child: const Text('Save'),
-      ),
-    ],
-  );
-}
-
-class AddBookDialog extends StatefulWidget {
-  const AddBookDialog({super.key});
-  @override
-  State<AddBookDialog> createState() => _AddBookDialogState();
-}
-
-class _AddBookDialogState extends State<AddBookDialog> {
-  final _form = GlobalKey<FormState>();
-  final _title = TextEditingController();
-  final _author = TextEditingController();
-  final _pages = TextEditingController();
-  @override
-  void dispose() {
-    _title.dispose();
-    _author.dispose();
-    _pages.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('A place on your shelf.'),
-    content: SingleChildScrollView(
-      child: Form(
-        key: _form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _title,
-              maxLength: 500,
-              decoration: const InputDecoration(labelText: 'Title'),
-              validator: (value) => value == null || value.trim().isEmpty
-                  ? 'Enter a title.'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _author,
-              maxLength: 300,
-              decoration: const InputDecoration(labelText: 'Author'),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _pages,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Total pages'),
-              validator: (value) {
-                final pages = int.tryParse(value ?? '');
-                return pages == null || pages < 1 || pages > 1000000
-                    ? 'Enter 1–1,000,000 pages.'
-                    : null;
-              },
-            ),
-          ],
-        ),
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
-      ),
-      FilledButton(
-        onPressed: () {
-          if (_form.currentState!.validate()) {
-            Navigator.pop(context, (
-              _title.text.trim(),
-              _author.text.trim(),
-              int.parse(_pages.text),
-            ));
-          }
-        },
-        child: const Text('Add book'),
       ),
     ],
   );
