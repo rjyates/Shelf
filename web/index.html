@@ -68,9 +68,8 @@
           A little further into another world.
         </p>
         <div class="masthead-actions">
-          <button id="open-add" class="primary" hidden>＋ Add book</button>
-          <button id="open-import" class="quiet" hidden>Import EPUBs</button
-          ><input
+          <button id="open-add" class="primary" hidden>Add book</button>
+          <input
             id="epub-files"
             type="file"
             accept=".epub,application/epub+zip"
@@ -144,7 +143,6 @@
             ></span>
             <h3>Your next chapter starts here.</h3>
             <p>Add a book to begin building your library.</p>
-            <button id="empty-add" class="primary">Add your first book</button>
           </div>
         </section>
         <section id="insights-panel" class="panel" hidden>
@@ -164,36 +162,6 @@
         </footer>
       </div>
     </main>
-    <dialog id="add-dialog" aria-labelledby="add-heading">
-      <form id="add-form">
-        <div class="section-head">
-          <h2 id="add-heading">A place on your shelf.</h2>
-          <button
-            type="button"
-            id="close-add"
-            class="quiet"
-            aria-label="Close add book"
-          >
-            ✕
-          </button>
-        </div>
-        <p>
-          Add the book's details. File import is coming in a later milestone.
-        </p>
-        <label>Title<input name="title" maxlength="500" required /></label>
-        <label>Author<input name="author" maxlength="300" /></label>
-        <label
-          >Total pages<input
-            name="total_pages"
-            type="number"
-            min="1"
-            max="1000000"
-            required
-        /></label>
-        <p id="add-error" role="alert" hidden></p>
-        <button class="primary">Add to library</button>
-      </form>
-    </dialog>
     <dialog id="progress-dialog" aria-labelledby="progress-heading">
       <form id="progress-form">
         <div class="section-head">

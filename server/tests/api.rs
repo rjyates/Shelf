@@ -46,6 +46,47 @@ async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCod
 }
 
 #[tokio::test]
+async fn accepts_books_above_fifty_mib_and_rejects_extreme_compression() {
+    use std::io::{Cursor, Write};
+    fn padded_epub(size: usize, method: zip::CompressionMethod) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new_append(Cursor::new(sample_epub(false))).unwrap();
+        zip.start_file(
+            "padding.bin",
+            zip::write::SimpleFileOptions::default().compression_method(method),
+        )
+        .unwrap();
+        let chunk = [0u8; 8192];
+        for _ in 0..size.div_ceil(chunk.len()) {
+            zip.write_all(&chunk).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("large.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let login = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1;
+    let token = login["token"].as_str().unwrap();
+    let payload = padded_epub(51 * 1024 * 1024, zip::CompressionMethod::Stored);
+    assert!(payload.len() > 50 * 1024 * 1024);
+    let (status, result) = upload(&app, payload, Some(token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{result}");
+    let (status, result) = upload(
+        &app,
+        padded_epub(2 * 1024 * 1024, zip::CompressionMethod::Deflated),
+        Some(token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        result["error"],
+        "This EPUB contains an unusually compressed resource."
+    );
+}
+
+#[tokio::test]
 async fn epub_import_duplicate_access_and_saved_position_survive_restart() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("epub.db");

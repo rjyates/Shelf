@@ -230,7 +230,7 @@
     },
     "/books/import": {
       "post": {
-        "description": "Import raw unencrypted EPUB bytes, up to 50 MiB. Duplicate detection is exact-byte and account-scoped. All content is stored in the persisted data volume.",
+        "description": "Import raw unencrypted EPUB bytes without a fixed application upload-size limit. Exact-byte duplicates are account-scoped. Archive path, entry-count, and extreme-compression checks apply. Available memory, SQLite blob capacity, and deployment proxies may limit very large requests.",
         "requestBody": {
           "required": true,
           "content": {
@@ -250,13 +250,10 @@
             "description": "Already imported: {id, duplicate:true}"
           },
           "400": {
-            "description": "Invalid, encrypted, unsafe, or over-expanded archive"
+            "description": "Invalid, encrypted, unsafe, unreadable, or unusually compressed archive"
           },
           "401": {
             "description": "No valid session"
-          },
-          "413": {
-            "description": "Upload exceeds 50 MiB"
           },
           "429": {
             "description": "Import concurrency limit reached"

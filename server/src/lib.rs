@@ -100,7 +100,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/logout", post(logout))
         .route("/api/v1/books", get(books).post(add_book))
         .route("/api/v1/books/{id}/progress", post(update_progress))
-        .route("/api/v1/books/import", post(epub::import).layer(DefaultBodyLimit::max(50 * 1024 * 1024)))
+        .route("/api/v1/books/import", post(epub::import).layer(DefaultBodyLimit::disable()))
         .route("/api/v1/books/{id}/file", get(epub::file))
         .route("/api/v1/books/{id}/cover", get(epub::cover))
         .route("/api/v1/books/{id}/location", post(epub::location))
