@@ -48,6 +48,27 @@ The quick start binds to loopback for private setup. To connect a phone, complet
 
 The foundation supports one account. Sessions expire after seven days; signing out revokes that account's sessions on all devices. Mobile sessions stay in memory and require sign-in after the app closes. Sign-in attempts are limited to twenty per minute across the server. Multiple users, persisted mobile sessions, and device management are later milestones.
 
+## Quick start for Android
+
+Install the app from a computer with `adb`.
+
+1. On the phone, turn on Developer options and USB debugging.
+2. Install [Android platform-tools](https://developer.android.com/tools/releases/platform-tools) so `adb` is on your PATH.
+3. Download `app-release.apk` from the latest [`mobile-v` release](https://github.com/rjyates/Shelf/releases).
+4. Plug in the phone, unlock it, and accept the USB debugging prompt.
+5. In the folder that contains the APK, run:
+
+```sh
+adb install -r app-release.apk
+```
+
+Open Shelf and enter the server's HTTPS address. See [Access from a phone](#access-from-a-phone). If install reports a conflicting package, remove the old copy and install again:
+
+```sh
+adb uninstall app.shelf.shelf_mobile
+adb install -r app-release.apk
+```
+
 ## Import and read EPUBs
 
 In Library, choose **Import EPUBs** and select your files. On mobile, use the import icon and your phone's document picker. Exact duplicates reuse the existing entry without resetting progress. Title, author, and an available JPEG/PNG cover come from the EPUB; no metadata provider receives the file.
