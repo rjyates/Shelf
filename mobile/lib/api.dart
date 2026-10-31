@@ -152,8 +152,8 @@ class ShelfApi {
   };
 
   Future<bool> importEpub(List<int> bytes) async {
-    if (bytes.isEmpty || bytes.length > 50 * 1024 * 1024) {
-      throw ShelfException('Choose an EPUB under 50 MiB.');
+    if (bytes.isEmpty) {
+      throw ShelfException('Choose a non-empty EPUB file.');
     }
     try {
       final request = await _client.postUrl(

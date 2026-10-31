@@ -2,13 +2,12 @@ use super::*;
 use axum::{body::to_bytes, extract::Request};
 use std::io::Cursor;
 
-const MAX_UPLOAD: usize = 50 * 1024 * 1024;
 static IMPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
 fn invalid() -> ApiError {
     ApiError(
         StatusCode::BAD_REQUEST,
-        "Not a supported EPUB. Use an unencrypted EPUB under 50 MiB.",
+        "Not a supported EPUB. Use an unencrypted EPUB.",
     )
 }
 
@@ -21,12 +20,12 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
             "Another import is running. Try again shortly.",
         )
     })?;
-    let bytes = to_bytes(request.into_body(), MAX_UPLOAD)
+    let bytes = to_bytes(request.into_body(), usize::MAX)
         .await
         .map_err(|_| {
             ApiError(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "EPUB uploads are limited to 50 MiB.",
+                StatusCode::BAD_REQUEST,
+                "Could not receive the EPUB upload.",
             )
         })?
         .to_vec();
@@ -39,11 +38,13 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
         // Bound decompression before handing the archive to the EPUB parser. Never extract paths.
         let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).map_err(|_| invalid())?;
         if archive.len() > 4096 { return Err(invalid()); }
-        let mut expanded = 0u64;
         for index in 0..archive.len() {
             let file = archive.by_index(index).map_err(|_| invalid())?;
-            expanded = expanded.checked_add(file.size()).ok_or_else(invalid)?;
-            if file.size() > 16 * 1024 * 1024 || expanded > 128 * 1024 * 1024 || file.enclosed_name().is_none() || file.is_symlink() { return Err(invalid()); }
+            // Reject extreme compression ratios without limiting the size of ordinary books.
+            if file.size() > file.compressed_size().saturating_mul(200).saturating_add(1024 * 1024) {
+                return Err(ApiError(StatusCode::BAD_REQUEST, "This EPUB contains an unusually compressed resource."));
+            }
+            if file.enclosed_name().is_none() || file.is_symlink() { return Err(invalid()); }
         }
         if archive.by_name("META-INF/encryption.xml").is_ok() { return Err(ApiError(StatusCode::BAD_REQUEST, "Encrypted EPUB resources are not supported yet.")); }
         drop(archive);

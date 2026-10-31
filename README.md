@@ -71,11 +71,11 @@ adb install -r app-release.apk
 
 ## Import and read EPUBs
 
-In Library, choose **Import EPUBs** and select your files. On mobile, use the import icon and your phone's document picker. Exact duplicates reuse the existing entry without resetting progress. Title, author, and an available JPEG/PNG cover come from the EPUB; no metadata provider receives the file.
+In Library, choose **Add book** and select your EPUBs. On mobile, **Add book** opens your phone's document picker. Exact duplicates reuse the existing entry without resetting progress. Title, author, and an available JPEG/PNG cover come from the EPUB; no metadata provider receives the file.
 
 Choose **Read book** to open the shared reader. Use the chapter menu, Previous/Next, arrow keys, and text-size selector. The reader saves an EPUB CFI and percentage to your account; reopening a book restores that position, including across online devices. Page totals remain for manually added books; EPUB percentages do not invent printed page counts. Update older mobile clients before using an EPUB library.
 
-Uploads are limited to 50 MiB, with bounded archive resources. Encrypted/obfuscated resources and scripted interactivity are unsupported. Book scripts, popups, external links, and external resources are blocked in the reader. Location generation happens when opening a book and can take a moment. Offline reading, annotations, and conflict-aware synchronization remain planned.
+There is no fixed EPUB upload-size limit. Very large imports still depend on available server memory, SQLite storage capacity, and any reverse-proxy request limits. Archive path, entry-count, and extreme-compression checks remain in place. Encrypted/obfuscated resources and scripted interactivity are unsupported. Book scripts, popups, external links, and external resources are blocked in the reader. Location generation happens when opening a book and can take a moment. Offline reading, annotations, and conflict-aware synchronization remain planned.
 
 ## Develop and test
 
