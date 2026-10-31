@@ -230,8 +230,13 @@ jobs:
 
   publish:
     needs: [plan, gate]
+    # A skipped earlier job makes the default success check fail for every later job.
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      !cancelled() &&
+      needs.plan.result == 'success' &&
+      needs.gate.result == 'success' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
       (needs.plan.outputs.server == 'true' || needs.plan.outputs.mobile == 'true')
     runs-on: ubuntu-24.04
     permissions:

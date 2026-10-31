@@ -24,7 +24,7 @@ Only commits affecting a component contribute to its version and changelog. `fea
 
 A PR title must retain the highest release impact of its commits: use `feat` when it contains a feature, and `!` when any commit declares a breaking change. CI enforces this before squash merging so commit footers cannot be lost. Prefer focused component PRs; a mixed-component squash commit applies its release impact to each affected component.
 
-Publication compares with the latest reachable component tag so an earlier failed or skipped release is not lost. Main runs are serialized. Published versions are immutable; retries leave existing GitHub releases unchanged.
+Publication compares with the latest reachable component tag so an earlier failed or skipped release is not lost. Main runs are serialized. Published versions are immutable; retries leave existing GitHub releases unchanged. A server-only change skips the mobile jobs on purpose. Publish still runs, because a skipped job would otherwise stop every later job in that chain.
 
 ## Artifacts
 
