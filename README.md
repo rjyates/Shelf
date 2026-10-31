@@ -29,7 +29,7 @@ Run:
 docker compose up -d
 ```
 
-Open [localhost:8080](http://localhost:8080) and create your account. There is no default password, database service, or required environment file. `/data` stores the SQLite database, sessions, imported EPUB bytes, covers, and saved reader positions. Back up this volume. The optional books mount is reserved for future folder scanning; it is not automatically imported.
+Open [localhost:8080](http://localhost:8080) and create your account. There is no default password, database service, or required environment file. `/data` stores the SQLite database, sessions, imported EPUB bytes, covers, and saved reader positions. Back up this volume. A host directory works in place of the named volume, for example `./data:/data`. A root-owned folder is given to uid 10001 on startup. A folder you already own is left alone, and the server runs as that user. The optional books mount is reserved for future folder scanning; it is not automatically imported.
 
 For repeatable installations, use the version-pinned Compose file attached to a [server release](https://github.com/rjyates/Shelf/releases). The published image includes Linux amd64 and arm64.
 
