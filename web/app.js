@@ -23,10 +23,8 @@ function showAuth(setup) {
   $("auth").hidden = false;
   $("content").hidden = true;
   $("open-add").hidden = true;
-  $("open-import").hidden = true;
   $("signout").hidden = true;
-  for (const id of ["add-dialog", "progress-dialog"])
-    if ($(id).open) $(id).close();
+  for (const id of ["progress-dialog"]) if ($(id).open) $(id).close();
   $("auth-heading").textContent = setup
     ? "Make yourself at home."
     : "Open your reading room.";
@@ -45,7 +43,6 @@ async function refresh() {
   $("auth").hidden = true;
   $("content").hidden = false;
   $("open-add").hidden = false;
-  $("open-import").hidden = false;
   $("signout").hidden = false;
   for (const [id, key] of [
     ["books", "books"],
@@ -112,7 +109,6 @@ function render() {
       ? "Try another title or author."
       : "Open Library to record your progress on a book."
     : "Add a book to begin building your library.";
-  $("empty-add").hidden = catalogue.length > 0;
   const fraction = (book) =>
     book.format === "epub"
       ? book.percentage
@@ -224,39 +220,6 @@ $("auth-form").addEventListener("submit", async (event) => {
     button.disabled = false;
   }
 });
-for (const id of ["open-add", "empty-add"])
-  $(id).addEventListener("click", () => {
-    $("add-error").hidden = true;
-    $("add-dialog").showModal();
-  });
-$("close-add").addEventListener("click", () => $("add-dialog").close());
-$("add-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button =
-    form.querySelector("[type=submit]") || form.querySelector(".primary");
-  button.disabled = true;
-  try {
-    await api("books", {
-      method: "POST",
-      body: JSON.stringify({
-        title: form.elements.title.value,
-        author: form.elements.author.value,
-        total_pages: Number(form.elements.total_pages.value),
-      }),
-    });
-    form.reset();
-    $("add-dialog").close();
-    location.hash = "library";
-    await refresh();
-    message("Book added to your library.");
-  } catch (error) {
-    $("add-error").hidden = false;
-    $("add-error").textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
-});
 $("signout").addEventListener("click", async () => {
   try {
     await api("logout", { method: "POST" });
@@ -308,18 +271,16 @@ async function start() {
 }
 start();
 
-$("open-import").addEventListener("click", () => $("epub-files").click());
+$("open-add").addEventListener("click", () => $("epub-files").click());
 $("epub-files").addEventListener("change", async () => {
   const files = [...$("epub-files").files];
-  $("open-import").disabled = true;
+  $("open-add").disabled = true;
   let added = 0,
     duplicates = 0;
   const errors = [];
   for (const file of files) {
     message(`Importing ${file.name}…`);
     try {
-      if (file.size > 50 * 1024 * 1024)
-        throw new Error("The file exceeds 50 MiB.");
       const result = await api("books/import", {
         method: "POST",
         headers: { "Content-Type": "application/epub+zip" },
@@ -332,7 +293,7 @@ $("epub-files").addEventListener("change", async () => {
     }
   }
   $("epub-files").value = "";
-  $("open-import").disabled = false;
+  $("open-add").disabled = false;
   location.hash = "library";
   try {
     await refresh();

@@ -47,6 +47,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Piranesi'), findsOneWidget);
+    expect(find.text('Add book'), findsOneWidget);
+    expect(find.byTooltip('Import EPUB'), findsNothing);
     expect(tester.takeException(), isNull);
   });
   test('reads the same book contract fixture as the Rust server', () {
@@ -68,17 +70,6 @@ void main() {
     expect(find.text('Enter your server address.'), findsOneWidget);
     expect(find.text('Enter your username.'), findsOneWidget);
     expect(find.text('Enter your password.'), findsOneWidget);
-  });
-
-  testWidgets('book form rejects an invalid page count', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: AddBookDialog())),
-    );
-    await tester.enterText(find.byType(TextFormField).at(0), 'Piranesi');
-    await tester.enterText(find.byType(TextFormField).at(2), '0');
-    await tester.tap(find.text('Add book'));
-    await tester.pump();
-    expect(find.text('Enter 1–1,000,000 pages.'), findsOneWidget);
   });
 
   test('rejects credentials in URLs and remote plain HTTP', () {
