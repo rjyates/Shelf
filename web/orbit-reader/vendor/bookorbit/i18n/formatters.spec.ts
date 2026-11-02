@@ -1,0 +1,75 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { setI18nLocale } from '@/i18n'
+import { formatBytes } from '@/lib/formatting'
+import { formatCompactNumber, formatDate, formatLanguageName, formatListParts, formatNumber } from './formatters'
+
+describe('locale formatters', () => {
+  afterEach(async () => {
+    await setI18nLocale('en')
+  })
+
+  it('formats numbers with the active BookOrbit locale', async () => {
+    await setI18nLocale('en')
+    expect(formatNumber(1234.5)).toBe('1,234.5')
+
+    await setI18nLocale('nl')
+    expect(formatNumber(1234.5)).toBe('1.234,5')
+  })
+
+  it('shortens counts for badges once they reach a thousand', async () => {
+    await setI18nLocale('en')
+    expect(formatCompactNumber(999)).toBe('999')
+    expect(formatCompactNumber(1000)).toBe('1K')
+    expect(formatCompactNumber(1234)).toBe('1.2K')
+    expect(formatCompactNumber(12345)).toBe('12K')
+    expect(formatCompactNumber(1200000)).toBe('1.2M')
+
+    await setI18nLocale('nl')
+    expect(formatCompactNumber(1234)).toBe('1,2K')
+  })
+
+  it('formats dates with the active BookOrbit locale', async () => {
+    const date = new Date('2026-01-15T12:00:00Z')
+
+    await setI18nLocale('en')
+    expect(formatDate(date, { month: 'long', timeZone: 'UTC' })).toBe('January')
+
+    await setI18nLocale('nl')
+    expect(formatDate(date, { month: 'long', timeZone: 'UTC' })).toBe('januari')
+  })
+
+  it('formats language codes and safely preserves custom language values', async () => {
+    await setI18nLocale('en')
+    expect(formatLanguageName('de')).toBe('German')
+    expect(formatLanguageName('Custom language')).toBe('Custom language')
+  })
+
+  it('formats file sizes with localized decimals and unit names', async () => {
+    await setI18nLocale('en')
+    expect(formatBytes(1536)).toBe('1.5 kB')
+    expect(formatBytes(0)).toBe('0 byte')
+    expect(formatBytes(null)).toBe('-')
+    expect(formatBytes('42000000')).toBe('40.1 MB')
+
+    await setI18nLocale('nl')
+    expect(formatBytes(1536)).toBe('1,5 kB')
+  })
+
+  it('splits a sentence list into items and the locale joining words', async () => {
+    await setI18nLocale('en')
+    expect(formatListParts(['Comics', 'Novels', 'PDFs'])).toEqual([
+      { type: 'element', value: 'Comics' },
+      { type: 'literal', value: ', ' },
+      { type: 'element', value: 'Novels' },
+      { type: 'literal', value: ', and ' },
+      { type: 'element', value: 'PDFs' },
+    ])
+
+    await setI18nLocale('nl')
+    expect(
+      formatListParts(['Comics', 'Novels'])
+        .map((part) => part.value)
+        .join(''),
+    ).toBe('Comics en Novels')
+  })
+})

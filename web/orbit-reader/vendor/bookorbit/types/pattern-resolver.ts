@@ -1,0 +1,361 @@
+export const DEFAULT_UPLOAD_PATTERN_BOOK_PER_FILE =
+  "<{authors:first}|Unknown Author>/<{series}/><{seriesIndex}. ><{title}|{originalFilename}>< ({year})>";
+export const DEFAULT_UPLOAD_PATTERN_BOOK_PER_FOLDER =
+  "<{authors:first}|Unknown Author>/<{series}/><{seriesIndex}. ><{title}|{originalFilename}>< ({year})>/<{seriesIndex}. ><{title}|{originalFilename}>< ({year})>";
+export const DEFAULT_DOWNLOAD_PATTERN = "{originalFilename}";
+export const DEFAULT_KOREADER_DEVICE_PATTERN = "<Series/{series}/|Standalone/{authors:first} - |Standalone/><{seriesIndex:fixed2} - >{title}";
+
+export const EXAMPLE_PATTERN_METADATA: Record<string, string> = {
+  title: "Neuromancer",
+  subtitle: "20th Anniversary Edition",
+  authors: "William Gibson",
+  narrators: "Robertson Dean",
+  year: "1984",
+  series: "Sprawl",
+  seriesIndex: "01",
+  language: "English",
+  publisher: "Ace Books",
+  isbn: "9780441569595",
+  library: "Books",
+  originalFilename: "neuromancer",
+  extension: "epub",
+  readaloud: "readaloud",
+};
+
+export const PATTERN_TOKENS = [
+  { token: "title", description: "Book title" },
+  { token: "subtitle", description: "Book subtitle" },
+  { token: "authors", description: "Author(s), comma-separated" },
+  { token: "narrators", description: "Narrator(s), comma-separated" },
+  { token: "year", description: "Publication year" },
+  { token: "series", description: "Series name" },
+  { token: "seriesIndex", description: "Series index (zero-padded)" },
+  { token: "publisher", description: "Publisher" },
+  { token: "isbn", description: "ISBN-13" },
+  { token: "language", description: "Language" },
+  { token: "library", description: "Library name" },
+  { token: "originalFilename", description: "Original filename (without extension)" },
+  { token: "extension", description: "File extension (without dot)" },
+  { token: "readaloud", description: "The word readaloud for an EPUB with media overlays" },
+] as const;
+
+export type PatternToken = (typeof PATTERN_TOKENS)[number]["token"];
+export type PathResolverOptions = {
+  sanitizeForCrossPlatform?: boolean;
+  replacementCharacter?: "_" | "-";
+};
+
+export const MAX_PATH_SEGMENT_BYTES = 255;
+
+const MODIFIER_PLACEHOLDER_REGEX = /\{([^}:]+)(?::([^}]+))?}/g;
+const WINDOWS_RESERVED_NAMES = new Set([
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  "COM1",
+  "COM2",
+  "COM3",
+  "COM4",
+  "COM5",
+  "COM6",
+  "COM7",
+  "COM8",
+  "COM9",
+  "LPT1",
+  "LPT2",
+  "LPT3",
+  "LPT4",
+  "LPT5",
+  "LPT6",
+  "LPT7",
+  "LPT8",
+  "LPT9",
+]);
+const INVALID_SEGMENT_CHARS_REGEX = /[<>:"/\\|?*\u0000-\u001F]/g;
+
+export function applyModifier(value: string, modifier: string, fieldName: string): string {
+  if (!value) return value;
+
+  switch (modifier) {
+    case "first":
+      return value.split(", ")[0].trim();
+    case "sort": {
+      const first = value.split(", ")[0].trim();
+      const lastSpace = first.lastIndexOf(" ");
+      return lastSpace > 0 ? `${first.substring(lastSpace + 1)}, ${first.substring(0, lastSpace)}` : first;
+    }
+    case "initial": {
+      let target = value;
+      if (fieldName === "authors") {
+        const firstAuthor = value.split(", ")[0].trim();
+        const lastSpace = firstAuthor.lastIndexOf(" ");
+        target = lastSpace > 0 ? firstAuthor.substring(lastSpace + 1) : firstAuthor;
+      }
+      return target.charAt(0).toUpperCase();
+    }
+    case "max3": {
+      const parts = value
+        .split(", ")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      return parts.length > 3 ? "" : parts.join(", ");
+    }
+    case "upper":
+      return value.toUpperCase();
+    case "lower":
+      return value.toLowerCase();
+    case "fixed2": {
+      if (!/^\d+(?:\.\d+)?$/.test(value)) return value;
+      const [whole, fraction] = value.split(".");
+      return `${whole}.${(fraction ?? "").padEnd(2, "0")}`;
+    }
+    default:
+      return value;
+  }
+}
+
+function resolveModifierPlaceholders(block: string, values: Record<string, string>): string {
+  return block.replace(MODIFIER_PLACEHOLDER_REGEX, (_, fieldName: string, modifier?: string) => {
+    const val = values[fieldName] ?? "";
+    return modifier ? applyModifier(val, modifier, fieldName) : val;
+  });
+}
+
+function checkAllPlaceholdersPresent(block: string, values: Record<string, string>): boolean {
+  const matches = [...block.matchAll(MODIFIER_PLACEHOLDER_REGEX)];
+  return matches.every(([, fieldName, modifier]) => {
+    const raw = values[fieldName] ?? "";
+    if (!raw.trim()) return false;
+    return (modifier ? applyModifier(raw, modifier, fieldName) : raw).trim().length > 0;
+  });
+}
+
+export interface PlaceholderResolution {
+  text: string;
+  /** An optional group could not fill its primary side and used its `|fallback`. */
+  usedFallback: boolean;
+  /** An optional group with no fallback could not be filled and resolved to nothing. */
+  droppedOptional: boolean;
+}
+
+/** replacePlaceholders, also reporting which optional-group branch each group took. */
+export function resolvePlaceholders(pattern: string, values: Record<string, string>): PlaceholderResolution {
+  let usedFallback = false;
+  let droppedOptional = false;
+  // Optional blocks: <primary|fallback|...|default>. The first branch whose placeholders all
+  // fill wins; the last branch of a block with a fallback is used as-is, as a lone fallback is.
+  const resolved = pattern.replace(/<([^<>]+)>/g, (_, blockContent: string) => {
+    const branches = blockContent.split("|");
+    const conditional = branches.length > 1 ? branches.slice(0, -1) : branches;
+    const filled = conditional.findIndex((branch) => checkAllPlaceholdersPresent(branch, values));
+
+    if (filled === 0) return resolveModifierPlaceholders(branches[0], values);
+    if (branches.length > 1) {
+      usedFallback = true;
+      return resolveModifierPlaceholders(filled > 0 ? branches[filled] : branches[branches.length - 1], values);
+    }
+    droppedOptional = true;
+    return "";
+  });
+
+  return { text: resolveModifierPlaceholders(resolved, values).trim(), usedFallback, droppedOptional };
+}
+
+export function replacePlaceholders(pattern: string, values: Record<string, string>): string {
+  return resolvePlaceholders(pattern, values).text;
+}
+
+export function validatePattern(pattern: string): boolean {
+  const validPatternRegex = /^[\w\s\-{}\[\]/<>().,:'"|]*$/;
+  return validPatternRegex.test(pattern);
+}
+
+function normalizeResolverOptions(options?: PathResolverOptions): Required<PathResolverOptions> {
+  return {
+    sanitizeForCrossPlatform: options?.sanitizeForCrossPlatform ?? false,
+    replacementCharacter: options?.replacementCharacter === "-" ? "-" : "_",
+  };
+}
+
+export function sanitizePathSegment(value: string, replacementCharacter: "_" | "-" = "_"): string {
+  let sanitized = stripTrailingDotsAndSpaces(value.replace(INVALID_SEGMENT_CHARS_REGEX, replacementCharacter).trim());
+  if (!sanitized || sanitized === "." || sanitized === "..") {
+    sanitized = replacementCharacter;
+  }
+
+  const leadingStem = sanitized.split(".")[0]?.toUpperCase() ?? "";
+  if (WINDOWS_RESERVED_NAMES.has(leadingStem)) {
+    sanitized = `${sanitized}${replacementCharacter}`;
+  }
+
+  return sanitized;
+}
+
+function stripTrailingDotsAndSpaces(value: string): string {
+  let end = value.length;
+  while (end > 0 && (value[end - 1] === "." || value[end - 1] === " ")) end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}
+
+/**
+ * Token values are sanitized before modifiers and literal pattern text run, so an assembled
+ * segment can still end in a dot or space: `{authors:sort}` rewrites "J.K. Rowling" to
+ * "Rowling, J.K.". Windows and SMB reject those names and serve a mangled 8.3 alias instead.
+ * Only the trailing run is trimmed here; re-running sanitizePathSegment would append a second
+ * reserved-name guard ("NUL.txt_" -> "NUL.txt__").
+ */
+function normalizeResolvedSegments(path: string, options: Required<PathResolverOptions>): string {
+  if (!options.sanitizeForCrossPlatform || !path) return path;
+
+  return path
+    .split("/")
+    .map((segment) => (segment ? stripTrailingDotsAndSpaces(segment) || options.replacementCharacter : segment))
+    .join("/");
+}
+
+function sanitizeResolutionValues(values: Record<string, string>, options: Required<PathResolverOptions>): Record<string, string> {
+  if (!options.sanitizeForCrossPlatform) return values;
+
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    sanitized[key] = value.trim() ? sanitizePathSegment(value, options.replacementCharacter) : "";
+  }
+
+  return sanitized;
+}
+
+function normalizeDotExt(ext: string): string {
+  const trimmed = ext.trim();
+  if (!trimmed) return "";
+  const bare = trimmed.startsWith(".") ? trimmed.slice(1) : trimmed;
+  if (!bare) return "";
+  return `.${bare}`;
+}
+
+function ensureTrailingExtension(value: string, dotExt: string): string {
+  if (!dotExt) return value;
+  return value.toLowerCase().endsWith(dotExt.toLowerCase()) ? value : `${value}${dotExt}`;
+}
+
+function ensurePathLastSegmentExtension(path: string, dotExt: string): string {
+  if (!dotExt) return path;
+  const segments = path.split("/");
+  const lastIdx = segments.length - 1;
+  const lastSegment = segments[lastIdx] ?? "";
+  segments[lastIdx] = ensureTrailingExtension(lastSegment, dotExt);
+  return segments.join("/");
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (const char of value) {
+    const codePoint = char.codePointAt(0) ?? 0;
+    if (codePoint <= 0x7f) bytes += 1;
+    else if (codePoint <= 0x7ff) bytes += 2;
+    else if (codePoint <= 0xffff) bytes += 3;
+    else bytes += 4;
+  }
+  return bytes;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let bytes = 0;
+  let result = "";
+
+  for (const char of value) {
+    const charBytes = utf8ByteLength(char);
+    if (bytes + charBytes > maxBytes) break;
+    result += char;
+    bytes += charBytes;
+  }
+
+  return result;
+}
+
+function hashSegment(value: string): string {
+  let hash = 0x811c9dc5;
+  for (const char of value) {
+    hash = Math.imul(hash ^ (char.codePointAt(0) ?? 0), 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+function truncatePathSegment(segment: string, suffixToPreserve = ""): string {
+  if (!segment || utf8ByteLength(segment) <= MAX_PATH_SEGMENT_BYTES) return segment;
+
+  const preservedSuffix =
+    suffixToPreserve && segment.toLowerCase().endsWith(suffixToPreserve.toLowerCase()) ? segment.slice(-suffixToPreserve.length) : "";
+  const stem = preservedSuffix ? segment.slice(0, -preservedSuffix.length) : segment;
+  const truncationSuffix = `~${hashSegment(segment)}`;
+  const suffixBytes = utf8ByteLength(truncationSuffix) + utf8ByteLength(preservedSuffix);
+  const stemBudget = MAX_PATH_SEGMENT_BYTES - suffixBytes;
+
+  if (stemBudget <= 0) {
+    return truncateUtf8(segment, MAX_PATH_SEGMENT_BYTES);
+  }
+
+  return `${truncateUtf8(stem, stemBudget)}${truncationSuffix}${preservedSuffix}`;
+}
+
+function limitPathSegmentBytes(path: string, dotExt: string): string {
+  const segments = path.split("/");
+  const lastIdx = segments.length - 1;
+  return segments.map((segment, index) => truncatePathSegment(segment, index === lastIdx ? dotExt : "")).join("/");
+}
+
+/**
+ * Resolves a file naming pattern to a relative path (no leading slash).
+ * - Pattern ending with '/' → folder path; original filename is used as the file stem.
+ * - Otherwise → the resolved string is the full relative path; extension is appended if missing.
+ *
+ * Returns null if the pattern resolves to an empty string.
+ */
+export function resolveUploadPath(pattern: string, values: Record<string, string>, ext: string, options?: PathResolverOptions): string | null {
+  const normalizedOptions = normalizeResolverOptions(options);
+  const resolvedValues = sanitizeResolutionValues(values, normalizedOptions);
+  const resolved = normalizeResolvedSegments(replacePlaceholders(pattern, resolvedValues), normalizedOptions);
+  if (!resolved) return null;
+
+  const dotExt = normalizeDotExt(ext);
+
+  if (resolved.endsWith("/")) {
+    const filename = ensureTrailingExtension(resolvedValues["originalFilename"] ?? "upload", dotExt);
+    return limitPathSegmentBytes(resolved + filename, dotExt);
+  }
+
+  return limitPathSegmentBytes(ensurePathLastSegmentExtension(resolved, dotExt), dotExt);
+}
+
+/**
+ * Appends text to the file stem of a resolved path, before its extension, keeping the last
+ * segment within the byte limit. A segment that has to be shortened ends in a hash of the full
+ * name, so two suffixed names stay distinct even when the suffix itself is cut.
+ */
+export function appendToPathStem(path: string, suffix: string, ext: string): string {
+  const dotExt = normalizeDotExt(ext);
+  const extension = dotExt && path.toLowerCase().endsWith(dotExt.toLowerCase()) ? path.slice(-dotExt.length) : "";
+  return limitPathSegmentBytes(`${path.slice(0, path.length - extension.length)}${suffix}${extension}`, dotExt);
+}
+
+/**
+ * Resolves a file naming pattern to a filename (no path separators).
+ * - If the resolved pattern contains folder segments, only the last segment is used.
+ * - If the resolved pattern ends with '/', originalFilename is used.
+ * - Extension is appended when missing.
+ *
+ * Returns null if the pattern resolves to an empty filename.
+ */
+export function resolveDownloadFilename(pattern: string, values: Record<string, string>, ext: string, options?: PathResolverOptions): string | null {
+  const normalizedOptions = normalizeResolverOptions(options);
+  const resolvedValues = sanitizeResolutionValues(values, normalizedOptions);
+  const resolved = normalizeResolvedSegments(replacePlaceholders(pattern, resolvedValues), normalizedOptions);
+  if (!resolved) return null;
+
+  const dotExt = normalizeDotExt(ext);
+  let stem = resolved.endsWith("/") ? (resolvedValues["originalFilename"] ?? "") : (resolved.split("/").filter(Boolean).pop() ?? "");
+  stem = stem.trim();
+  if (!stem) return null;
+
+  return truncatePathSegment(ensureTrailingExtension(stem, dotExt), dotExt);
+}

@@ -1,0 +1,177 @@
+.book-cover-surface {
+  --book-cover-shadow: var(--elevation-md);
+  --book-cover-shadow-hover: var(--elevation-xl);
+  --book-cover-mini-shadow: var(--elevation-sm);
+  --book-cover-spine-opacity: 0;
+  --book-cover-spine-width: 6%;
+  position: relative;
+  isolation: isolate;
+  background-color: color-mix(in oklch, var(--foreground) 12%, var(--background));
+  background-size: cover;
+  box-shadow: var(--book-cover-shadow);
+}
+
+.book-cover-surface[data-cover-shadow='strong'] {
+  --book-cover-shadow: 0 10px 18px oklch(0 0 0 / 0.28), 0 5px 8px oklch(0 0 0 / 0.2);
+  --book-cover-shadow-hover: 0 20px 34px oklch(0 0 0 / 0.3), 0 10px 16px oklch(0 0 0 / 0.22);
+  --book-cover-mini-shadow: 0 5px 8px oklch(0 0 0 / 0.24), 0 2px 4px oklch(0 0 0 / 0.2);
+}
+
+.book-cover-surface[data-cover-spine='subtle'] {
+  --book-cover-spine-opacity: 0.7;
+  --book-cover-spine-width: 6%;
+}
+
+.book-cover-surface[data-cover-spine='strong'] {
+  --book-cover-spine-opacity: 1;
+  --book-cover-spine-width: 8%;
+}
+
+.book-cover-surface--mini {
+  box-shadow: var(--book-cover-mini-shadow);
+}
+
+.book-cover-surface[data-cover-fit='natural-bottom']:has(.book-cover-artwork-frame--natural),
+.book-cover-surface[data-cover-fit='natural-bottom']:has(.book-cover-artwork-placeholder-natural) {
+  background-color: transparent;
+  box-shadow: none;
+  /* The cover shadow moves to the inner artwork frame (which is anchored flush
+     to this surface's edges). The surface's own overflow:hidden would clip that
+     shadow, so let it render. The frame keeps its own overflow:hidden, so the
+     image stays clipped to its rounded rect. */
+  overflow: visible;
+}
+
+.book-cover-surface--interactive {
+  transition: box-shadow 180ms ease;
+}
+
+.group:hover .book-cover-surface--interactive {
+  box-shadow: var(--book-cover-shadow-hover);
+}
+
+.group:hover .book-cover-surface--interactive[data-cover-fit='natural-bottom']:has(.book-cover-artwork-frame--natural),
+.group:hover .book-cover-surface--interactive[data-cover-fit='natural-bottom']:has(.book-cover-artwork-placeholder-natural) {
+  box-shadow: none;
+}
+
+/* Colour pulled from the book's own cover, strongest behind the artwork and
+   title and gone before the body copy. Alphas are tuned per theme: the same
+   hue needs more presence over a dark card than over a light one.
+
+   The two tones glow from opposite top corners and overlap in the middle, which
+   reads as one soft field rather than two stripes. A cover with no distinct
+   second tone leaves the -2 variables inheriting the first, so the pair
+   collapses back into a single wash. */
+.book-detail-cover-tint {
+  --cover-tint-near: 0.24;
+  --cover-tint-mid: 0.16;
+  --cover-tint-far: 0.05;
+  --cover-tint-hue-2: var(--cover-tint-hue);
+  --cover-tint-saturation-2: var(--cover-tint-saturation);
+  background-image:
+    radial-gradient(78% 46% at 12% 0%, hsl(var(--cover-tint-hue) var(--cover-tint-saturation) 50% / var(--cover-tint-near)) 0%, transparent 72%),
+    radial-gradient(78% 46% at 88% 0%, hsl(var(--cover-tint-hue-2) var(--cover-tint-saturation-2) 50% / var(--cover-tint-mid)) 0%, transparent 72%),
+    linear-gradient(to bottom, hsl(var(--cover-tint-hue) var(--cover-tint-saturation) 50% / var(--cover-tint-far)) 0%, transparent 55%);
+}
+
+.dark .book-detail-cover-tint {
+  --cover-tint-near: 0.34;
+  --cover-tint-mid: 0.24;
+  --cover-tint-far: 0.08;
+}
+
+.book-cover-artwork-frame {
+  position: absolute;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.book-cover-artwork-frame--full {
+  inset: 0;
+}
+
+.book-cover-artwork-frame--natural,
+.book-cover-artwork-placeholder-natural {
+  box-shadow: var(--book-cover-shadow);
+}
+
+.book-cover-surface--mini .book-cover-artwork-frame--natural,
+.book-cover-surface--mini .book-cover-artwork-placeholder-natural {
+  box-shadow: var(--book-cover-mini-shadow);
+}
+
+.group:hover .book-cover-surface--interactive .book-cover-artwork-frame--natural,
+.group:hover .book-cover-surface--interactive .book-cover-artwork-placeholder-natural {
+  box-shadow: var(--book-cover-shadow-hover);
+}
+
+.book-cover-spine-layer {
+  --book-cover-spine-opacity: 0;
+  --book-cover-spine-width: 6%;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.book-cover-spine-layer[data-cover-spine='subtle'] {
+  --book-cover-spine-opacity: 0.7;
+  --book-cover-spine-width: 6%;
+}
+
+.book-cover-spine-layer[data-cover-spine='strong'] {
+  --book-cover-spine-opacity: 1;
+  --book-cover-spine-width: 8%;
+}
+
+.book-cover-surface::before,
+.book-cover-surface::after,
+.book-cover-spine-layer::before,
+.book-cover-spine-layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.book-cover-surface::before,
+.book-cover-spine-layer::before {
+  background: linear-gradient(to bottom, oklch(1 0 0 / 0.11), oklch(0 0 0 / 0.2));
+  opacity: var(--book-cover-spine-opacity);
+}
+
+.book-cover-surface::after,
+.book-cover-spine-layer::after {
+  background-image: linear-gradient(
+    to right,
+    oklch(0 0 0 / 0.28) 0%,
+    oklch(0 0 0 / 0) calc(var(--book-cover-spine-width) * 0.2),
+    oklch(0 0 0 / 0.24) calc(var(--book-cover-spine-width) * 0.36),
+    oklch(0 0 0 / 0) calc(var(--book-cover-spine-width) * 0.48),
+    oklch(1 0 0 / 0.42) calc(var(--book-cover-spine-width) * 0.56),
+    oklch(1 0 0 / 0.22) calc(var(--book-cover-spine-width) * 0.74),
+    oklch(0 0 0 / 0.18) calc(var(--book-cover-spine-width) * 0.9),
+    oklch(0 0 0 / 0) calc(var(--book-cover-spine-width) * 1.1),
+    oklch(1 0 0 / 0.2) calc(var(--book-cover-spine-width) * 1.2),
+    oklch(1 0 0 / 0) calc(var(--book-cover-spine-width) * 1.45)
+  );
+  box-shadow:
+    inset -0.5px -1px 2px oklch(0 0 0 / 0.2),
+    inset -0.5px -0.5px 1px oklch(0 0 0 / 0.2);
+  opacity: var(--book-cover-spine-opacity);
+}
+
+.book-cover-surface.book-cover-surface--spine-fitted::before,
+.book-cover-surface.book-cover-surface--spine-fitted::after {
+  opacity: 0;
+}
+
+.book-cover-surface[data-cover-fit='natural-bottom']:has(.book-cover-artwork-frame--natural)::before,
+.book-cover-surface[data-cover-fit='natural-bottom']:has(.book-cover-artwork-frame--natural)::after,
+.book-cover-surface[data-cover-fit='natural-bottom']:has(.book-cover-artwork-placeholder-natural)::before,
+.book-cover-surface[data-cover-fit='natural-bottom']:has(.book-cover-artwork-placeholder-natural)::after {
+  opacity: 0;
+}

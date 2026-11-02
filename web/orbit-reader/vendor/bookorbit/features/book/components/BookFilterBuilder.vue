@@ -1,0 +1,771 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
+import { Plus, Trash2, X } from '@lucide/vue'
+import {
+  COMMUNITY_RATING_PROVIDER_KEYS,
+  isBuiltInMetadataProviderKey,
+  CUSTOM_FIELD_OPERATORS,
+  CUSTOM_FIELD_TYPE_OPERATORS,
+  FIELD_OPERATORS,
+  RULE_FIELDS,
+  customRuleField,
+  isCustomRuleField,
+  parseCustomRuleFieldId,
+  type CommunityRatingProvider,
+  type CommunityRatingRuleField,
+  type CustomMetadataFieldType,
+  type CustomRuleField,
+  type GroupRule,
+  type Rule,
+  type RuleField,
+  type RuleOperator,
+  type StaticRuleField,
+} from '@bookorbit/types'
+import { READ_STATUSES } from '@bookorbit/types'
+import { useActiveCustomFields } from '@/features/book/composables/useActiveCustomFields'
+import { fieldLabel, operatorLabel } from '@/features/book/lib/filter-labels'
+import { providerIconPathSafe } from '@/features/book/lib/provider-icons'
+import { providerShortLabel } from '@/lib/provider-colors'
+import { useMetadataProviderLabels } from '@/features/book/composables/useMetadataProviderLabels'
+import { useLibraries } from '@/features/library/composables/useLibraries'
+import FilterChipTypeahead from './FilterChipTypeahead.vue'
+import FilterFormatPicker from './FilterFormatPicker.vue'
+import FilterTextTypeahead from './FilterTextTypeahead.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
+const props = defineProps<{
+  modelValue: GroupRule | undefined
+  depth?: number
+  /** Deepest nesting allowed. A smart scope's page wraps this filter in the scope's own rules, so it allows one level less. */
+  maxDepth?: number
+  preserveIncompleteRoot?: boolean
+}>()
+
+const emit = defineEmits<{
+  'update:modelValue': [value: GroupRule | undefined]
+}>()
+
+const MAX_DEPTH = 5
+const BYTES_PER_MIB = 1024 ** 2
+const NUMERIC_FIELDS: RuleField[] = [
+  'seriesIndex',
+  'publishedYear',
+  'pageCount',
+  'fileSize',
+  'rating',
+  'communityRating',
+  'communityRatingCount',
+  'metadataScore',
+]
+const DATE_FIELDS: RuleField[] = ['publishedDate', 'addedAt', 'startedAt', 'finishedAt']
+const NO_VALUE_OPERATORS: RuleOperator[] = [
+  'isEmpty',
+  'isNotEmpty',
+  'isMissing',
+  'isPresent',
+  'isUnread',
+  'isInProgress',
+  'isFinished',
+  'isLocked',
+  'isUnlocked',
+  'isUpNext',
+  'isTrue',
+  'isFalse',
+]
+const BETWEEN_OPERATORS: RuleOperator[] = ['between']
+const COLLECTION_OPERATORS: RuleOperator[] = ['includesAny', 'includesAll', 'excludesAll']
+const RELATIVE_DAY_OPERATORS: RuleOperator[] = ['withinLast', 'moreThanAgo']
+
+const SCORE_PRESETS = [
+  { label: 'outstanding', gte: 90 },
+  { label: 'good', gte: 70 },
+  { label: 'fair', gte: 50 },
+  { label: 'poor', lt: 50 },
+] as const
+
+const CHIP_TYPEAHEAD_FIELDS: RuleField[] = ['author', 'genre', 'tag', 'collection']
+const TEXT_TYPEAHEAD_FIELDS: RuleField[] = ['publisher', 'series', 'language']
+
+const READ_STATUS_LABELS = computed<Record<string, string>>(() => ({
+  unread: t('book.readStatus.unread'),
+  want_to_read: t('book.readStatus.wantToRead'),
+  reading: t('book.readStatus.reading'),
+  on_hold: t('book.readStatus.onHold'),
+  rereading: t('book.readStatus.rereading'),
+  read: t('book.readStatus.read'),
+  skimmed: t('book.readStatus.skimmed'),
+  abandoned: t('book.readStatus.abandoned'),
+}))
+
+const { labels: providerLabels } = useMetadataProviderLabels()
+// External providers' ratings can be filtered on too; they join the built-in list once known.
+const COMMUNITY_RATING_PROVIDER_OPTIONS = computed<{ value: CommunityRatingProvider; label: string }[]>(() => {
+  const external = Object.keys(providerLabels.value).filter((key) => !isBuiltInMetadataProviderKey(key))
+  return [
+    { value: 'any', label: t('book.filter.anyProvider') },
+    ...[...COMMUNITY_RATING_PROVIDER_KEYS, ...external].map((provider) => ({
+      value: provider,
+      label: providerShortLabel(provider, providerLabels.value[provider]),
+    })),
+  ]
+})
+
+const ENDPOINT_BY_FIELD: Partial<Record<RuleField, string>> = {
+  author: '/api/v1/metadata/authors',
+  genre: '/api/v1/metadata/genres',
+  tag: '/api/v1/metadata/tags',
+  collection: '/api/v1/metadata/collections',
+  publisher: '/api/v1/metadata/publishers',
+  series: '/api/v1/metadata/series',
+  language: '/api/v1/metadata/languages',
+}
+
+const { libraries, loading: librariesLoading, fetchLibraries } = useLibraries()
+const libraryOptions = computed(() => libraries.value.map((library) => library.name).sort((a, b) => a.localeCompare(b)))
+
+onMounted(() => {
+  void fetchLibraries()
+})
+
+const { fields: customFields } = useActiveCustomFields()
+
+const activeCustomFields = computed(() =>
+  customFields.value.filter((f) => !f.archivedAt).sort((a, b) => a.displayOrder - b.displayOrder || a.label.localeCompare(b.label)),
+)
+
+const customFieldTypes = computed(() => new Map(activeCustomFields.value.map((f) => [f.id, f.type])))
+
+function customFieldType(field: RuleField): CustomMetadataFieldType | null {
+  const fieldId = parseCustomRuleFieldId(field)
+  return fieldId === null ? null : (customFieldTypes.value.get(fieldId) ?? null)
+}
+
+// A custom field's type decides which operators make sense for it. A rule pointing at a field
+// that is no longer active keeps every custom operator selectable so the saved one still shows.
+function operatorsForField(field: RuleField): RuleOperator[] {
+  const type = customFieldType(field)
+  if (type) return CUSTOM_FIELD_TYPE_OPERATORS[type]
+  if (isCustomRuleField(field)) return CUSTOM_FIELD_OPERATORS
+  return FIELD_OPERATORS[field as StaticRuleField]
+}
+
+function isNumericField(field: RuleField): boolean {
+  return NUMERIC_FIELDS.includes(field) || customFieldType(field) === 'number'
+}
+
+function isCommunityRatingField(field: RuleField): field is CommunityRatingRuleField {
+  return field === 'communityRating' || field === 'communityRatingCount'
+}
+
+function providerForRule(rule: Rule): CommunityRatingProvider {
+  if (rule.field === 'communityRating' || rule.field === 'communityRatingCount') return rule.provider ?? 'any'
+  return 'any'
+}
+
+function isDateField(field: RuleField): boolean {
+  return DATE_FIELDS.includes(field) || customFieldType(field) === 'date'
+}
+
+type WithinLastUnit = 'days' | 'weeks' | 'months'
+
+interface EditableRule {
+  field: RuleField
+  operator: RuleOperator
+  provider: CommunityRatingProvider
+  value: string
+  valueChips: string[]
+  valueTo: string
+  valueUnit: WithinLastUnit
+}
+
+type LocalNode = { id: number; kind: 'rule'; rule: EditableRule } | { id: number; kind: 'group'; group: GroupRule }
+
+let nodeIdCounter = 0
+function nextId() {
+  return ++nodeIdCounter
+}
+
+function makeEmptyRule(): LocalNode {
+  return {
+    id: nextId(),
+    kind: 'rule',
+    rule: { field: 'title', operator: 'contains', provider: 'any', value: '', valueChips: [], valueTo: '', valueUnit: 'days' },
+  }
+}
+
+function toEditableRule(r: Rule): EditableRule {
+  const usesChips = Array.isArray(r.value)
+  const value = r.field === 'fileSize' && typeof r.value === 'number' ? String(r.value / BYTES_PER_MIB) : String(r.value ?? '')
+  const valueTo = r.field === 'fileSize' && typeof r.valueTo === 'number' ? String(r.valueTo / BYTES_PER_MIB) : String(r.valueTo ?? '')
+  return {
+    field: r.field,
+    operator: r.operator,
+    provider: providerForRule(r),
+    value: usesChips ? '' : value,
+    valueChips: usesChips ? (r.value as string[]) : [],
+    valueTo,
+    valueUnit: 'days',
+  }
+}
+
+function toLocalNodes(group: GroupRule | undefined): LocalNode[] {
+  if (!group) return []
+  return group.rules.map((r) =>
+    r.type === 'rule'
+      ? { id: nextId(), kind: 'rule' as const, rule: toEditableRule(r) }
+      : { id: nextId(), kind: 'group' as const, group: r as GroupRule },
+  )
+}
+
+function parseValue(field: RuleField, operator: RuleOperator, raw: string, chips: string[], unit: WithinLastUnit): Rule['value'] {
+  if (NO_VALUE_OPERATORS.includes(operator)) return undefined
+  if (COLLECTION_OPERATORS.includes(operator)) return chips
+  if (isNumericField(field)) return raw === '' ? undefined : field === 'fileSize' ? Math.round(Number(raw) * BYTES_PER_MIB) : Number(raw)
+  if (isDateField(field) && RELATIVE_DAY_OPERATORS.includes(operator)) {
+    if (raw === '') return undefined
+    const n = Number(raw)
+    if (operator === 'moreThanAgo') return n
+    const multiplier = unit === 'weeks' ? 7 : unit === 'months' ? 30 : 1
+    return n * multiplier
+  }
+  return raw || undefined
+}
+
+const nodes = ref<LocalNode[]>(toLocalNodes(props.modelValue))
+const join = ref<'AND' | 'OR'>(props.modelValue?.join ?? 'AND')
+
+// Active fields, plus any custom field an existing rule already points at so a scope built on a
+// since-archived field still shows its own selection instead of an empty dropdown.
+const customFieldOptions = computed<CustomRuleField[]>(() => {
+  const selected = nodes.value.flatMap((node) => (node.kind === 'rule' && isCustomRuleField(node.rule.field) ? [node.rule.field] : []))
+  return [...new Set([...activeCustomFields.value.map((f) => customRuleField(f.id)), ...selected])]
+})
+let selfEmitting = false
+
+watch(
+  () => props.modelValue,
+  (val) => {
+    if (selfEmitting) return
+    nodes.value = toLocalNodes(val)
+    join.value = val?.join ?? 'AND'
+  },
+)
+
+function isRuleComplete(r: EditableRule): boolean {
+  if (NO_VALUE_OPERATORS.includes(r.operator)) return true
+  if (COLLECTION_OPERATORS.includes(r.operator)) return r.valueChips.length > 0
+  if (BETWEEN_OPERATORS.includes(r.operator)) return String(r.value).trim() !== '' && String(r.valueTo).trim() !== ''
+  return String(r.value).trim() !== ''
+}
+
+function emitUpdate() {
+  selfEmitting = true
+  setTimeout(() => {
+    selfEmitting = false
+  }, 0)
+  if (nodes.value.length === 0) {
+    emit('update:modelValue', undefined)
+    return
+  }
+  const rules: (Rule | GroupRule)[] = nodes.value
+    .filter((n) => (n.kind === 'group' && n.group.rules.length > 0) || (n.kind === 'rule' && isRuleComplete(n.rule)))
+    .map((n) => {
+      if (n.kind === 'group') return n.group
+      const rule = {
+        type: 'rule' as const,
+        field: n.rule.field,
+        operator: n.rule.operator,
+        value: parseValue(n.rule.field, n.rule.operator, n.rule.value, n.rule.valueChips, n.rule.valueUnit),
+        valueTo:
+          BETWEEN_OPERATORS.includes(n.rule.operator) && n.rule.valueTo !== ''
+            ? isNumericField(n.rule.field)
+              ? n.rule.field === 'fileSize'
+                ? Math.round(Number(n.rule.valueTo) * BYTES_PER_MIB)
+                : Number(n.rule.valueTo)
+              : n.rule.valueTo
+            : undefined,
+      }
+      return isCommunityRatingField(n.rule.field) ? ({ ...rule, provider: n.rule.provider } as Rule) : (rule as Rule)
+    })
+  const isSubGroup = (props.depth ?? 0) > 0
+  if (!isSubGroup && rules.length === 0 && !props.preserveIncompleteRoot) {
+    // Top-level: no complete rules means no active filter — don't send an empty group to the API.
+    emit('update:modelValue', undefined)
+    return
+  }
+  // Sub-group: always emit a group when nodes exist so the parent keeps this node alive.
+  // undefined is reserved for "zero nodes" and signals the parent to remove the group.
+  emit('update:modelValue', { type: 'group', join: join.value, rules })
+}
+
+function setJoin(value: 'AND' | 'OR') {
+  join.value = value
+  emitUpdate()
+}
+
+function addRule() {
+  nodes.value.push(makeEmptyRule())
+}
+
+function addGroup() {
+  nodes.value.push({
+    id: nextId(),
+    kind: 'group',
+    group: { type: 'group', join: 'AND', rules: [] },
+  })
+}
+
+function removeNode(index: number) {
+  nodes.value.splice(index, 1)
+  emitUpdate()
+}
+
+function onFieldChange(index: number) {
+  const node = nodes.value[index]
+  if (node?.kind !== 'rule') return
+  const validOps = operatorsForField(node.rule.field)
+  if (!validOps.includes(node.rule.operator)) {
+    node.rule.operator = validOps[0]!
+  }
+  node.rule.value = ''
+  node.rule.valueChips = []
+  node.rule.valueTo = ''
+  node.rule.valueUnit = 'days'
+  node.rule.provider = 'any'
+  emitUpdate()
+}
+
+function onOperatorChange(index: number) {
+  const node = nodes.value[index]
+  if (node?.kind !== 'rule') return
+  if (COLLECTION_OPERATORS.includes(node.rule.operator)) {
+    node.rule.value = ''
+    node.rule.valueTo = ''
+  } else {
+    node.rule.valueChips = []
+  }
+  emitUpdate()
+}
+
+function onSubGroupUpdate(index: number, val: GroupRule | undefined) {
+  if (val === undefined) {
+    nodes.value.splice(index, 1)
+  } else {
+    const node = nodes.value[index]
+    if (node?.kind === 'group') node.group = val
+  }
+  emitUpdate()
+}
+
+function applyScorePreset(index: number, preset: (typeof SCORE_PRESETS)[number]) {
+  const node = nodes.value[index]
+  if (node?.kind !== 'rule') return
+  if ('lt' in preset) {
+    node.rule.operator = 'lt'
+    node.rule.value = String(preset.lt)
+  } else {
+    node.rule.operator = 'gte'
+    node.rule.value = String(preset.gte)
+  }
+  node.rule.valueTo = ''
+  emitUpdate()
+}
+
+function addLibraryChip(index: number, event: Event) {
+  const select = event.target as HTMLSelectElement
+  const name = select.value
+  select.value = ''
+  if (!name) return
+
+  const node = nodes.value[index]
+  if (node?.kind !== 'rule') return
+  if (node.rule.valueChips.includes(name)) return
+  node.rule.valueChips = [...node.rule.valueChips, name]
+  emitUpdate()
+}
+
+function removeLibraryChip(index: number, name: string) {
+  const node = nodes.value[index]
+  if (node?.kind !== 'rule') return
+  node.rule.valueChips = node.rule.valueChips.filter((value) => value !== name)
+  emitUpdate()
+}
+
+function addStatusChip(index: number, event: Event) {
+  const select = event.target as HTMLSelectElement
+  const status = select.value
+  select.value = ''
+  if (!status) return
+
+  const node = nodes.value[index]
+  if (node?.kind !== 'rule') return
+  if (node.rule.valueChips.includes(status)) return
+  node.rule.valueChips = [...node.rule.valueChips, status]
+  emitUpdate()
+}
+
+function removeStatusChip(index: number, status: string) {
+  const node = nodes.value[index]
+  if (node?.kind !== 'rule') return
+  node.rule.valueChips = node.rule.valueChips.filter((value) => value !== status)
+  emitUpdate()
+}
+
+function valueInputType(field: RuleField, operator: RuleOperator): string {
+  if (NO_VALUE_OPERATORS.includes(operator)) return 'none'
+  if (isDateField(field)) return RELATIVE_DAY_OPERATORS.includes(operator) ? 'number' : 'date'
+  if (field === 'seriesIndex') return 'text'
+  if (isNumericField(field)) return 'number'
+  return 'text'
+}
+
+function numericInputMin(field: RuleField): string | undefined {
+  if (field === 'fileSize') return '0'
+  if (isCommunityRatingField(field)) return '0'
+  return undefined
+}
+
+function numericInputMax(field: RuleField): string | undefined {
+  if (field === 'communityRating') return '5'
+  if (field === 'metadataScore') return '100'
+  return undefined
+}
+
+function numericInputStep(field: RuleField): string | undefined {
+  if (field === 'fileSize') return '0.1'
+  if (field === 'communityRating') return '0.1'
+  if (field === 'communityRatingCount') return '1'
+  return undefined
+}
+
+function providerIconUrl(provider: CommunityRatingProvider): string | null {
+  return provider === 'any' ? null : providerIconPathSafe(provider)
+}
+
+function showValueToInput(operator: RuleOperator): boolean {
+  return BETWEEN_OPERATORS.includes(operator)
+}
+</script>
+
+<template>
+  <div class="flex flex-col gap-2.5">
+    <!-- AND / OR join toggle — always visible in sub-groups, shown at root only when 2+ nodes -->
+    <div v-if="nodes.length > 1 || (depth ?? 0) > 0" class="flex items-center gap-2 mb-0.5">
+      <span class="text-xs text-muted-foreground">{{ t('book.filter.match') }}</span>
+      <div class="flex rounded-md border border-input overflow-hidden">
+        <button
+          @click="setJoin('AND')"
+          class="px-3 py-1 text-xs font-semibold transition-colors"
+          :class="join === 'AND' ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-muted/80'"
+        >
+          {{ t('book.filter.all') }}
+        </button>
+        <button
+          @click="setJoin('OR')"
+          class="px-3 py-1 text-xs font-semibold border-l border-input transition-colors"
+          :class="join === 'OR' ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-muted/80'"
+        >
+          {{ t('book.filter.any') }}
+        </button>
+      </div>
+      <span class="text-xs text-muted-foreground">{{ t('book.filter.ofFollowingRules') }}</span>
+    </div>
+
+    <template v-for="(node, index) in nodes" :key="node.id">
+      <!-- Rule row -->
+      <div v-if="node.kind === 'rule'" class="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+        <select
+          v-model="node.rule.field"
+          @change="onFieldChange(index)"
+          class="h-9 rounded-md border border-input bg-background text-foreground text-sm px-2 focus:outline-none focus:ring-2 focus:ring-primary shrink-0"
+        >
+          <option v-for="field in RULE_FIELDS" :key="field" :value="field">{{ fieldLabel(field) }}</option>
+          <optgroup v-if="customFieldOptions.length > 0" :label="t('book.filter.customFieldsGroup')">
+            <option v-for="field in customFieldOptions" :key="field" :value="field">{{ fieldLabel(field) }}</option>
+          </optgroup>
+        </select>
+
+        <select
+          v-model="node.rule.operator"
+          @change="onOperatorChange(index)"
+          class="h-9 rounded-md border border-input bg-background text-foreground text-sm px-2 focus:outline-none focus:ring-2 focus:ring-primary shrink-0"
+        >
+          <option v-for="op in operatorsForField(node.rule.field)" :key="op" :value="op">{{ operatorLabel(op) }}</option>
+        </select>
+
+        <div
+          v-if="isCommunityRatingField(node.rule.field)"
+          class="h-9 flex items-center gap-2 rounded-md border border-input bg-background px-2 shrink-0"
+        >
+          <img
+            v-if="providerIconUrl(node.rule.provider)"
+            :src="providerIconUrl(node.rule.provider) ?? ''"
+            alt=""
+            class="size-4 rounded-sm object-contain"
+          />
+          <select
+            v-model="node.rule.provider"
+            class="h-7 bg-background text-foreground text-sm outline-none"
+            :aria-label="t('book.filter.communityRatingProvider')"
+            @change="emitUpdate"
+          >
+            <option v-for="provider in COMMUNITY_RATING_PROVIDER_OPTIONS" :key="provider.value" :value="provider.value">
+              {{ provider.label }}
+            </option>
+          </select>
+        </div>
+
+        <!-- Chip typeahead: author/genre/tag/collection always; publisher/series/language when using multi-value operators -->
+        <FilterChipTypeahead
+          v-if="
+            (CHIP_TYPEAHEAD_FIELDS.includes(node.rule.field) || TEXT_TYPEAHEAD_FIELDS.includes(node.rule.field)) &&
+            COLLECTION_OPERATORS.includes(node.rule.operator)
+          "
+          v-model="node.rule.valueChips"
+          :endpoint="ENDPOINT_BY_FIELD[node.rule.field]!"
+          @update:model-value="emitUpdate"
+        />
+        <!-- Format inline toggle picker -->
+        <FilterFormatPicker v-else-if="node.rule.field === 'format'" v-model="node.rule.valueChips" @update:model-value="emitUpdate" />
+        <!-- Library dropdown -->
+        <template v-else-if="node.rule.field === 'library' && COLLECTION_OPERATORS.includes(node.rule.operator)">
+          <div class="flex flex-wrap items-center gap-1 min-w-48 flex-1 rounded-md border border-input bg-background px-2 py-1.5">
+            <span
+              v-for="libraryName in node.rule.valueChips"
+              :key="libraryName"
+              class="flex items-center gap-1 h-5 px-1.5 rounded-xs bg-primary/15 text-primary text-xs font-medium shrink-0"
+            >
+              {{ libraryName }}
+              <button type="button" class="text-primary hover:text-primary leading-none" @click="removeLibraryChip(index, libraryName)">
+                <X :size="10" />
+              </button>
+            </span>
+            <select
+              :value="''"
+              class="h-7 flex-1 min-w-32 bg-background text-foreground text-sm outline-none"
+              @change="addLibraryChip(index, $event)"
+            >
+              <option value="" disabled>
+                {{
+                  librariesLoading
+                    ? t('book.filter.loadingLibraries')
+                    : libraryOptions.length === 0
+                      ? t('book.filter.noLibrariesAvailable')
+                      : t('book.filter.selectLibrary')
+                }}
+              </option>
+              <option
+                v-for="libraryName in libraryOptions"
+                :key="libraryName"
+                :value="libraryName"
+                :disabled="node.rule.valueChips.includes(libraryName)"
+              >
+                {{ libraryName }}
+              </option>
+            </select>
+          </div>
+        </template>
+        <!-- Read status dropdown -->
+        <template v-else-if="node.rule.field === 'readStatus' && COLLECTION_OPERATORS.includes(node.rule.operator)">
+          <div class="flex flex-wrap items-center gap-1 min-w-48 flex-1 rounded-md border border-input bg-background px-2 py-1.5">
+            <span
+              v-for="status in node.rule.valueChips"
+              :key="status"
+              class="flex items-center gap-1 h-5 px-1.5 rounded-xs bg-primary/15 text-primary text-xs font-medium shrink-0"
+            >
+              {{ READ_STATUS_LABELS[status] ?? status }}
+              <button type="button" class="text-primary hover:text-primary leading-none" @click="removeStatusChip(index, status)">
+                <X :size="10" />
+              </button>
+            </span>
+            <select :value="''" class="h-7 flex-1 min-w-32 bg-background text-foreground text-sm outline-none" @change="addStatusChip(index, $event)">
+              <option value="" disabled>{{ t('book.filter.selectStatus') }}</option>
+              <option v-for="status in READ_STATUSES" :key="status" :value="status" :disabled="node.rule.valueChips.includes(status)">
+                {{ READ_STATUS_LABELS[status] ?? status }}
+              </option>
+            </select>
+          </div>
+        </template>
+        <!-- Relative date: numeric day count, with convenience units for withinLast. -->
+        <template v-else-if="RELATIVE_DAY_OPERATORS.includes(node.rule.operator)">
+          <input
+            v-model="node.rule.value"
+            type="number"
+            min="1"
+            :placeholder="t('book.filter.withinLastPlaceholder')"
+            class="h-9 w-20 rounded-md border border-input bg-background text-foreground text-sm px-2 focus:outline-none focus:ring-2 focus:ring-primary"
+            @input="emitUpdate"
+          />
+          <select
+            v-if="node.rule.operator === 'withinLast'"
+            v-model="node.rule.valueUnit"
+            class="h-9 rounded-md border border-input bg-background text-foreground text-sm px-2 focus:outline-none focus:ring-2 focus:ring-primary"
+            @change="emitUpdate"
+          >
+            <option value="days">{{ t('book.filter.unit.days') }}</option>
+            <option value="weeks">{{ t('book.filter.unit.weeks') }}</option>
+            <option value="months">{{ t('book.filter.unit.months') }}</option>
+          </select>
+          <span v-else class="text-sm text-muted-foreground">{{ t('book.filter.unit.daysAgo') }}</span>
+        </template>
+        <!-- Text typeahead: publisher, series, language -->
+        <FilterTextTypeahead
+          v-else-if="TEXT_TYPEAHEAD_FIELDS.includes(node.rule.field) && !NO_VALUE_OPERATORS.includes(node.rule.operator)"
+          v-model="node.rule.value"
+          :endpoint="ENDPOINT_BY_FIELD[node.rule.field]!"
+          @update:model-value="emitUpdate"
+        />
+        <!-- Primary file size: MB input serialized as bytes -->
+        <template v-else-if="node.rule.field === 'fileSize' && !NO_VALUE_OPERATORS.includes(node.rule.operator)">
+          <div class="flex items-center gap-1.5">
+            <input
+              v-model="node.rule.value"
+              @input="emitUpdate"
+              type="number"
+              min="0"
+              step="0.1"
+              :aria-label="t('book.filter.fileSizeValueAria')"
+              :placeholder="t('book.filter.fileSizePlaceholder')"
+              class="h-9 w-28 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            <span class="text-xs text-muted-foreground">{{ t('book.filter.unit.megabytes') }}</span>
+          </div>
+          <template v-if="showValueToInput(node.rule.operator)">
+            <span class="text-xs text-muted-foreground">{{ t('book.filter.to') }}</span>
+            <div class="flex items-center gap-1.5">
+              <input
+                v-model="node.rule.valueTo"
+                @input="emitUpdate"
+                type="number"
+                min="0"
+                step="0.1"
+                :aria-label="t('book.filter.fileSizeMaximumAria')"
+                :placeholder="t('book.filter.maxPlaceholder')"
+                class="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <span class="text-xs text-muted-foreground">{{ t('book.filter.unit.megabytes') }}</span>
+            </div>
+          </template>
+        </template>
+        <!-- Metadata score: preset range chips + numeric input -->
+        <template v-else-if="node.rule.field === 'metadataScore' && !NO_VALUE_OPERATORS.includes(node.rule.operator)">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button
+              v-for="preset in SCORE_PRESETS"
+              :key="preset.label"
+              type="button"
+              class="h-7 px-2.5 rounded-md text-xs border transition-colors"
+              :class="
+                ('gte' in preset && node.rule.operator === 'gte' && node.rule.value === String(preset.gte)) ||
+                ('lt' in preset && node.rule.operator === 'lt' && node.rule.value === String(preset.lt))
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-background text-foreground border-input hover:bg-muted'
+              "
+              @click="applyScorePreset(index, preset)"
+            >
+              {{ t(`book.filter.scorePreset.${preset.label}`) }}
+            </button>
+          </div>
+          <input
+            v-model="node.rule.value"
+            @input="emitUpdate"
+            type="number"
+            min="0"
+            :max="numericInputMax(node.rule.field)"
+            :step="numericInputStep(node.rule.field)"
+            :placeholder="t('book.filter.scoreRangePlaceholder')"
+            class="h-9 rounded-md border border-input bg-background text-foreground text-sm px-2 focus:outline-none focus:ring-2 focus:ring-primary w-24"
+          />
+          <template v-if="showValueToInput(node.rule.operator)">
+            <span class="text-xs text-muted-foreground">{{ t('book.filter.to') }}</span>
+            <input
+              v-model="node.rule.valueTo"
+              @input="emitUpdate"
+              type="number"
+              min="0"
+              :max="numericInputMax(node.rule.field)"
+              :step="numericInputStep(node.rule.field)"
+              placeholder="100"
+              class="h-9 rounded-md border border-input bg-background text-foreground text-sm px-2 focus:outline-none focus:ring-2 focus:ring-primary w-24"
+            />
+          </template>
+        </template>
+        <!-- Standard input: text, number, date -->
+        <template v-else-if="!NO_VALUE_OPERATORS.includes(node.rule.operator)">
+          <input
+            v-model="node.rule.value"
+            @input="emitUpdate"
+            :type="valueInputType(node.rule.field, node.rule.operator)"
+            :min="numericInputMin(node.rule.field)"
+            :max="numericInputMax(node.rule.field)"
+            :step="numericInputStep(node.rule.field)"
+            :placeholder="t('book.filter.valuePlaceholder')"
+            class="h-9 rounded-md border border-input bg-background text-foreground text-sm px-2 focus:outline-none focus:ring-2 focus:ring-primary min-w-32 flex-1"
+          />
+          <template v-if="showValueToInput(node.rule.operator)">
+            <span class="text-xs text-muted-foreground">{{ t('book.filter.to') }}</span>
+            <input
+              v-model="node.rule.valueTo"
+              @input="emitUpdate"
+              :type="valueInputType(node.rule.field, node.rule.operator)"
+              :min="numericInputMin(node.rule.field)"
+              :max="numericInputMax(node.rule.field)"
+              :step="numericInputStep(node.rule.field)"
+              :placeholder="t('book.filter.maxPlaceholder')"
+              class="h-9 rounded-md border border-input bg-background text-foreground text-sm px-2 focus:outline-none focus:ring-2 focus:ring-primary w-24"
+            />
+          </template>
+        </template>
+
+        <button
+          @click="removeNode(index)"
+          class="ml-auto h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+        >
+          <Trash2 :size="13" />
+        </button>
+      </div>
+
+      <!-- Nested group -->
+      <div v-else-if="node.kind === 'group'" class="flex items-start gap-2">
+        <div class="flex-1 rounded-lg border border-primary/20 bg-primary/3 p-3">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-[10px] font-semibold uppercase tracking-widest text-primary">{{ t('book.filter.group') }}</span>
+          </div>
+          <BookFilterBuilder
+            :model-value="node.group"
+            :depth="(depth ?? 0) + 1"
+            :max-depth="maxDepth"
+            @update:model-value="onSubGroupUpdate(index, $event)"
+          />
+        </div>
+        <button
+          @click="removeNode(index)"
+          class="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0 mt-1"
+        >
+          <Trash2 :size="13" />
+        </button>
+      </div>
+    </template>
+
+    <!-- Add buttons -->
+    <div class="flex items-center gap-2 pt-0.5">
+      <button
+        @click="addRule"
+        class="flex items-center gap-1.5 h-9 px-4 rounded-lg border border-dashed border-input text-sm text-muted-foreground hover:text-foreground hover:border-foreground hover:bg-muted/30 transition-colors"
+      >
+        <Plus :size="13" />
+        {{ t('book.filter.addRule') }}
+      </button>
+      <button
+        v-if="(depth ?? 0) < (maxDepth ?? MAX_DEPTH)"
+        @click="addGroup"
+        class="flex items-center gap-1.5 h-9 px-4 rounded-lg border border-dashed border-primary/30 text-sm text-primary hover:text-primary hover:border-primary hover:bg-primary/5 transition-colors"
+      >
+        <Plus :size="13" />
+        {{ t('book.filter.addGroup') }}
+      </button>
+    </div>
+  </div>
+</template>

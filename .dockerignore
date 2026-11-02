@@ -1,6 +1,7 @@
 **/.git
 **/target
 **/build
+**/node_modules
 **/.dart_tool
 .tools
 mobile

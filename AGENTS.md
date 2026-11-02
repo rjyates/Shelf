@@ -13,9 +13,9 @@ Shelf is a Rust server with an embedded web frontend and a shared Flutter/Dart A
 
 ## Verification
 
-- Server: `cargo fmt --manifest-path server/Cargo.toml --check`, `cargo clippy --manifest-path server/Cargo.toml --locked --all-targets -- -D warnings`, `cargo test --manifest-path server/Cargo.toml --locked`.
+- Server: `npm ci --prefix web/orbit-reader`, `npm run build --prefix web/orbit-reader`, then `cargo fmt --manifest-path server/Cargo.toml --check`, `cargo clippy --manifest-path server/Cargo.toml --locked --all-targets -- -D warnings`, `cargo test --manifest-path server/Cargo.toml --locked`.
 - Mobile, from `mobile/`: `flutter pub get --enforce-lockfile`, `dart format --output=none --set-exit-if-changed lib test`, `flutter analyze --fatal-infos`, `flutter test`.
-- CI policy: `python3 -m unittest discover -s tests -v`.
+- CI policy: `python3 -m unittest discover -s tests -v`. The Book Orbit reader host is `web/orbit-reader/` (AGPL attribution in tree; do not restyle it to the journal theme while aligning behavior).
 - The GitHub workflow also validates Compose, builds and smoke-tests the container on Linux amd64 and arm64, builds Android, and builds an unsigned iPhone IPA on macOS.
 
 ## Releases

@@ -73,7 +73,7 @@ adb install -r app-release.apk
 
 In Library, choose **Add book** and select your EPUBs. On mobile, **Add book** opens your phone's document picker. Exact duplicates reuse the existing entry without resetting progress. Title, author, and an available JPEG/PNG cover come from the EPUB; no metadata provider receives the file.
 
-Choose **Read book** to open the shared reader. Use the chapter menu, Previous/Next, arrow keys, and text-size selector. The reader saves an EPUB CFI and percentage to your account; reopening a book restores that position, including across online devices. Page totals remain for manually added books; EPUB percentages do not invent printed page counts. Update older mobile clients before using an EPUB library.
+Choose **Read book** to open the shared reader. That UI is [Book Orbit](https://github.com/bookorbit/bookorbit)'s Foliate EPUB reader (AGPL-3.0-only, attributed under `web/orbit-reader/`), hosted by Shelf without Shelf journal theming. It saves an EPUB CFI and percentage to your account; reopening a book restores that position, including across online devices. Page totals remain for manually added books; EPUB percentages do not invent printed page counts. Update older mobile clients before using an EPUB library.
 
 There is no fixed EPUB upload-size limit. Very large imports still depend on available server memory, SQLite storage capacity, and any reverse-proxy request limits. Archive path, entry-count, and extreme-compression checks remain in place. Encrypted/obfuscated resources and scripted interactivity are unsupported. Book scripts, popups, external links, and external resources are blocked in the reader. Location generation happens when opening a book and can take a moment. Offline reading, annotations, and conflict-aware synchronization remain planned.
 
@@ -117,4 +117,4 @@ Android artifacts initially use development signing. iOS builds run on GitHub ma
 - [Feature parity and next milestones](docs/parity.md)
 - [Build and release decisions](docs/decisions/0002-component-releases-and-selective-ci.md)
 
-Shelf's original code is licensed under AGPL-3.0-only. Book Orbit is credited as a functional reference; its implementation is not included in this foundation. Bundled fonts retain their Open Font License notices. Reader dependencies retain the notices in `web/vendor/`; see [the shared reader decision](docs/decisions/0003-shared-epub-reader.md).
+Shelf's original code is licensed under AGPL-3.0-only. The shared EPUB reader includes Book Orbit reader sources under the same AGPL-3.0-only terms; see `web/orbit-reader/vendor/bookorbit/ATTRIBUTION.md` and [decision 0004](docs/decisions/0004-bookorbit-foliate-reader.md). Bundled fonts retain their Open Font License notices.

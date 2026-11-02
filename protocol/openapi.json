@@ -220,7 +220,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "Object containing integer books, pages_read, finished, and reading totals for this account"
+            "description": "Object containing integer books, pages_read (manual entries only), finished, reading, and average_progress (0..1 mean completion across started books, including EPUB percentage)"
           },
           "401": {
             "description": "No valid session"

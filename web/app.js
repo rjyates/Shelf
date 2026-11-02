@@ -48,10 +48,12 @@ async function refresh() {
     ["books", "books"],
     ["reading", "reading"],
     ["finished", "finished"],
-    ["pages", "pages_read"],
   ]) {
     $(`stat-${id}`).textContent = stats[key].toLocaleString();
   }
+  // EPUB has no printed page count (decision 0003); show mean completion instead.
+  $("stat-pages").textContent =
+    `${Math.round(Number(stats.average_progress || 0) * 100)}%`;
   render();
 }
 function element(tag, text, className) {
