@@ -41,6 +41,45 @@ void main() {
       throwsA(isA<ShelfException>()),
     );
   });
+
+  test('library blurb uses average progress instead of EPUB pages_read', () {
+    expect(libraryReadingBlurb([]), '0 books');
+    expect(
+      libraryReadingBlurb([
+        Book.fromJson({
+          'id': 1,
+          'title': 'A',
+          'author': 'B',
+          'total_pages': null,
+          'pages_read': 0,
+          'format': 'epub',
+          'percentage': 0,
+        }),
+      ]),
+      '1 books',
+    );
+    expect(
+      libraryReadingBlurb([
+        Book.fromJson({
+          'id': 1,
+          'title': 'A',
+          'author': 'B',
+          'total_pages': null,
+          'pages_read': 0,
+          'format': 'epub',
+          'percentage': 0.5,
+        }),
+        Book.fromJson({
+          'id': 2,
+          'title': 'C',
+          'author': 'D',
+          'total_pages': 100,
+          'pages_read': 25,
+        }),
+      ]),
+      '2 books · 38% average progress',
+    );
+  });
   test('reader confines navigation to its server and sandbox frames', () {
     final base = Uri.parse('https://shelf.example.com');
     expect(
@@ -98,5 +137,31 @@ void main() {
       ),
       isFalse,
     );
+    expect(
+      readerNavigationAllowed(base, 'https://shelf.example.com/', true),
+      isFalse,
+    );
+  });
+
+  test('reader exit URLs are the server root including library hash', () {
+    final base = Uri.parse('https://shelf.example.com');
+    expect(readerIsExitUrl(base, 'https://shelf.example.com/'), isTrue);
+    expect(readerIsExitUrl(base, 'https://shelf.example.com/#library'), isTrue);
+    expect(
+      readerIsExitUrl(base, 'https://shelf.example.com/reader?id=1'),
+      isFalse,
+    );
+    expect(
+      readerIsExitUrl(base, 'https://other.example.com/#library'),
+      isFalse,
+    );
+  });
+
+  test('reader cookie domain is the server host', () {
+    expect(
+      readerCookieDomain(Uri.parse('https://shelf.example.com')),
+      'shelf.example.com',
+    );
+    expect(readerCookieDomain(Uri.parse('http://127.0.0.1:8080')), '127.0.0.1');
   });
 }

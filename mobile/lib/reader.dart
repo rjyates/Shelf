@@ -22,6 +22,17 @@ bool readerNavigationAllowed(Uri base, String target, bool mainFrame) {
           uri.path.startsWith('/orbit-reader/'));
 }
 
+/// Book Orbit leaves via `location.assign('/#library')` (path `/`, any fragment).
+bool readerIsExitUrl(Uri base, String target) {
+  final uri = Uri.tryParse(target);
+  if (uri == null) return false;
+  return (uri.scheme == 'http' || uri.scheme == 'https') &&
+      uri.origin == base.origin &&
+      uri.path == '/';
+}
+
+String readerCookieDomain(Uri base) => base.host;
+
 class ReaderScreen extends StatefulWidget {
   const ReaderScreen({super.key, required this.api, required this.book});
   final ShelfApi api;
@@ -33,22 +44,35 @@ class ReaderScreen extends StatefulWidget {
 class _ReaderScreenState extends State<ReaderScreen> {
   late final WebViewController _controller;
   String? _error;
+  var _leaving = false;
+
+  void _leaveReader() {
+    if (_leaving || !mounted) return;
+    _leaving = true;
+    // Navigation callbacks are not safe for synchronous Navigator pops on Android WebView.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).pop();
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0xff171916))
+      ..setBackgroundColor(const Color(0xffffffff))
+      ..addJavaScriptChannel(
+        'ShelfHost',
+        onMessageReceived: (message) {
+          if (message.message == 'close') _leaveReader();
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
-            final uri = Uri.tryParse(request.url);
             if (request.isMainFrame &&
-                uri != null &&
-                (uri.scheme == 'http' || uri.scheme == 'https') &&
-                uri.origin == widget.api.base.origin &&
-                uri.path == '/') {
-              if (mounted) Navigator.of(context).pop();
+                readerIsExitUrl(widget.api.base, request.url)) {
+              _leaveReader();
               return NavigationDecision.prevent;
             }
             return readerNavigationAllowed(
@@ -59,8 +83,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 ? NavigationDecision.navigate
                 : NavigationDecision.prevent;
           },
+          onPageStarted: (url) {
+            // Some WebViews unload the reader before honouring prevent; still pop.
+            if (readerIsExitUrl(widget.api.base, url)) _leaveReader();
+          },
           onWebResourceError: (error) {
-            if (error.isForMainFrame == true && mounted) {
+            if (error.isForMainFrame == true && mounted && !_leaving) {
               setState(
                 () => _error =
                     'Could not open the reader. Check your connection.',
@@ -74,7 +102,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<void> _load() async {
     try {
-      await WebViewCookieManager().clearCookies();
+      final cookies = WebViewCookieManager();
+      await cookies.clearCookies();
+      final token = widget.api.sessionToken;
+      if (token != null) {
+        // shortcut: cookie is not marked HttpOnly when set from Flutter; WebView jar only, when to upgrade: none needed for this host
+        await cookies.setCookie(
+          WebViewCookie(
+            name: 'shelf_session',
+            value: token,
+            domain: readerCookieDomain(widget.api.base),
+            path: '/',
+          ),
+        );
+      }
       await _controller.loadRequest(
         widget.api.base.resolve('/reader?id=${widget.book.id}'),
         headers: widget.api.readerHeaders,
@@ -92,7 +133,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Reading room')),
     body: _error == null
         ? WebViewWidget(controller: _controller)
         : Center(

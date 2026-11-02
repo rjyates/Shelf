@@ -6,9 +6,9 @@ export function getReaderSidebarPinStorageKey(bookFileId: number): string {
   return `${SIDEBAR_PIN_KEY_PREFIX}:${bookFileId}`
 }
 
-function getSessionStorage(): Storage | null {
+function getLocalStorage(): Storage | null {
   try {
-    return typeof window === 'undefined' ? null : window.sessionStorage
+    return typeof window === 'undefined' ? null : window.localStorage
   } catch {
     return null
   }
@@ -16,7 +16,7 @@ function getSessionStorage(): Storage | null {
 
 function readStoredSidebarPinned(key: string): boolean {
   try {
-    return getSessionStorage()?.getItem(key) === 'true'
+    return getLocalStorage()?.getItem(key) === 'true'
   } catch {
     return false
   }
@@ -24,7 +24,7 @@ function readStoredSidebarPinned(key: string): boolean {
 
 function writeStoredSidebarPinned(key: string, pinned: boolean): void {
   try {
-    const storage = getSessionStorage()
+    const storage = getLocalStorage()
     if (!storage) return
     if (pinned) {
       storage.setItem(key, 'true')
@@ -32,7 +32,7 @@ function writeStoredSidebarPinned(key: string, pinned: boolean): void {
       storage.removeItem(key)
     }
   } catch {
-    // Session storage can be unavailable in private windows.
+    // Local storage can be unavailable in private windows.
   }
 }
 

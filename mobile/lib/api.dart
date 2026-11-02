@@ -66,6 +66,23 @@ class Book {
   final bool hasCover;
   final double percentage;
   final int pagesRead;
+
+  /// Fraction complete for catalogue math (EPUB % or manual pages).
+  double get progressFraction => isEpub ? percentage : pagesRead / totalPages!;
+}
+
+/// Library blurb: EPUB has no page count (decision 0003), so mean progress replaces "pages turned".
+String libraryReadingBlurb(List<Book> books) {
+  final started = books
+      .where((book) => book.isEpub ? book.percentage > 0 : book.pagesRead > 0)
+      .toList();
+  if (started.isEmpty) {
+    return '${books.length} books';
+  }
+  final average =
+      started.map((book) => book.progressFraction).reduce((a, b) => a + b) /
+      started.length;
+  return '${books.length} books · ${(average * 100).round()}% average progress';
 }
 
 class ShelfApi {
@@ -146,6 +163,8 @@ class ShelfApi {
     }
     return data;
   }
+
+  String? get sessionToken => _token;
 
   Map<String, String> get readerHeaders => {
     if (_token != null) HttpHeaders.authorizationHeader: 'Bearer $_token',

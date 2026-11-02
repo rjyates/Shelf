@@ -23,6 +23,44 @@ test("orbit-reader dist includes the Foliate host and shell", () => {
   assert.match(html, /orbit-reader\.js/);
 });
 
+test("orbit progress adapter reads Shelf's flattened EPUB catalogue fields", () => {
+  const src = readFileSync(
+    new URL("../web/orbit-reader/vendor/bookorbit/lib/api.ts", import.meta.url),
+    "utf8",
+  );
+  // Shelf uses #[serde(flatten)] on epub — percentage/position are top-level, not book.epub.*.
+  assert.match(src, /export function shelfEpubFields/);
+  assert.match(src, /book\.format === 'epub'/);
+  assert.match(src, /book\.percentage/);
+  assert.match(src, /book\.position/);
+  assert.doesNotMatch(
+    src,
+    /if \(!book\?\.epub\) return jsonResponse\(\{ items: \[\] \}\)/,
+  );
+});
+
+test("reader chrome pin preference persists in localStorage", () => {
+  const visibility = readFileSync(
+    new URL(
+      "../web/orbit-reader/vendor/bookorbit/features/reader/shared/composables/useVisibility.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(visibility, /READER_CHROME_PIN_KEY = 'reader:chrome:pinned'/);
+  assert.match(visibility, /writeStoredChromePinned/);
+  assert.match(visibility, /readStoredChromePinned/);
+  const sidebar = readFileSync(
+    new URL(
+      "../web/orbit-reader/vendor/bookorbit/features/reader/epub/composables/useReaderSidebarPin.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sidebar, /localStorage/);
+  assert.doesNotMatch(sidebar, /sessionStorage/);
+});
+
 test("legacy epub.js vendor bytes still match recorded provenance when present", () => {
   const manifestUrl = new URL("../web/vendor/manifest.json", import.meta.url);
   if (!existsSync(manifestUrl)) return;

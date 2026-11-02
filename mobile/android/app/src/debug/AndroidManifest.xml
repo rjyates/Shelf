@@ -4,4 +4,6 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Local/debug servers (adb reverse to http://127.0.0.1) need cleartext; WebView enforces this, Dart HttpClient does not. -->
+    <application android:usesCleartextTraffic="true" />
 </manifest>

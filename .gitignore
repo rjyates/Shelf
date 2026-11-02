@@ -12,6 +12,7 @@ books/
 .env
 .env.*
 !.env.example
+mobile/device-test.env
 .DS_Store
 artifacts/
 release-out/
