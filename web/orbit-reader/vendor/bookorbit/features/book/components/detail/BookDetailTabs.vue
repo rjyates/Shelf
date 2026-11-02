@@ -1,0 +1,46 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { normalizeBookDetailTab, type BookDetailTab } from '@/features/book/lib/book-detail-tabs'
+
+const props = defineProps<{ bookId: number; canEditMetadata?: boolean; hasChapters?: boolean }>()
+const route = useRoute()
+const router = useRouter()
+const { t } = useI18n()
+
+const activeTab = computed(() => {
+  const requested = normalizeBookDetailTab(route.query.tab)
+  return requested === 'edit' && !props.canEditMetadata ? 'details' : requested
+})
+
+const tabs = computed<{ label: string; tab: BookDetailTab }[]>(() => {
+  const result: { label: string; tab: BookDetailTab }[] = [{ label: t('book.detail.tabs.details'), tab: 'details' }]
+  if (props.canEditMetadata) {
+    result.push({ label: t('book.detail.tabs.editMetadata'), tab: 'edit' })
+  }
+  result.push({ label: t('book.detail.tabs.files'), tab: 'files' })
+  if (props.hasChapters) result.push({ label: t('book.detail.tabs.chapters'), tab: 'chapters' })
+  result.push({ label: t('book.detail.tabs.readingLog'), tab: 'reading-log' })
+  result.push({ label: t('book.detail.tabs.highlights'), tab: 'highlights' })
+  return result
+})
+
+function navigate(tab: BookDetailTab) {
+  router.push({ name: 'book-detail', params: { bookId: props.bookId }, query: { tab } })
+}
+</script>
+
+<template>
+  <div class="flex items-stretch gap-0 overflow-x-auto scrollbar-none flex-1 min-w-0">
+    <button
+      v-for="tabItem in tabs"
+      :key="tabItem.tab"
+      class="px-3.5 sm:px-3 h-full text-[15px] sm:text-sm font-semibold sm:font-medium border-b-2 transition-colors whitespace-nowrap"
+      :class="activeTab === tabItem.tab ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'"
+      @click="navigate(tabItem.tab)"
+    >
+      {{ tabItem.label }}
+    </button>
+  </div>
+</template>

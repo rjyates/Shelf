@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -32,12 +32,8 @@
         >
       </nav>
       <div class="side-note">
-        <span class="sprig" aria-hidden="true"
-          ><svg viewBox="0 0 48 72">
-            <path
-              d="M9 69C26 48 23 25 34 3M16 57C1 57 5 43 18 49M23 44C40 45 42 30 26 36M25 29C10 29 14 15 29 21M30 15C43 18 47 7 35 7"
-            /></svg
-        ></span>
+        <img class="sprig" src="/ornaments/sprig.png" alt="" width="64" height="134" />
+        <img class="swallow" src="/ornaments/swallow.png" alt="" width="108" height="88" />
         <p>A home for the books<br />that stay with you.</p>
       </div>
       <button id="signout" class="quiet" hidden>Sign out</button>
@@ -45,23 +41,7 @@
     </aside>
     <main id="main">
       <header class="masthead">
-        <svg class="celestial" viewBox="0 0 640 230" aria-hidden="true">
-          <g fill="none" stroke="currentColor">
-            <circle cx="440" cy="-30" r="220" />
-            <circle cx="440" cy="-30" r="160" />
-            <circle cx="440" cy="-30" r="100" />
-            <ellipse
-              cx="410"
-              cy="40"
-              rx="280"
-              ry="80"
-              transform="rotate(-18 410 40)"
-            />
-            <path
-              d="M220 20v20m-10-10h20m290 120v24m-12-12h24m-170-64v12m-6-6h12"
-            />
-          </g>
-        </svg>
+        <img class="celestial" src="/ornaments/celestial.png" alt="" width="875" height="551" />
         <p class="eyebrow" id="breadcrumb">YOUR READING ROOM / OVERVIEW</p>
         <h1 id="heading">An evening well read.</h1>
         <p class="subtitle" id="subtitle">
@@ -106,6 +86,7 @@
       <div id="content" hidden>
         <section class="stats" aria-label="Library totals">
           <div>
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#book" /></svg>
             <span id="stat-books">0</span>
             <p>Books on your shelf</p>
           </div>
@@ -118,11 +99,13 @@
             <p>Books finished</p>
           </div>
           <div>
-            <span id="stat-pages">0</span>
-            <p>Pages turned</p>
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#pages" /></svg>
+            <span id="stat-pages">0%</span>
+            <p>Average progress</p>
           </div>
         </section>
         <section class="panel" id="library-panel">
+          <img class="trail" src="/ornaments/sprig-trail.png" alt="" width="220" height="111" />
           <div class="section-head">
             <h2 id="section-title"><span>01 /</span> Currently reading</h2>
             <a href="#library" id="view-library">View library →</a>
@@ -135,12 +118,7 @@
           /></label>
           <div id="books" class="book-grid"></div>
           <div id="empty" class="empty">
-            <span class="sprig" aria-hidden="true"
-              ><svg viewBox="0 0 48 72">
-                <path
-                  d="M9 69C26 48 23 25 34 3M16 57C1 57 5 43 18 49M23 44C40 45 42 30 26 36M25 29C10 29 14 15 29 21M30 15C43 18 47 7 35 7"
-                /></svg
-            ></span>
+            <img class="sprig" src="/ornaments/sprig-corner.png" alt="" width="88" height="160" />
             <h3>Your next chapter starts here.</h3>
             <p>Add a book to begin building your library.</p>
           </div>
@@ -151,8 +129,8 @@
           </div>
           <div id="progress-list"></div>
           <p class="fine">
-            Totals reflect the page progress you record. Session history,
-            streaks, and annual goals are planned.
+            Totals use page progress for manual books and EPUB percentage for
+            imports. Session history, streaks, and annual goals are planned.
           </p>
         </section>
         <footer>

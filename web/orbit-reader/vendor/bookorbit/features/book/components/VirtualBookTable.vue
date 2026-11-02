@@ -1,0 +1,1104 @@
+<script setup lang="ts">
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
+import { breakpointsTailwind, useBreakpoints } from '@vueuse/core'
+import { useVirtualizer } from '@tanstack/vue-virtual'
+import { formatNumber } from '@/i18n/formatters'
+import { AlertTriangle, ArrowDown, ArrowUp, BookOpen, CheckCircle2, ChevronUp, Loader2, RotateCcw, X } from '@lucide/vue'
+import { useTableColumns, COLUMN_DEFS, COLUMN_DEF_MAP, LOCK_ROW_COLUMN_DEF, type ColumnDef } from '@/features/book/composables/useTableColumns'
+import { useTableCellEditor } from '@/features/book/composables/useTableCellEditor'
+import { useTableLocks } from '@/features/book/composables/useTableLocks'
+import { useTablePresets } from '@/features/book/composables/useTablePresets'
+import { useTableContextMenu } from '@/features/book/composables/useTableContextMenu'
+import { useTableScrollBehavior } from '@/features/book/composables/useTableScrollBehavior'
+import { useTableResize } from '@/features/book/composables/useTableResize'
+import { useTableDragReorder } from '@/features/book/composables/useTableDragReorder'
+import { useTableKeyboard } from '@/features/book/composables/useTableKeyboard'
+import { useTableSorting } from '@/features/book/composables/useTableSorting'
+import { useTableQuickFilters } from '@/features/book/composables/useTableQuickFilters'
+import { useTableCellHelpers } from '@/features/book/composables/useTableCellHelpers'
+import { useTableCoverDialog } from '@/features/book/composables/useTableCoverDialog'
+import KeyboardShortcutOverlay from './KeyboardShortcutOverlay.vue'
+import { useAuthorSearch } from '@/features/book/composables/useAuthorSearch'
+import { useGenreSearch, useTagSearch } from '@/features/book/composables/useTagSearch'
+import { usePublisherSearch, useSeriesNameSearch, useLanguageSearch } from '@/features/book/composables/useMetadataFieldSearch'
+import { useRefreshMetadata } from '@/features/book/composables/useRefreshMetadata'
+import { useRefreshingBooks } from '@/features/book/composables/useRefreshingBooks'
+import { useBookRefreshFeedback } from '@/features/book/composables/useBookRefreshFeedback'
+import type { InFlightOp } from '@/features/book/composables/useBookBulkActions'
+import { useRouter } from 'vue-router'
+import { detectChangedColumns, mergeBookCardWithDetail } from '@/features/book/lib/book-card-mapper'
+import { buildLockStateBookUpdate, mergeBookPatchWithLatest, sameLockFields } from '@/features/book/lib/table-row-state-sync'
+import BookCoverDialog from './table/BookCoverDialog.vue'
+import BookTableCellDispatcher from './table/BookTableCellDispatcher.vue'
+import BookTableCollapsedSeriesCell from './table/BookTableCollapsedSeriesCell.vue'
+import BookTableContextMenu from './table/BookTableContextMenu.vue'
+import BookTableHeader from './table/BookTableHeader.vue'
+import BookTableHeaderContextMenu from './table/BookTableHeaderContextMenu.vue'
+import type { BookCard, Rule, SortSpec, TableLayoutState, TableViewType } from '@bookorbit/types'
+import { BOOK_METADATA_LOCK_FIELDS, Permission } from '@bookorbit/types'
+import { isBookPlaceholder, type BookSlot } from '@/features/book/composables/useBookWindow'
+import { useNarratorSearch } from '@/features/book/composables/useNarratorSearch'
+import { sortFieldLabel } from '@/features/book/lib/filter-labels'
+import { DEFAULT_SORT } from '@/features/book/lib/sort-defaults'
+import { useDisplaySettings } from '@/composables/useDisplaySettings'
+import { useActiveCustomFields } from '@/features/book/composables/useActiveCustomFields'
+import { useLibraryPermissions } from '@/features/library/composables/useLibraryPermissions'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
+const props = withDefaults(
+  defineProps<{
+    books: BookSlot[]
+    sort: SortSpec[]
+    defaultSort?: SortSpec[]
+    viewType: TableViewType
+    libraryId?: number
+    selectionMode?: boolean
+    isSelected?: (id: number) => boolean
+    hasMore?: boolean
+    loading?: boolean
+    total?: number
+    sortable?: boolean
+    selectedCount?: number
+    filterActive?: boolean
+    initialized?: boolean
+    inFlight?: InFlightOp | null
+  }>(),
+  { sortable: true, initialized: true },
+)
+
+type BookActionType = 'quick-view' | 'add-to-collection' | 'move-to-library' | 'delete'
+const emit = defineEmits<{
+  'update:sort': [value: SortSpec[]]
+  action: [book: BookCard, type: BookActionType]
+  select: [id: number, event: MouseEvent]
+  'update:book': [updated: BookCard]
+  'load-more': []
+  'select-all': [checked: boolean]
+  'enter-selection': []
+  'quick-filter': [rule: Rule]
+  'visible-range': [startIndex: number, endIndex: number]
+  'first-visible-index': [index: number]
+}>()
+
+const loadedBooks = computed(() => props.books.filter((slot): slot is BookCard => !isBookPlaceholder(slot)))
+
+function rowBook(index: number): BookCard {
+  return props.books[index] as BookCard
+}
+
+function isPlaceholderRow(index: number): boolean {
+  const slot = props.books[index]
+  return slot === undefined || isBookPlaceholder(slot)
+}
+
+const { md } = useBreakpoints(breakpointsTailwind)
+const isReadOnly = computed(() => !md.value)
+const { tableDensity, tableZebraStriping } = useDisplaySettings()
+const router = useRouter()
+
+const { fields: allCustomFields } = useActiveCustomFields()
+
+// In a library view, only show fields enabled for that specific library.
+// In collection/smart scope views (no single library), show all active fields.
+const customFields = computed(() => {
+  const lid = props.libraryId
+  if (lid == null) return allCustomFields.value
+  return allCustomFields.value.filter((f) => f.enabledLibraryIds.includes(lid))
+})
+
+const {
+  layout,
+  visibleColumns,
+  allColumns,
+  toggleColumn,
+  setColumnOrder,
+  setColumnWidth,
+  setLayout,
+  pinColumn,
+  unpinColumn,
+  resetLayout,
+  combinedColumnMap,
+} = useTableColumns(props.viewType, customFields)
+const editor = useTableCellEditor()
+const locks = useTableLocks()
+const tablePresets = useTablePresets(
+  props.viewType,
+  COLUMN_DEFS.map((column) => column.id),
+)
+
+const { search: searchAuthors } = useAuthorSearch()
+const { search: searchGenres } = useGenreSearch()
+const { search: searchTags } = useTagSearch()
+const { search: searchNarrators } = useNarratorSearch()
+const { search: searchPublisher } = usePublisherSearch()
+const { search: searchSeriesName } = useSeriesNameSearch()
+const { search: searchLanguage } = useLanguageSearch()
+const { refreshWithFeedback } = useRefreshMetadata()
+const { isRefreshing } = useRefreshingBooks()
+const refreshFeedback = useBookRefreshFeedback()
+const { getSortDir, handleColumnSort, removeSortField } = useTableSorting(
+  () => props.sort,
+  () => props.sortable ?? true,
+  (sort) => emit('update:sort', sort),
+  () => props.defaultSort ?? DEFAULT_SORT,
+)
+const { getQuickFilterOptions, buildQuickFilterRule } = useTableQuickFilters(props.viewType)
+const { hasLibraryPermission } = useLibraryPermissions()
+function canEditBookMetadata(book: BookCard): boolean {
+  return hasLibraryPermission(Permission.LibraryEditMetadata, book.libraryId, 'editor')
+}
+const { getCellValue, isCellLocked, isCellReadOnly, isMandatoryFieldEmpty, isBookFileMissing, getPinnedCellBackground } = useTableCellHelpers(
+  locks,
+  () => isReadOnly.value,
+  () => combinedColumnMap.value,
+  canEditBookMetadata,
+)
+const { coverDialogBook, handleCoverClick, handleCoverDialogUpdateBook } = useTableCoverDialog(
+  () => props.selectionMode ?? false,
+  (updated) => emit('update:book', updated),
+  () => loadedBooks.value,
+)
+const isCoverDialogReadOnly = computed(() => isReadOnly.value || (coverDialogBook.value !== null && !canEditBookMetadata(coverDialogBook.value)))
+
+function getChipsSearchFn(colId: string): (q: string) => Promise<string[]> {
+  if (colId === 'authors') return searchAuthors
+  if (colId === 'genres') return searchGenres
+  if (colId === 'tags') return searchTags
+  if (colId === 'narrators') return searchNarrators
+  return () => Promise.resolve([])
+}
+
+function getChipsLinkFn(colId: string): ((chip: string) => string | null) | undefined {
+  if (colId === 'authors') return (name) => `/authors?q=${encodeURIComponent(name)}`
+  return undefined
+}
+
+function getChipsActionFn(colId: string): ((chip: string) => void) | undefined {
+  if (props.viewType !== 'library') return undefined
+  if (colId === 'genres') {
+    return (name) => emit('quick-filter', { type: 'rule', field: 'genre', operator: 'includesAny', value: [name] })
+  }
+  if (colId === 'tags') {
+    return (name) => emit('quick-filter', { type: 'rule', field: 'tag', operator: 'includesAny', value: [name] })
+  }
+  return undefined
+}
+
+function getTextCellOpenLink(book: BookCard, colId: string): string | null {
+  if (colId === 'title') return `/book/${book.id}`
+  if (colId === 'seriesName' && book.seriesId != null) return `/series/${book.seriesId}`
+  return null
+}
+
+const rowPaddingClass = computed(() => {
+  if (tableDensity.value === 'compact') return 'py-1'
+  if (tableDensity.value === 'roomy') return 'py-2.5'
+  return 'py-1.5'
+})
+
+function getTextCellOpenLinkLabel(colId: string): string | null {
+  if (colId === 'title') return t('book.tableView.openBookDetails')
+  if (colId === 'seriesName') return t('book.tableView.openSeries')
+  return null
+}
+
+function getTextSearchFn(colId: string): ((q: string) => Promise<string[]>) | undefined {
+  if (colId === 'publisher') return searchPublisher
+  if (colId === 'seriesName') return searchSeriesName
+  if (colId === 'language') return searchLanguage
+  return undefined
+}
+
+const metadataInFlight = computed(() => (props.inFlight?.label === 'Refreshing metadata' ? props.inFlight : null))
+const metadataFailed = computed(() => metadataInFlight.value?.failed ?? 0)
+const metadataRemaining = computed(() => {
+  if (!metadataInFlight.value) return 0
+  return Math.max(metadataInFlight.value.total - metadataInFlight.value.processed, 0)
+})
+function getRowFeedback(bookId: number) {
+  return refreshFeedback.getFeedback(bookId)
+}
+
+function isRowRefreshing(bookId: number): boolean {
+  return getRowFeedback(bookId)?.state === 'refreshing' || isRefreshing(bookId)
+}
+
+function isCellChanged(bookId: number, colId: string): boolean {
+  return refreshFeedback.isCellChanged(bookId, colId)
+}
+
+function getRowFeedbackMessage(bookId: number): string {
+  return getRowFeedback(bookId)?.message ?? t('book.tableView.metadataRefreshFailed')
+}
+
+async function retryMetadataRefresh(book: BookCard) {
+  if (isRefreshing(book.id)) return
+  refreshFeedback.markRefreshing(book.id)
+  const updated = await refreshWithFeedback(book.id)
+  if (updated) {
+    const merged = mergeBookCardWithDetail(book, updated)
+    refreshFeedback.markSuccess(book.id, detectChangedColumns(book, merged))
+    emit('update:book', merged)
+    return
+  }
+  refreshFeedback.markFailed(book.id)
+}
+
+// Init lock state for books and prune stale entries
+watch(
+  loadedBooks,
+  (books) => {
+    for (const book of books) {
+      locks.initBook(book.id, book.lockedFields)
+    }
+    locks.pruneStaleEntries(new Set(books.map((b) => b.id)))
+  },
+  { immediate: true },
+)
+
+const displayColumns = computed(() => [LOCK_ROW_COLUMN_DEF, ...visibleColumns.value])
+const currentLayout = computed<TableLayoutState>(() => ({
+  columnOrder: [...layout.value.columnOrder],
+  hiddenColumns: [...layout.value.hiddenColumns],
+  columnWidths: { ...layout.value.columnWidths },
+  ...(layout.value.pinnedColumns ? { pinnedColumns: { ...layout.value.pinnedColumns } } : {}),
+}))
+const pinnedLeftOffsets = computed(() => {
+  const offsets = new Map<string, number>()
+  let left = 0
+  for (const column of displayColumns.value) {
+    if (column.pinned === 'left' || column.id === 'lockRow') {
+      offsets.set(column.id, left)
+      left += column.defaultWidth
+    }
+  }
+  return offsets
+})
+const statusAnchorColumnId = computed<string | null>(() => {
+  const visibleIds = displayColumns.value.map((column) => column.id)
+  if (visibleIds.includes('title')) return 'title'
+  if (visibleIds.includes('authors')) return 'authors'
+  return null
+})
+
+const scrollContainerRef = ref<HTMLDivElement | null>(null)
+const { contextMenuBook, contextMenuPosition, openContextMenu, closeContextMenu } = useTableContextMenu()
+const { isScrolled, showScrollTop, onScroll, scrollToTop } = useTableScrollBehavior(scrollContainerRef)
+
+// Extracted composables
+const {
+  resizingColumnId: _resizingColumnId,
+  isResizableCol: _isResizableCol,
+  startResize,
+  autoFitColumn,
+  autoFitAllColumns,
+} = useTableResize(scrollContainerRef, displayColumns, setColumnWidth, isReadOnly)
+void _resizingColumnId
+void _isResizableCol
+
+const {
+  dragSourceColId,
+  dropTargetColId,
+  dropSide,
+  isDraggableCol: _isDraggableCol,
+  handleColDragStart,
+  handleColDragOver,
+  handleColDragLeave,
+  handleColDrop,
+  handleColDragEnd,
+} = useTableDragReorder(allColumns, setColumnOrder)
+void _isDraggableCol
+
+// Column header context menu
+const headerCtxColumn = ref<ColumnDef | null>(null)
+const headerCtxPosition = ref<{ x: number; y: number } | null>(null)
+const headerCtxSortDir = computed<'asc' | 'desc' | null>(() => {
+  if (!headerCtxColumn.value?.sortField) return null
+  return getSortDir(headerCtxColumn.value.sortField)
+})
+
+function handleHeaderContextMenu(event: MouseEvent, col: ColumnDef) {
+  if (isReadOnly.value || col.id === 'lockRow') return
+  event.preventDefault()
+  headerCtxColumn.value = col
+  headerCtxPosition.value = { x: event.clientX, y: event.clientY }
+}
+
+function handleHeaderCtxSortAsc() {
+  if (!headerCtxColumn.value?.sortField) return
+  emit('update:sort', [{ field: headerCtxColumn.value.sortField, dir: 'asc' }])
+}
+
+function handleHeaderCtxSortDesc() {
+  if (!headerCtxColumn.value?.sortField) return
+  emit('update:sort', [{ field: headerCtxColumn.value.sortField, dir: 'desc' }])
+}
+
+function handleHeaderCtxClearSort() {
+  if (!headerCtxColumn.value?.sortField) return
+  removeSortField(headerCtxColumn.value.sortField)
+}
+
+function handleHeaderCtxHideColumn() {
+  if (!headerCtxColumn.value) return
+  toggleColumn(headerCtxColumn.value.id)
+}
+
+function handleHeaderCtxAutoFitAll() {
+  autoFitAllColumns()
+}
+
+function handleHeaderCtxAutoFit() {
+  if (!headerCtxColumn.value) return
+  autoFitColumn(headerCtxColumn.value.id)
+}
+
+function handleHeaderCtxPinLeft() {
+  if (!headerCtxColumn.value) return
+  pinColumn(headerCtxColumn.value.id, 'left')
+}
+
+function handleHeaderCtxPinRight() {
+  if (!headerCtxColumn.value) return
+  pinColumn(headerCtxColumn.value.id, 'right')
+}
+
+function handleHeaderCtxUnpin() {
+  if (!headerCtxColumn.value) return
+  unpinColumn(headerCtxColumn.value.id)
+}
+
+function handleHeaderCtxQuickFilter(key: string) {
+  if (!headerCtxColumn.value) return
+  const rule = buildQuickFilterRule(headerCtxColumn.value.id, key)
+  if (!rule) return
+  emit('quick-filter', rule)
+}
+
+function closeHeaderContextMenu() {
+  headerCtxColumn.value = null
+  headerCtxPosition.value = null
+}
+
+// Checkbox selection helpers (over loaded rows only)
+const allBooksSelected = computed(() => {
+  if (loadedBooks.value.length === 0 || !props.isSelected) return false
+  return loadedBooks.value.every((b) => props.isSelected!(b.id))
+})
+
+const someBooksSelected = computed(() => {
+  if (loadedBooks.value.length === 0 || !props.isSelected) return false
+  const someSelected = loadedBooks.value.some((b) => props.isSelected!(b.id))
+  return someSelected && !allBooksSelected.value
+})
+
+function handleSelectAllToggle(event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  emit('select-all', checked)
+}
+
+function handleCheckboxClick(book: BookCard, event: MouseEvent) {
+  if (book.collapsedSeries) return
+  if (!props.selectionMode) {
+    emit('enter-selection')
+  }
+  emit('select', book.id, event)
+}
+
+// Sort strip
+const activeSorts = computed(() =>
+  props.sort.map((s) => ({
+    field: s.field,
+    dir: s.dir,
+    label: sortFieldLabel(s.field),
+  })),
+)
+
+// Skeleton rows for initial loading
+const SKELETON_ROW_COUNT = 12
+
+const rowEstimate = computed(() => {
+  if (tableDensity.value === 'compact') return 36
+  if (tableDensity.value === 'roomy') return 52
+  return 44
+})
+
+const virtualizer = useVirtualizer(
+  computed(() => ({
+    count: props.books.length,
+    getScrollElement: () => scrollContainerRef.value,
+    estimateSize: () => rowEstimate.value,
+    overscan: 10,
+  })),
+)
+
+const virtualItems = computed(() => virtualizer.value.getVirtualItems())
+const totalSize = computed(() => virtualizer.value.getTotalSize())
+
+const isLoadingMore = ref(false)
+
+watch(virtualItems, (items) => {
+  if (!items.length) return
+  emit('visible-range', items[0]!.index, items[items.length - 1]!.index)
+  const firstVisible = Math.max(0, Math.floor((virtualizer.value.scrollOffset ?? 0) / rowEstimate.value))
+  emit('first-visible-index', Math.min(props.books.length - 1, firstVisible))
+
+  if (!props.hasMore || props.loading || isLoadingMore.value) return
+  const last = items[items.length - 1]!
+  if (last.index >= props.books.length - 15) {
+    isLoadingMore.value = true
+    emit('load-more')
+  }
+})
+
+watch(
+  () => props.loading,
+  (loading) => {
+    if (!loading) isLoadingMore.value = false
+  },
+)
+
+// Keyboard navigation
+const { focusedRowIndex, focusedColIndex, isFocusedCell, handleTableKeydown } = useTableKeyboard({
+  books: () => props.books as BookCard[],
+  displayColumns,
+  activeCellKey: editor.activeCellKey,
+  selectionMode: () => props.selectionMode ?? false,
+  isReadOnly: () => isReadOnly.value,
+  virtualizer,
+  isCellReadOnly,
+  onActivate: handleActivate,
+  onSelect: handleCheckboxClick,
+  onCopyRow: () => {},
+  columnMapGetter: () => combinedColumnMap.value,
+})
+
+const shortcutOverlayOpen = ref(false)
+
+function handleKeydownWithShortcuts(event: KeyboardEvent) {
+  if (event.key === '?' && !editor.activeCellKey.value) {
+    event.preventDefault()
+    shortcutOverlayOpen.value = !shortcutOverlayOpen.value
+    return
+  }
+  if (shortcutOverlayOpen.value) return
+  handleTableKeydown(event)
+}
+
+function shouldPreserveTargetFocus(target: EventTarget | null): boolean {
+  const targetElement = target instanceof Element ? target : target instanceof Node ? target.parentElement : null
+  if (!targetElement) return false
+  return Boolean(
+    targetElement.closest(
+      [
+        'input',
+        'textarea',
+        'select',
+        'button',
+        'a',
+        '[role="button"]',
+        '[role="textbox"]',
+        '[role="combobox"]',
+        '[contenteditable="true"]',
+        '[data-cell-activator="true"]',
+        '[tabindex]:not([tabindex="-1"])',
+      ].join(', '),
+    ),
+  )
+}
+
+function focusTableCell(rowIndex: number, colIndex: number, event?: MouseEvent, bookId?: number, colId?: string) {
+  focusedRowIndex.value = rowIndex
+  focusedColIndex.value = colIndex
+  if (bookId != null && colId && editor.isActive(bookId, colId)) return
+  if (shouldPreserveTargetFocus(event?.target ?? null)) return
+  scrollContainerRef.value?.focus({ preventScroll: true })
+}
+
+onMounted(() => {
+  scrollContainerRef.value?.addEventListener('scroll', onScroll, { passive: true })
+})
+
+onUnmounted(() => {
+  scrollContainerRef.value?.removeEventListener('scroll', onScroll)
+})
+
+let savedTableRowIndex = 0
+
+onDeactivated(() => {
+  const offset = virtualizer.value.scrollOffset ?? scrollContainerRef.value?.scrollTop ?? 0
+  savedTableRowIndex = Math.max(0, Math.floor(offset / rowEstimate.value))
+})
+
+onActivated(() => {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      if (savedTableRowIndex > 0) {
+        virtualizer.value.scrollToIndex(Math.min(savedTableRowIndex, props.books.length - 1), { align: 'start' })
+      }
+    })
+  })
+})
+
+// Bump tbody key on sort change to trigger enter animation
+watch(
+  () => props.sort,
+  () => {
+    nextTick(() => {
+      if (scrollContainerRef.value) scrollContainerRef.value.scrollTop = 0
+    })
+  },
+  { deep: true },
+)
+
+// Editable column IDs in display order (for Tab navigation)
+const editableColumnIds = computed<string[]>(() => visibleColumns.value.filter((c) => c.isEditable).map((c) => c.id))
+
+function handleActivate(book: BookCard, colId: string) {
+  if (isBookPlaceholder(book as BookSlot)) return
+  if (isReadOnly.value || props.selectionMode) return
+  const col = displayColumns.value.find((c) => c.id === colId)
+  if (!col || isCellReadOnly(book, col)) return
+  editor.activateCell(book.id, colId, getCellValue(book, colId))
+}
+
+function handleSave(book: BookCard, colId: string, newValue: unknown) {
+  editor.saveCell(
+    book.id,
+    colId,
+    newValue,
+    (patch) => {
+      const updated = mergeBookPatchWithLatest(loadedBooks.value, book, patch)
+      emit('update:book', updated)
+    },
+    book,
+  )
+}
+
+function handleCancel(bookId: number, colId: string) {
+  editor.cancelCellIfActive(bookId, colId)
+}
+
+function handleNavigate(book: BookCard, colId: string, direction: 'next' | 'prev' | 'rowUp' | 'rowDown') {
+  if (direction === 'rowUp' || direction === 'rowDown') {
+    editor.navigateRow(direction === 'rowDown' ? 'down' : 'up', loadedBooks.value, book.id, colId)
+    return
+  }
+  editor.navigateCell(direction, editableColumnIds.value, book, colId)
+}
+
+function handleRowClick(book: BookCard, e: MouseEvent) {
+  if (props.selectionMode) {
+    if (book.collapsedSeries) return
+    emit('select', book.id, e)
+    return
+  }
+  if (book.collapsedSeries) {
+    handleOpenSeries(book)
+  }
+}
+
+function handleOpenSeries(book: BookCard) {
+  if (book.seriesId == null) return
+  void router.push({ name: 'series-detail', params: { seriesId: book.seriesId } })
+}
+
+function emitLockStateUpdate(book: BookCard, nextFields: BookCard['lockedFields']) {
+  const updated = buildLockStateBookUpdate(loadedBooks.value, book, nextFields)
+  if (!updated) return
+  emit('update:book', updated)
+}
+
+async function handleToggleCellLock(book: BookCard, colId: string) {
+  if (!canEditBookMetadata(book)) return
+  const lockField = COLUMN_DEF_MAP.get(colId)?.lockField
+  if (!lockField) return
+  const beforeFields = [...locks.getFields(book.id)]
+  await locks.toggleField(book.id, lockField)
+  const afterFields = [...locks.getFields(book.id)]
+  if (sameLockFields(beforeFields, afterFields)) return
+  emitLockStateUpdate(book, afterFields)
+}
+
+async function handleLockAllRow(book: BookCard) {
+  if (!canEditBookMetadata(book)) return
+  const beforeFields = [...locks.getFields(book.id)]
+  await locks.lockAll(book.id)
+  const afterFields = [...locks.getFields(book.id)]
+  if (sameLockFields(beforeFields, afterFields)) return
+  emitLockStateUpdate(book, afterFields)
+}
+
+async function handleUnlockAllRow(book: BookCard) {
+  if (!canEditBookMetadata(book)) return
+  const beforeFields = [...locks.getFields(book.id)]
+  await locks.unlockAll(book.id)
+  const afterFields = [...locks.getFields(book.id)]
+  if (sameLockFields(beforeFields, afterFields)) return
+  emitLockStateUpdate(book, afterFields)
+}
+
+function isRowFullyLocked(book: BookCard): boolean {
+  return getRowLockedFieldCount(book) >= BOOK_METADATA_LOCK_FIELDS.length
+}
+
+function getRowLockedFieldCount(book: BookCard): number {
+  return locks.getFields(book.id).length
+}
+
+function handleRowContextMenu(event: MouseEvent, book: BookCard): void {
+  if (props.selectionMode) return
+  openContextMenu(event, book)
+}
+
+function handleContextMenuAction(book: BookCard, type: BookActionType): void {
+  closeContextMenu()
+  emit('action', book, type)
+}
+
+function applyPreset(layoutState: TableLayoutState, sort?: SortSpec[]): void {
+  setLayout(layoutState)
+  if (sort && sort.length > 0) emit('update:sort', sort)
+}
+
+function saveCurrentPreset(name: string): void {
+  tablePresets.savePreset(name, currentLayout.value, props.sort)
+}
+
+function scrollToIndex(index: number) {
+  virtualizer.value.scrollToIndex(index, { align: 'start' })
+}
+
+defineExpose({
+  allColumns,
+  currentLayout,
+  toggleColumn,
+  setColumnOrder,
+  resetLayout,
+  applyPreset,
+  saveCurrentPreset,
+  scrollToIndex,
+  deletePreset: tablePresets.deletePreset,
+  renamePreset: tablePresets.renamePreset,
+  duplicatePreset: tablePresets.duplicatePreset,
+  togglePresetFavorite: tablePresets.toggleFavorite,
+  importPresetBackup: tablePresets.importPresets,
+  allPresets: tablePresets.allPresets,
+  autoFitAllColumns,
+})
+</script>
+
+<template>
+  <div class="relative flex-1 min-h-0 flex flex-col overflow-hidden rounded-md border border-border">
+    <!-- Screen-reader live region for dynamic announcements -->
+    <div aria-live="polite" aria-atomic="true" class="sr-only">
+      <span v-if="selectionMode && selectedCount != null && selectedCount > 0">{{
+        t('book.tableView.booksSelected', { count: selectedCount })
+      }}</span>
+      <span v-if="loading && initialized">{{ t('book.tableView.loadingMoreBooks') }}</span>
+    </div>
+    <!-- Sort strip: visible when multiple sorts are active -->
+    <div v-if="activeSorts.length > 1" class="shrink-0 flex items-center gap-1.5 border-b border-border/60 bg-muted/30 px-3 py-1">
+      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground shrink-0">{{ t('book.tableView.sort') }}</span>
+      <div class="flex flex-wrap items-center gap-1">
+        <span
+          v-for="(s, idx) in activeSorts"
+          :key="s.field"
+          class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+        >
+          <span class="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary/20 text-[9px] font-bold">{{ idx + 1 }}</span>
+          {{ s.label }}
+          <ArrowUp v-if="s.dir === 'asc'" :size="10" />
+          <ArrowDown v-else :size="10" />
+          <button class="ml-0.5 rounded-full p-0.5 hover:bg-primary/20 transition-colors" @click="removeSortField(s.field)">
+            <X :size="9" />
+          </button>
+        </span>
+      </div>
+    </div>
+
+    <div v-if="metadataInFlight" class="shrink-0 flex items-center justify-between border-b border-border/60 bg-primary/5 px-3 py-1">
+      <div class="flex items-center gap-1.5 text-xs font-medium text-primary">
+        <Loader2 :size="12" class="animate-spin" />
+        <span>{{ t('book.tableView.refreshingMetadata', { processed: metadataInFlight.processed, total: metadataInFlight.total }) }}</span>
+      </div>
+      <span v-if="metadataFailed > 0" class="text-xs font-medium text-amber-700 dark:text-amber-400">{{
+        t('book.tableView.failedCount', { count: metadataFailed })
+      }}</span>
+      <span v-else class="text-xs text-muted-foreground">{{ t('book.tableView.remainingCount', { count: metadataRemaining }) }}</span>
+    </div>
+
+    <div v-if="isReadOnly" class="shrink-0 border-b border-border/60 bg-amber-500/8 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+      {{ t('book.tableView.readOnlyNotice') }}
+    </div>
+
+    <div ref="scrollContainerRef" class="relative flex-1 min-h-0 overflow-auto" tabindex="0" @keydown="handleKeydownWithShortcuts">
+      <table role="grid" class="w-full border-collapse text-sm" style="table-layout: fixed">
+        <BookTableHeader
+          :display-columns="displayColumns"
+          :sort="props.sort"
+          :is-scrolled="isScrolled"
+          :loading="props.loading ?? false"
+          :selection-mode="props.selectionMode ?? false"
+          :all-books-selected="allBooksSelected"
+          :some-books-selected="someBooksSelected"
+          :is-read-only="isReadOnly"
+          :pinned-left-offsets="pinnedLeftOffsets"
+          :drag-source-col-id="dragSourceColId"
+          :drop-target-col-id="dropTargetColId"
+          :drop-side="dropSide"
+          :sortable="props.sortable ?? true"
+          @select-all="handleSelectAllToggle"
+          @column-sort="handleColumnSort"
+          @header-context-menu="handleHeaderContextMenu"
+          @col-drag-start="handleColDragStart"
+          @col-drag-over="handleColDragOver"
+          @col-drag-leave="handleColDragLeave"
+          @col-drop="handleColDrop"
+          @col-drag-end="handleColDragEnd"
+          @resize-start="startResize"
+          @auto-fit-column="autoFitColumn"
+        />
+
+        <!-- Skeleton loading rows -->
+        <tbody v-if="!initialized && loading" role="rowgroup">
+          <tr v-for="i in SKELETON_ROW_COUNT" :key="`skeleton-${i}`" role="row" class="border-b border-border/50">
+            <td v-if="selectionMode" role="gridcell" class="px-2 align-middle" :class="rowPaddingClass" :style="{ width: '36px', minWidth: '36px' }">
+              <div class="mx-auto h-4 w-4 rounded-xs bg-muted animate-pulse" />
+            </td>
+            <td
+              v-for="col in displayColumns"
+              :key="col.id"
+              role="gridcell"
+              class="overflow-hidden px-2 align-middle"
+              :class="rowPaddingClass"
+              :style="{ width: `${col.defaultWidth}px`, minWidth: `${col.minWidth}px` }"
+            >
+              <div v-if="col.cellType === 'cover'" class="h-9 w-9 rounded-sm bg-muted animate-pulse" />
+              <div v-else-if="col.cellType === 'rating'" class="flex items-center gap-0.5">
+                <div v-for="s in 5" :key="s" class="h-3 w-3 rounded-full bg-muted animate-pulse" />
+              </div>
+              <div v-else-if="col.cellType === 'progress'" class="h-1.5 w-full rounded-full bg-muted animate-pulse" />
+              <div v-else-if="col.cellType === 'actions'" class="h-5 w-5 rounded-xs bg-muted animate-pulse" />
+              <div v-else class="h-4 rounded-xs bg-muted animate-pulse" :style="{ width: `${40 + ((i * 17 + col.defaultWidth) % 60)}%` }" />
+            </td>
+          </tr>
+        </tbody>
+
+        <tbody v-else class="tbody-enter" role="rowgroup">
+          <tr v-if="virtualItems.length > 0 && virtualItems[0]!.start > 0" role="row">
+            <td role="gridcell" :colspan="displayColumns.length + (selectionMode ? 1 : 0)" :style="{ height: `${virtualItems[0]!.start}px` }" />
+          </tr>
+
+          <template v-for="vItem in virtualItems" :key="String(vItem.key)">
+            <tr v-if="isPlaceholderRow(vItem.index)" role="row" class="border-b border-border/50" :data-row-index="vItem.index">
+              <td v-if="selectionMode" role="gridcell" class="px-2" :class="rowPaddingClass" :style="{ width: '36px', minWidth: '36px' }" />
+              <td
+                v-for="col in displayColumns"
+                :key="col.id"
+                role="gridcell"
+                class="overflow-hidden px-2 align-middle"
+                :class="rowPaddingClass"
+                :style="{ width: `${col.defaultWidth}px`, minWidth: `${col.minWidth}px` }"
+              >
+                <div class="h-3.5 max-w-32 animate-pulse rounded-xs bg-foreground/5" data-testid="book-row-skeleton" />
+              </td>
+            </tr>
+            <tr
+              v-else
+              role="row"
+              :aria-label="rowBook(vItem.index).title ?? undefined"
+              class="group border-b border-border/50 transition-colors"
+              :class="[
+                selectionMode && isSelected?.(rowBook(vItem.index).id) ? 'bg-primary/8' : 'hover:bg-muted/40',
+                selectionMode ? 'cursor-pointer' : '',
+                isBookFileMissing(rowBook(vItem.index)) ? 'bg-destructive/5' : '',
+                isRowRefreshing(rowBook(vItem.index).id) ? 'opacity-85' : '',
+                focusedRowIndex === vItem.index && !editor.activeCellKey.value ? 'ring-1 ring-inset ring-primary/40' : '',
+                tableZebraStriping && vItem.index % 2 === 1 && !(selectionMode && isSelected?.(rowBook(vItem.index).id)) ? 'bg-muted/20' : '',
+              ]"
+              @click="handleRowClick(rowBook(vItem.index), $event)"
+              @contextmenu.prevent="(event) => handleRowContextMenu(event, rowBook(vItem.index))"
+            >
+              <!-- Checkbox cell -->
+              <td
+                v-if="selectionMode"
+                role="gridcell"
+                class="overflow-hidden px-2 bg-background"
+                :class="rowPaddingClass"
+                :style="{ width: '36px', minWidth: '36px', position: 'sticky', left: '0px', zIndex: 20 }"
+              >
+                <div class="flex items-center justify-center">
+                  <input
+                    v-if="!rowBook(vItem.index).collapsedSeries"
+                    type="checkbox"
+                    class="accent-primary h-3.5 w-3.5 cursor-pointer"
+                    :checked="isSelected?.(rowBook(vItem.index).id) ?? false"
+                    @click.stop="handleCheckboxClick(rowBook(vItem.index), $event)"
+                  />
+                </div>
+              </td>
+
+              <td
+                v-for="(col, colIdx) in displayColumns"
+                :key="col.id"
+                :data-col-id="col.id"
+                :data-row-index="vItem.index"
+                role="gridcell"
+                class="relative overflow-hidden px-2 align-middle"
+                :class="[
+                  rowPaddingClass,
+                  col.pinned === 'right' ? 'border-l border-border/60' : '',
+                  col.pinned === null ? (isMandatoryFieldEmpty(rowBook(vItem.index), col.id) ? 'bg-amber-500/5' : '') : '',
+                  isCellChanged(rowBook(vItem.index).id, col.id) ? 'book-cell--changed' : '',
+                  isFocusedCell(vItem.index, colIdx) && !editor.isActive(rowBook(vItem.index).id, col.id)
+                    ? 'outline outline-2 outline-primary/50 -outline-offset-2 rounded-sm'
+                    : '',
+                ]"
+                :style="{
+                  width: `${col.defaultWidth}px`,
+                  minWidth: `${col.minWidth}px`,
+                  ...(col.pinned === 'left' || col.id === 'lockRow'
+                    ? {
+                        position: 'sticky',
+                        left: `${(selectionMode ? 36 : 0) + (pinnedLeftOffsets.get(col.id) ?? 0)}px`,
+                        zIndex: col.id === 'lockRow' ? 20 : 2,
+                        background: getPinnedCellBackground(
+                          rowBook(vItem.index),
+                          col.id,
+                          selectionMode && (isSelected?.(rowBook(vItem.index).id) ?? false),
+                        ),
+                      }
+                    : {}),
+                  ...(col.pinned === 'right'
+                    ? {
+                        position: 'sticky',
+                        right: '0',
+                        zIndex: 2,
+                        background: getPinnedCellBackground(
+                          rowBook(vItem.index),
+                          col.id,
+                          selectionMode && (isSelected?.(rowBook(vItem.index).id) ?? false),
+                        ),
+                      }
+                    : {}),
+                }"
+                @click="focusTableCell(vItem.index, colIdx, $event, rowBook(vItem.index).id, col.id)"
+              >
+                <template v-if="rowBook(vItem.index).collapsedSeries">
+                  <BookTableCollapsedSeriesCell
+                    :book="rowBook(vItem.index)"
+                    :col-id="col.id"
+                    :link-fn="getChipsLinkFn(col.id)"
+                    @open-series="handleOpenSeries(rowBook(vItem.index))"
+                  />
+                </template>
+                <template v-else>
+                  <BookTableCellDispatcher
+                    :book="rowBook(vItem.index)"
+                    :col-id="col.id"
+                    :cell-type="col.cellType"
+                    :has-lock-field="!!COLUMN_DEF_MAP.get(col.id)?.lockField"
+                    :is-locked="isCellLocked(rowBook(vItem.index), col.id)"
+                    :is-active="editor.isActive(rowBook(vItem.index).id, col.id)"
+                    :is-read-only="isCellReadOnly(rowBook(vItem.index), col)"
+                    :can-edit-metadata="canEditBookMetadata(rowBook(vItem.index))"
+                    :is-fully-locked="isRowFullyLocked(rowBook(vItem.index))"
+                    :locked-field-count="getRowLockedFieldCount(rowBook(vItem.index))"
+                    :selection-mode="props.selectionMode ?? false"
+                    :always-show-open-link-icon="isReadOnly"
+                    :value="getCellValue(rowBook(vItem.index), col.id)"
+                    :search-fn="col.cellType === 'text' ? getTextSearchFn(col.id) : col.cellType === 'chips' ? getChipsSearchFn(col.id) : undefined"
+                    :open-link="col.cellType === 'text' ? getTextCellOpenLink(rowBook(vItem.index), col.id) : undefined"
+                    :open-link-label="col.cellType === 'text' ? getTextCellOpenLinkLabel(col.id) : undefined"
+                    :link-fn="col.cellType === 'chips' ? getChipsLinkFn(col.id) : undefined"
+                    :chip-action-fn="col.cellType === 'chips' ? getChipsActionFn(col.id) : undefined"
+                    :allow-decimal="col.id === 'seriesIndex'"
+                    @activate="handleActivate(rowBook(vItem.index), col.id)"
+                    @save="(value) => handleSave(rowBook(vItem.index), col.id, value)"
+                    @cancel="handleCancel(rowBook(vItem.index).id, col.id)"
+                    @navigate="(direction) => handleNavigate(rowBook(vItem.index), col.id, direction)"
+                    @cover-click="handleCoverClick(rowBook(vItem.index))"
+                    @toggle-lock="handleToggleCellLock(rowBook(vItem.index), col.id)"
+                    @lock-all="handleLockAllRow(rowBook(vItem.index))"
+                    @unlock-all="handleUnlockAllRow(rowBook(vItem.index))"
+                    @action="(type) => emit('action', rowBook(vItem.index), type)"
+                    @update:book="(updated) => emit('update:book', updated)"
+                  />
+
+                  <div
+                    v-if="statusAnchorColumnId === col.id && getRowFeedback(rowBook(vItem.index).id)"
+                    class="pointer-events-auto absolute right-1 top-1 z-30"
+                  >
+                    <span
+                      v-if="getRowFeedback(rowBook(vItem.index).id)?.state === 'refreshing'"
+                      class="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/12 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                    >
+                      <Loader2 :size="10" class="animate-spin" />
+                      {{ t('book.tableView.fetching') }}
+                    </span>
+                    <span
+                      v-else-if="getRowFeedback(rowBook(vItem.index).id)?.state === 'success'"
+                      class="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300"
+                    >
+                      <CheckCircle2 :size="10" />
+                      {{ t('book.tableView.updated') }}
+                    </span>
+                    <span
+                      v-else
+                      class="inline-flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 px-1 py-0.5 text-[10px] font-medium text-destructive"
+                    >
+                      <AlertTriangle :size="10" />
+                      {{ t('book.tableView.failed') }}
+                      <button
+                        class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full hover:bg-destructive/20"
+                        :title="getRowFeedbackMessage(rowBook(vItem.index).id)"
+                        @click.stop="retryMetadataRefresh(rowBook(vItem.index))"
+                      >
+                        <RotateCcw :size="8" />
+                      </button>
+                    </span>
+                  </div>
+                </template>
+              </td>
+            </tr>
+          </template>
+
+          <tr v-if="virtualItems.length > 0" role="row">
+            <td
+              role="gridcell"
+              :colspan="displayColumns.length + (selectionMode ? 1 : 0)"
+              :style="{ height: `${totalSize - virtualItems[virtualItems.length - 1]!.end}px` }"
+            />
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div
+      v-if="books.length === 0 && !loading"
+      class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 text-muted-foreground"
+    >
+      <BookOpen :size="36" class="opacity-30" />
+      <p class="text-sm">{{ t('book.tableView.noBooks') }}</p>
+    </div>
+
+    <!-- Scroll to top FAB -->
+    <Transition
+      enter-active-class="transition-all duration-200 ease-out"
+      leave-active-class="transition-all duration-150 ease-in"
+      enter-from-class="opacity-0 translate-y-2"
+      leave-to-class="opacity-0 translate-y-2"
+    >
+      <button
+        v-if="showScrollTop"
+        class="absolute bottom-10 right-4 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90 transition-colors"
+        :aria-label="t('book.tableView.scrollToTop')"
+        @click="scrollToTop"
+      >
+        <ChevronUp :size="16" />
+      </button>
+    </Transition>
+
+    <!-- Enhanced status bar -->
+    <div class="shrink-0 flex items-center justify-between border-t border-border/60 bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+      <div class="flex items-center gap-2">
+        <span v-if="selectionMode && selectedCount">
+          {{ t('book.tableView.selectedStatus', { count: formatNumber(selectedCount) }) }}
+          <span class="text-muted-foreground">/ </span>
+        </span>
+        <span v-if="filterActive" class="flex items-center gap-1 text-primary">
+          <span class="h-1.5 w-1.5 rounded-full bg-primary" />
+          {{ t('book.tableView.filtered') }}
+        </span>
+        <span v-if="hasMore">{{ t('book.tableView.loadedStatus', { loaded: formatNumber(books.length), total: formatNumber(total ?? 0) }) }}</span>
+        <span v-else>{{ t('book.tableView.bookCount', { count: total ?? books.length }) }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <button
+          class="inline-flex h-5 w-5 items-center justify-center rounded-xs border border-border/70 bg-background text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          :title="t('book.tableView.keyboardShortcutsTitle')"
+          :aria-label="t('book.tableView.showKeyboardShortcuts')"
+          @click="shortcutOverlayOpen = true"
+        >
+          ?
+        </button>
+        <span class="hidden lg:inline text-[11px] text-muted-foreground">{{ t('book.tableView.copyHint') }}</span>
+        <span v-if="loading" class="flex items-center gap-1">
+          <Loader2 :size="11" class="animate-spin" />
+          {{ t('common.loading') }}
+        </span>
+      </div>
+    </div>
+
+    <BookTableContextMenu
+      :book="contextMenuBook"
+      :position="contextMenuPosition"
+      @action="handleContextMenuAction"
+      @update:book="(updated) => emit('update:book', updated)"
+      @close="closeContextMenu"
+    />
+
+    <BookTableHeaderContextMenu
+      v-if="headerCtxColumn"
+      :column="headerCtxColumn"
+      :position="headerCtxPosition"
+      :sort-dir="headerCtxSortDir"
+      :quick-filters="getQuickFilterOptions(headerCtxColumn.id)"
+      @sort-asc="handleHeaderCtxSortAsc"
+      @sort-desc="handleHeaderCtxSortDesc"
+      @clear-sort="handleHeaderCtxClearSort"
+      @quick-filter="handleHeaderCtxQuickFilter"
+      @hide-column="handleHeaderCtxHideColumn"
+      @auto-fit="handleHeaderCtxAutoFit"
+      @auto-fit-all="handleHeaderCtxAutoFitAll"
+      @pin-left="handleHeaderCtxPinLeft"
+      @pin-right="handleHeaderCtxPinRight"
+      @unpin="handleHeaderCtxUnpin"
+      @close="closeHeaderContextMenu"
+    />
+  </div>
+
+  <BookCoverDialog
+    :book="coverDialogBook"
+    :read-only="isCoverDialogReadOnly"
+    @close="coverDialogBook = null"
+    @update:book="handleCoverDialogUpdateBook"
+  />
+  <KeyboardShortcutOverlay v-model:open="shortcutOverlayOpen" />
+</template>
+
+<style scoped>
+.tbody-enter {
+  animation: tbodyEnter 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes tbodyEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.book-cell--changed {
+  animation: cellChangedFlash 2.8s ease-out both;
+}
+
+@keyframes cellChangedFlash {
+  0% {
+    box-shadow: inset 0 0 0 999px color-mix(in oklch, oklch(0.696 0.17 162.48) 20%, transparent);
+  }
+  85% {
+    box-shadow: inset 0 0 0 999px color-mix(in oklch, oklch(0.696 0.17 162.48) 8%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 999px transparent;
+  }
+}
+</style>

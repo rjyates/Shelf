@@ -94,6 +94,12 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/fonts/serif.ttf", get(|| async { ([(header::CONTENT_TYPE, "font/ttf")], include_bytes!("../../web/fonts/serif.ttf").as_slice()) }))
         .route("/fonts/sans.ttf", get(|| async { ([(header::CONTENT_TYPE, "font/ttf")], include_bytes!("../../web/fonts/sans.ttf").as_slice()) }))
         .route("/fonts/mono.ttf", get(|| async { ([(header::CONTENT_TYPE, "font/ttf")], include_bytes!("../../web/fonts/mono.ttf").as_slice()) }))
+        .route("/ornaments/celestial.png", get(|| async { ([(header::CONTENT_TYPE, "image/png")], include_bytes!("../../web/ornaments/celestial.png").as_slice()) }))
+        .route("/ornaments/sprig.png", get(|| async { ([(header::CONTENT_TYPE, "image/png")], include_bytes!("../../web/ornaments/sprig.png").as_slice()) }))
+        .route("/ornaments/sprig-corner.png", get(|| async { ([(header::CONTENT_TYPE, "image/png")], include_bytes!("../../web/ornaments/sprig-corner.png").as_slice()) }))
+        .route("/ornaments/sprig-trail.png", get(|| async { ([(header::CONTENT_TYPE, "image/png")], include_bytes!("../../web/ornaments/sprig-trail.png").as_slice()) }))
+        .route("/ornaments/swallow.png", get(|| async { ([(header::CONTENT_TYPE, "image/png")], include_bytes!("../../web/ornaments/swallow.png").as_slice()) }))
+        .route("/icons.svg", get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml")], include_str!("../../web/icons.svg")) }))
         .route("/api/v1/health", get(|| async { Json(serde_json::json!({"status":"ok", "api_version":1, "version":option_env!("SHELF_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))})) }))
         .route("/api/v1/setup", get(setup_status).post(setup))
         .route("/api/v1/login", post(login))
@@ -104,13 +110,10 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/books/{id}/file", get(epub::file))
         .route("/api/v1/books/{id}/cover", get(epub::cover))
         .route("/api/v1/books/{id}/location", post(epub::location))
+        // Book Orbit EPUB reader (AGPL-3.0-only). Built assets live in web/orbit-reader/dist.
         .route("/reader", get(epub::reader))
-        .route("/reader-security.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/reader-security.mjs")) }))
-        .route("/reader.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/reader.js")) }))
-        .route("/reader.css", get(|| async { ([(header::CONTENT_TYPE,"text/css")], include_str!("../../web/reader.css")) }))
-        .route("/vendor/epub.min.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/vendor/epub.min.js")) }))
-        .route("/vendor/jszip.min.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/vendor/jszip.min.js")) }))
-        .route("/vendor/purify.min.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../web/vendor/purify.min.js")) }))
+        .route("/reader/{*rest}", get(epub::reader_path))
+        .route("/orbit-reader/{*path}", get(epub::orbit_asset))
         .route("/api/v1/stats", get(stats))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(axum::middleware::map_response(|mut response: Response| async {
@@ -376,8 +379,28 @@ async fn stats(
 ) -> ApiResult<Json<serde_json::Value>> {
     state.db(move |db| {
         let user = authenticate(db, &headers)?;
-        let values: (i64,i64,i64,i64) = db.query_row("SELECT count(*),coalesce(sum(b.pages_read),0),coalesce(sum(CASE WHEN f.book_id IS NULL THEN b.pages_read=b.total_pages ELSE f.percentage=1 END),0),coalesce(sum(CASE WHEN f.book_id IS NULL THEN b.pages_read>0 AND b.pages_read<b.total_pages ELSE f.position IS NOT NULL AND f.percentage<1 END),0) FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=?", [user], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
-        Ok(Json(serde_json::json!({"books":values.0,"pages_read":values.1,"finished":values.2,"reading":values.3})))
+        // pages_read stays manual-only (decision 0003); average_progress folds EPUB % and page ratios.
+        let values: (i64, i64, i64, i64, Option<f64>) = db.query_row(
+            "SELECT count(*),
+                    coalesce(sum(b.pages_read),0),
+                    coalesce(sum(CASE WHEN f.book_id IS NULL THEN b.pages_read=b.total_pages ELSE f.percentage=1 END),0),
+                    coalesce(sum(CASE WHEN f.book_id IS NULL THEN b.pages_read>0 AND b.pages_read<b.total_pages ELSE f.position IS NOT NULL AND f.percentage<1 END),0),
+                    (SELECT avg(CASE WHEN f2.book_id IS NOT NULL THEN f2.percentage
+                                     WHEN b2.total_pages>0 THEN cast(b2.pages_read as real)/b2.total_pages END)
+                     FROM books b2 LEFT JOIN epub_files f2 ON f2.book_id=b2.id
+                     WHERE b2.user_id=?1
+                       AND CASE WHEN f2.book_id IS NOT NULL THEN f2.position IS NOT NULL ELSE b2.pages_read>0 END)
+             FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=?1",
+            [user],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        Ok(Json(serde_json::json!({
+            "books": values.0,
+            "pages_read": values.1,
+            "finished": values.2,
+            "reading": values.3,
+            "average_progress": values.4.unwrap_or(0.0),
+        })))
     }).await
 }
 

@@ -1,6 +1,64 @@
 use super::*;
 use axum::{body::to_bytes, extract::Request};
+use rust_embed::RustEmbed;
 use std::io::Cursor;
+
+/// Built Book Orbit EPUB reader (AGPL-3.0-only). See web/orbit-reader/vendor/bookorbit/ATTRIBUTION.md.
+#[derive(RustEmbed)]
+#[folder = "$CARGO_MANIFEST_DIR/../web/orbit-reader/dist"]
+struct OrbitReaderAssets;
+
+fn orbit_reader_csp() -> header::HeaderValue {
+    // Foliate renders chapters in blob iframes; Vue needs inline style attributes from its CSS-in-JS paths.
+    "default-src 'none'; script-src 'self'; style-src 'self' blob: 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self'; frame-src blob:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
+        .parse()
+        .expect("reader CSP")
+}
+
+fn orbit_asset_response(path: &str) -> Option<Response> {
+    let file = OrbitReaderAssets::get(path)?;
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let mut response = (
+        [(header::CONTENT_TYPE, mime.essence_str())],
+        file.data.into_owned(),
+    )
+        .into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_SECURITY_POLICY, orbit_reader_csp());
+    response
+        .headers_mut()
+        .insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
+    Some(response)
+}
+
+fn reader_shell_response(headers: &HeaderMap) -> ApiResult<Response> {
+    let mut response = orbit_asset_response("index.html").ok_or(ApiError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "The Book Orbit reader build is missing. Run npm run build in web/orbit-reader.",
+    ))?;
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "text/html; charset=utf-8".parse().unwrap(),
+    );
+    if let Some(token) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    {
+        let secure = if std::env::var("SHELF_SECURE_COOKIE").as_deref() == Ok("true") {
+            "; Secure"
+        } else {
+            ""
+        };
+        let cookie = format!("shelf_session={token}; HttpOnly; SameSite=Strict; Path=/{secure}");
+        response
+            .headers_mut()
+            .insert(header::SET_COOKIE, cookie.parse().map_err(|_| invalid())?);
+    }
+    Ok(response)
+}
 
 static IMPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
@@ -128,26 +186,24 @@ pub(super) async fn reader(
 ) -> ApiResult<Response> {
     let checked = headers.clone();
     state.db(move |db| authenticate(db, &checked)).await?;
-    let mut response = Html(include_str!("../../web/reader.html")).into_response();
-    // The native WebView sends a bearer only on its initial request. Exchange it for an HttpOnly cookie.
-    if let Some(token) = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-    {
-        let secure = if std::env::var("SHELF_SECURE_COOKIE").as_deref() == Ok("true") {
-            "; Secure"
-        } else {
-            ""
-        };
-        let cookie = format!("shelf_session={token}; HttpOnly; SameSite=Strict; Path=/{secure}");
-        response
-            .headers_mut()
-            .insert(header::SET_COOKIE, cookie.parse().map_err(|_| invalid())?);
+    // Book Orbit's Vue reader (history mode). Bearer on the first WebView request becomes an HttpOnly cookie.
+    reader_shell_response(&headers)
+}
+
+pub(super) async fn reader_path(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    let checked = headers.clone();
+    state.db(move |db| authenticate(db, &checked)).await?;
+    reader_shell_response(&headers)
+}
+
+pub(super) async fn orbit_asset(Path(path): Path<String>) -> Response {
+    let trimmed = path.trim_start_matches('/');
+    if let Some(response) = orbit_asset_response(trimmed) {
+        return response;
     }
-    response.headers_mut().insert(header::CONTENT_SECURITY_POLICY,"default-src 'none'; script-src 'self'; style-src 'self' blob: 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self'; frame-src blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'".parse().unwrap());
-    response
-        .headers_mut()
-        .insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
-    Ok(response)
+    // SPA fallback is only for /reader; assets under /orbit-reader must exist.
+    StatusCode::NOT_FOUND.into_response()
 }

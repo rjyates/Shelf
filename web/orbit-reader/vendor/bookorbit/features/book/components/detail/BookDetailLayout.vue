@@ -1,0 +1,33 @@
+<script setup lang="ts">
+import BookDetailHeader from './BookDetailHeader.vue'
+import { coverTintVars, type CoverTint } from '@/features/book/lib/cover-tint'
+import { computed } from 'vue'
+
+const props = withDefaults(
+  defineProps<{
+    bookId: number
+    canEditMetadata?: boolean
+    coverTint?: CoverTint | null
+    hasChapters?: boolean
+    parentLibrary?: { id: number; name: string } | null
+  }>(),
+  { coverTint: null, hasChapters: false, parentLibrary: null },
+)
+
+const tintVars = computed(() => coverTintVars(props.coverTint))
+</script>
+
+<template>
+  <div
+    :class="[
+      'flex flex-col h-full overflow-hidden rounded-lg border border-border/70 bg-card/60 shadow-sm',
+      coverTint ? 'book-detail-cover-tint' : '',
+    ]"
+    :style="tintVars"
+  >
+    <BookDetailHeader :book-id="bookId" :can-edit-metadata="canEditMetadata" :has-chapters="hasChapters" :parent-library="parentLibrary" />
+    <main class="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:px-6 sm:py-4">
+      <slot />
+    </main>
+  </div>
+</template>

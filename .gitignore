@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 node_modules/
+web/orbit-reader/dist/
 server/target/
 .tools/
 data/

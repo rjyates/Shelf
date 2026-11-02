@@ -2,7 +2,9 @@
 
 One Flutter/Dart application for Android and iPhone. Use the Flutter version in the repository's `.flutter-version` file.
 
-Create your account in the Shelf web app, then enter your HTTPS server address and sign in here. The foundation supports browsing the catalogue, adding book metadata, and recording page progress. Sessions remain in memory. Readers, downloads, and playback are on the [roadmap](../docs/parity.md).
+Create your account in the Shelf web app, then enter your HTTPS server address and sign in here. This is one Flutter app for Android and iPhone. The foundation supports catalogue, metadata, page progress, and opening EPUBs in a WebView against the shared Book Orbit reader.
+
+Planned product shape (see [roadmap](../docs/parity.md)): e-ink display profile on by default, with onboarding to switch to a normal LCD experience; later a native Android reader/ink module behind the e-ink profile inside this same app—not a separate codebase. Next milestone: harden online WebView reading (auth, file open, two-way progress sync).
 
 From this directory, run `flutter pub get --enforce-lockfile`, `flutter analyze --fatal-infos`, and `flutter test`. Launch with `flutter run` on a configured device or emulator. A phone cannot reach a server bound only to another computer's loopback interface; use the HTTPS reverse-proxy setup described in the [root README](../README.md).
 

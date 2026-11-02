@@ -14,11 +14,11 @@ Shelf needs to import EPUBs and reopen their saved reading positions on web, And
 
 ## Decision
 
-Use the Rust `epub` crate for metadata and covers, with ZIP preflight bounds, and self-host epub.js, JSZip, and DOMPurify. Store imported bytes, optional raster cover, digest, CFI, and percentage in an additive SQLite table. This keeps imports atomic and uses the existing persisted data volume. As originally implemented, uploads were limited to 50 MiB, decompressed resources to 16 MiB, total declared decompressed size to 128 MiB, and archives to 4,096 entries. The approved follow-up below supersedes the fixed byte limits. Reject encrypted resources, symlinks, and unsafe archive paths; never extract archive paths to disk.
+Use the Rust `epub` crate for metadata and covers, with ZIP preflight bounds. Store imported bytes, optional raster cover, digest, CFI, and percentage in an additive SQLite table. This keeps imports atomic and uses the existing persisted data volume. As originally implemented, uploads were limited to 50 MiB, decompressed resources to 16 MiB, total declared decompressed size to 128 MiB, and archives to 4,096 entries. The approved follow-up below supersedes the fixed byte limits. Reject encrypted resources, symlinks, and unsafe archive paths; never extract archive paths to disk.
 
 Deduplicate exact bytes within an account. Manual entries keep page progress. EPUB entries expose a null page count and a separate percentage and CFI; no estimated page count contributes to page totals.
 
-Sanitize serialized chapters before rendering them in script-disabled sandboxed iframes. Reader CSP blocks external resources, forms, and plugins. Book scripts and popups remain disabled. Vendored dependencies include licenses and verified provenance. Flutter uses a system document picker and the shared reader. Its initial authenticated reader request exchanges the existing bearer session for an HttpOnly cookie, avoiding tokens in URLs and JavaScript bridges. Native navigation stays within Shelf and the reader's sandbox frames.
+**Rendering (updated by [0004](0004-bookorbit-foliate-reader.md)):** the shared web/WebView reader is Book Orbit's Foliate/Vue EPUB reader under `web/orbit-reader/`, not the original epub.js page. Import security, CFI storage, cookie exchange for Flutter, and CSP for the reader shell remain required. Foliate loads chapter documents in blob iframes; reader CSP continues to block external connect/frame targets outside `blob:` and `'self'`.
 
 ## Consequences
 

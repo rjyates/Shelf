@@ -52,6 +52,22 @@ void main() {
       isTrue,
     );
     expect(
+      readerNavigationAllowed(
+        base,
+        'https://shelf.example.com/reader/1/1?format=epub',
+        true,
+      ),
+      isTrue,
+    );
+    expect(
+      readerNavigationAllowed(
+        base,
+        'https://shelf.example.com/orbit-reader/orbit-reader.js',
+        true,
+      ),
+      isTrue,
+    );
+    expect(
       readerNavigationAllowed(base, 'https://other.example.com/reader', true),
       isFalse,
     );

@@ -17,7 +17,9 @@ bool readerNavigationAllowed(Uri base, String target, bool mainFrame) {
   }
   return (uri.scheme == 'http' || uri.scheme == 'https') &&
       uri.origin == base.origin &&
-      uri.path == '/reader';
+      (uri.path == '/reader' ||
+          uri.path.startsWith('/reader/') ||
+          uri.path.startsWith('/orbit-reader/'));
 }
 
 class ReaderScreen extends StatefulWidget {

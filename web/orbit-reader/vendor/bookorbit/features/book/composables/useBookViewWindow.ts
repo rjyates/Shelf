@@ -1,0 +1,190 @@
+import { computed, getCurrentInstance, onActivated, ref, watch, type Ref } from 'vue'
+import { useElementSize, useWindowSize } from '@vueuse/core'
+import {
+  MAX_RANDOM_SORT_SEED,
+  createRandomSortSeed,
+  hasRandomSort,
+  jumpBucketKindForSort,
+  type GroupRule,
+  type JumpBucket,
+  type SortSpec,
+} from '@bookorbit/types'
+import { useBookProgressRefresh } from './useBookProgressRefresh'
+import { BOOK_WINDOW_BLOCK_SIZE, useBookWindow, type BookWindowQuery } from './useBookWindow'
+import { useJumpBuckets } from './useJumpBuckets'
+import { useJumpRailGutter } from './useJumpRailGutter'
+import { DEFAULT_SORT, copySort } from '../lib/sort-defaults'
+
+const LETTER_TEMPLATE = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
+const MIN_TOTAL_FOR_RAIL = 50
+const LIST_CHUNK = 100
+const RAIL_SLOT_PX = 20
+const RAIL_VERTICAL_FRACTION = 0.85
+const RAIL_VERTICAL_PADDING_PX = 16
+
+function isValidScopeId(value: number | null): value is number {
+  return value !== null && Number.isInteger(value) && value > 0
+}
+
+/**
+ * One-stop wiring for the three book browsing views: the placeholder window
+ * (grid + table slots, list-mode contiguous prefix) plus the grid jump rail
+ * (buckets, active bucket, scrubbing). Sort/filter/search changes reset the
+ * window automatically through the query key; no manual reload watching.
+ */
+export function useBookViewWindow(options: {
+  scopeId: Ref<number | null>
+  listEndpoint: (id: number) => string
+  bucketsEndpoint: (id: number) => string
+  viewMode: Ref<string>
+  railEnabled?: Ref<boolean>
+  railViewport?: Ref<HTMLElement | null>
+  collapseEnabled?: Ref<boolean>
+  q?: Ref<string>
+  enabled?: Ref<boolean>
+  defaultSort?: SortSpec[]
+}) {
+  const filter = ref<GroupRule | undefined>(undefined)
+  const sort = ref<SortSpec[]>(copySort(options.defaultSort ?? DEFAULT_SORT))
+
+  // One shuffle per visit: the seed is minted here and travels with every page request, so
+  // paging stays coherent while a reload, a different scope, or the shuffle button re-rolls it.
+  const randomSeed = ref(createRandomSortSeed())
+  const randomSortActive = computed(() => hasRandomSort(sort.value))
+
+  function reshuffle() {
+    const next = createRandomSortSeed()
+    randomSeed.value = next === randomSeed.value ? (next + 1) % (MAX_RANDOM_SORT_SEED + 1) : next
+  }
+
+  // Registered before useBookWindow so a sort or scope change re-rolls the seed in the same flush
+  // the window reads the query, rather than costing a second round trip.
+  watch(randomSortActive, (active) => {
+    if (active) reshuffle()
+  })
+  watch(options.scopeId, () => {
+    reshuffle()
+  })
+
+  if (getCurrentInstance()) {
+    let hasActivated = false
+    onActivated(() => {
+      if (hasActivated && randomSortActive.value) reshuffle()
+      hasActivated = true
+    })
+  }
+
+  const query = computed<BookWindowQuery>(() => ({
+    sort: sort.value,
+    ...(randomSortActive.value ? { randomSeed: randomSeed.value } : {}),
+    ...(filter.value ? { filter: filter.value } : {}),
+    ...(options.collapseEnabled?.value ? { collapseSeries: true } : {}),
+    ...(options.q?.value.trim() ? { q: options.q.value.trim() } : {}),
+  }))
+
+  const queryEnabled = computed(() => options.enabled?.value ?? true)
+  const listEndpoint = computed(() =>
+    queryEnabled.value && isValidScopeId(options.scopeId.value) ? options.listEndpoint(options.scopeId.value) : null,
+  )
+  const bucketsEndpoint = computed(() =>
+    queryEnabled.value && isValidScopeId(options.scopeId.value) ? options.bucketsEndpoint(options.scopeId.value) : null,
+  )
+
+  const window = useBookWindow({ endpoint: listEndpoint, query })
+
+  const firstVisibleIndex = ref(0)
+  const { height: windowHeight } = useWindowSize()
+  const fallbackRailViewport = ref<HTMLElement | null>(null)
+  const { height: railViewportHeight } = useElementSize(options.railViewport ?? fallbackRailViewport)
+  const railCapacity = computed(() => {
+    const viewportHeight = railViewportHeight.value || windowHeight.value
+    const available = viewportHeight * RAIL_VERTICAL_FRACTION - RAIL_VERTICAL_PADDING_PX
+    return Math.min(64, Math.max(8, Math.floor(available / RAIL_SLOT_PX)))
+  })
+
+  function handleFirstVisibleIndex(index: number) {
+    firstVisibleIndex.value = index
+  }
+
+  function handleRange(startIndex: number, endIndex: number) {
+    window.ensureRange(startIndex, endIndex)
+  }
+
+  const bucketKind = computed(() => jumpBucketKindForSort(sort.value))
+  const primarySortField = computed(() => sort.value[0]?.field ?? 'title')
+  const railModeActive = computed(() => options.viewMode.value === 'grid')
+  const railEligible = computed(
+    () => (options.railEnabled?.value ?? true) && bucketKind.value !== null && railModeActive.value && window.total.value >= MIN_TOTAL_FOR_RAIL,
+  )
+
+  const bucketsApi = useJumpBuckets({
+    endpoint: bucketsEndpoint,
+    query,
+    enabled: railEligible,
+    firstVisibleIndex,
+    maxBuckets: railCapacity,
+  })
+
+  useBookProgressRefresh(() => {
+    window.reset()
+    return bucketsApi.refresh()
+  })
+
+  const railVisible = computed(() => railEligible.value && bucketsApi.buckets.value.length >= 2)
+  const activeBucketKey = computed(() => bucketsApi.activeBucket.value?.key ?? null)
+
+  const letterTemplate = computed(() => {
+    const dir = (sort.value[0] ?? { dir: 'asc' }).dir
+    return dir === 'desc' ? [...LETTER_TEMPLATE].reverse() : LETTER_TEMPLATE
+  })
+
+  const { gutterReserved: railGutterReserved, releaseGutter: releaseRailGutter } = useJumpRailGutter(railVisible)
+
+  let scrollToIndex: ((index: number) => void) | null = null
+
+  function registerScroller(fn: ((index: number) => void) | null) {
+    scrollToIndex = fn
+  }
+
+  function handleJump(bucket: JumpBucket) {
+    scrollToIndex?.(bucket.index)
+    window.ensureRange(bucket.index, bucket.index + BOOK_WINDOW_BLOCK_SIZE - 1)
+    firstVisibleIndex.value = bucket.index
+  }
+
+  // List mode keeps the sentinel-driven append feel by loading the next chunk
+  // after the contiguous prefix.
+  const hasMorePrefix = computed(() => window.initialized.value && window.contiguousPrefix.value.length < window.total.value)
+
+  function loadMorePrefix() {
+    const start = window.contiguousPrefix.value.length
+    return window.ensureRange(start, start + LIST_CHUNK - 1)
+  }
+
+  return {
+    ...window,
+    filter,
+    sort,
+    query,
+    randomSortActive,
+    reshuffle,
+    firstVisibleIndex,
+    handleFirstVisibleIndex,
+    handleRange,
+    hasMorePrefix,
+    loadMorePrefix,
+    bucketKind,
+    primarySortField,
+    buckets: bucketsApi.buckets,
+    temporalGranularity: bucketsApi.granularity,
+    railCapacity,
+    refreshBuckets: bucketsApi.refresh,
+    railVisible,
+    activeBucketKey,
+    letterTemplate,
+    railGutterReserved,
+    releaseRailGutter,
+    registerScroller,
+    handleJump,
+  }
+}

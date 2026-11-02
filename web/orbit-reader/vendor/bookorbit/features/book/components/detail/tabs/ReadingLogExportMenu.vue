@@ -1,0 +1,123 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { Download, FileJson, FileSpreadsheet, Loader2 } from '@lucide/vue'
+import type { BookReadingSession } from '@bookorbit/types'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+
+const props = defineProps<{
+  bookTitle: string
+  total: number
+  exportAll: () => Promise<BookReadingSession[]>
+}>()
+
+const { t } = useI18n()
+
+const open = ref(false)
+const exporting = ref(false)
+
+function safeName(): string {
+  return props.bookTitle
+    .replace(/[^a-zA-Z0-9 ]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+}
+
+function downloadFile(content: string, filename: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function csvEscape(value: string): string {
+  if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
+  return value
+}
+
+function pacePercentPerHour(session: BookReadingSession): string {
+  if (session.progressDelta == null || session.durationSeconds === 0) return ''
+  return ((session.progressDelta / session.durationSeconds) * 3600).toFixed(2)
+}
+
+async function exportCsv() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const items = await props.exportAll()
+    const header = 'startedAt,endedAt,durationSeconds,progressDelta,endProgress,pacePercentPerHour,format,source'
+    const rows = items.map((s) =>
+      [
+        s.startedAt,
+        s.endedAt,
+        String(s.durationSeconds),
+        s.progressDelta != null ? String(s.progressDelta) : '',
+        s.endProgress != null ? String(s.endProgress) : '',
+        pacePercentPerHour(s),
+        s.format ?? '',
+        s.source ?? '',
+      ]
+        .map(csvEscape)
+        .join(','),
+    )
+    downloadFile([header, ...rows].join('\n'), `${safeName()}-reading-log.csv`, 'text/csv')
+    open.value = false
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function exportJson() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const items = await props.exportAll()
+    const data = {
+      bookTitle: props.bookTitle,
+      exportedAt: new Date().toISOString(),
+      totalSessions: items.length,
+      sessions: items,
+    }
+    downloadFile(JSON.stringify(data, null, 2), `${safeName()}-reading-log.json`, 'application/json')
+    open.value = false
+  } finally {
+    exporting.value = false
+  }
+}
+</script>
+
+<template>
+  <Popover v-model:open="open">
+    <PopoverTrigger as-child>
+      <button
+        class="inline-flex h-6 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        :disabled="total === 0 || exporting"
+      >
+        <Loader2 v-if="exporting" :size="12" class="animate-spin" />
+        <Download v-else :size="12" />
+        {{ t('book.detail.readingLog.export.button') }}
+      </button>
+    </PopoverTrigger>
+    <PopoverContent align="end" class="w-44 p-1">
+      <button
+        class="flex items-center gap-2 w-full px-3 py-2 rounded-xs text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+        :disabled="exporting"
+        @click="exportCsv"
+      >
+        <FileSpreadsheet :size="14" class="text-muted-foreground" />
+        CSV
+      </button>
+      <button
+        class="flex items-center gap-2 w-full px-3 py-2 rounded-xs text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+        :disabled="exporting"
+        @click="exportJson"
+      >
+        <FileJson :size="14" class="text-muted-foreground" />
+        JSON
+      </button>
+    </PopoverContent>
+  </Popover>
+</template>

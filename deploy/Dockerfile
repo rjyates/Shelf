@@ -1,3 +1,10 @@
+FROM node:24-bookworm AS reader
+WORKDIR /src/web/orbit-reader
+COPY web/orbit-reader/package.json web/orbit-reader/package-lock.json ./
+RUN npm ci
+COPY web/orbit-reader/ ./
+RUN npm run build
+
 FROM rust:1.99.1-bookworm AS build
 WORKDIR /src
 COPY server/Cargo.toml server/Cargo.lock server/
@@ -8,6 +15,7 @@ RUN mkdir server/src \
     && cargo build --manifest-path server/Cargo.toml --locked --release
 COPY server/ server/
 COPY web/ web/
+COPY --from=reader /src/web/orbit-reader/dist web/orbit-reader/dist
 ARG VERSION=dev
 ENV SHELF_VERSION=${VERSION}
 RUN find server/src server/schema.sql web -type f -exec touch {} + \
@@ -24,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build /src/server/target/release/shelf-server /usr/local/bin/shelf-server
 COPY LICENSE /usr/share/licenses/shelf/LICENSE
 COPY web/fonts/*LICENSE.txt /usr/share/licenses/shelf/fonts/
-COPY web/vendor/ /usr/share/licenses/shelf/reader/
+COPY web/orbit-reader/vendor/bookorbit/ATTRIBUTION.md /usr/share/licenses/shelf/reader/BOOKORBIT-ATTRIBUTION.md
 COPY deploy/entrypoint.sh /usr/local/bin/shelf-entrypoint
 # Starts as root so a host folder mounted on /data can be made writable, then drops privileges.
 RUN chmod 755 /usr/local/bin/shelf-entrypoint

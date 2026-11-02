@@ -208,6 +208,7 @@ async fn epub_import_duplicate_access_and_saved_position_survive_restart() {
         .1;
     assert_eq!(stats["reading"], 1);
     assert_eq!(stats["pages_read"], 0);
+    assert_eq!(stats["average_progress"], 0.5);
     use sha2::{Digest, Sha256};
     let db = rusqlite::Connection::open(path).unwrap();
     db.execute(
@@ -365,10 +366,11 @@ async fn account_catalogue_progress_and_restart() {
     let stats = call(&restarted, "GET", "/api/v1/stats", Value::Null, Some(token))
         .await
         .1;
-    assert_eq!(
-        stats,
-        json!({"books":1,"pages_read":163,"finished":0,"reading":1})
-    );
+    assert_eq!(stats["books"], 1);
+    assert_eq!(stats["pages_read"], 163);
+    assert_eq!(stats["finished"], 0);
+    assert_eq!(stats["reading"], 1);
+    assert!((stats["average_progress"].as_f64().unwrap() - 163.0 / 245.0).abs() < 1e-9);
     assert_eq!(
         call(
             &restarted,
