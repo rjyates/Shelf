@@ -3,10 +3,16 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shelf_mobile/api.dart';
+import 'package:shelf_mobile/display_profile.dart';
 import 'package:shelf_mobile/main.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({displayProfilePrefsKey: 'eink'});
+  });
+
   test('rejects malformed server data before rendering progress', () {
     final valid = <String, dynamic>{
       'id': 1,
@@ -41,7 +47,11 @@ void main() {
             size: Size(320, 800),
             textScaler: TextScaler.linear(2),
           ),
-          child: LibraryScreen(api: _CatalogueApi()),
+          child: LibraryScreen(
+            api: _CatalogueApi(),
+            profile: DisplayProfile.eink,
+            onProfileChanged: (_) async {},
+          ),
         ),
       ),
     );
@@ -63,6 +73,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const ShelfApp());
+    await tester.pump();
     expect(find.text('Your reading room.'), findsOneWidget);
     await tester.ensureVisible(find.text('Open your library'));
     await tester.tap(find.text('Open your library'));

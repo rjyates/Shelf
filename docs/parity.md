@@ -24,7 +24,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | EPUB upload/import and authenticated downloads | Implemented; exact-byte deduplication and embedded raster covers; single **Add book** action |
 | EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host done; bookmarks/annotations/prefs still localStorage until Shelf APIs exist |
 | Mobile online Foliate WebView + progress sync | Done: WebView opens `/reader`, seeds session cookie, Foliate syncs CFI/%; catalogue refreshes on return |
-| Display profile onboarding (`eink` default / `lcd`) | Planned; lands early so later reader work can branch on one preference |
+| Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations |
 | Offline book download + progress/annotation outbox | Planned; required before serious e-ink use |
 | Native Android EPUB navigator (e-ink profile) | Planned; same app, platform module; maps Locator ↔ Shelf CFI/% |
 | Stylus / freehand ink on pages (native overlay) | Planned after offline + annotation persistence; vendor adapters later |
@@ -57,9 +57,9 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 2. **Mobile online reader (shared app, both platforms)** — done: Flutter WebView → `/reader` with seeded `shelf_session` + Bearer, Foliate file/location sync, catalogue refresh on return. LCD path (and e-ink until a native module exists).
 
-3. **Display profile onboarding** — next: persist `eink` (default) vs `lcd` from a short first-run question (“Are you using an e-ink display?”). Wire settings to retoggle. Apply immediate UX defaults (theme density, animation/reduced motion, contrast) without yet swapping engines. Later milestones read this flag.
+3. **Display profile onboarding** — done: persist `eink` vs `lcd` from first-run (“Are you using an e-ink display?”), retoggle from connect/library settings. E-ink disables animations; no engine swap yet. Later milestones read this flag.
 
-4. **Persist reader data on Shelf** — bookmarks, highlights/notes, and per-book reader preferences in SQLite (replace localStorage). Keep CFI/% as the position contract. Unblocks web ↔ mobile sync and gives ink/highlights a server home before native drawing.
+4. **Persist reader data on Shelf** — next: bookmarks, highlights/notes, and per-book reader preferences in SQLite (replace localStorage). Keep CFI/% as the position contract. Unblocks web ↔ mobile sync and gives ink/highlights a server home before native drawing.
 
 5. **Offline downloads + sync outbox** — download EPUB bytes to device storage; queue location and annotation writes while offline; reconcile on reconnect. E-ink users need this; LCD travelers benefit too. Do this before investing in native ink so strokes and progress have somewhere to live.
 

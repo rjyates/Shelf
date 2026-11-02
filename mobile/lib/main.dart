@@ -1,10 +1,9 @@
 import 'package:file_selector/file_selector.dart';
-
-import 'reader.dart';
-
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'display_profile.dart';
+import 'reader.dart';
 
 void main() => runApp(const ShelfApp());
 
@@ -16,158 +15,292 @@ const soft = Color(0xff333333);
 
 const _minTap = 56.0;
 
-class ShelfApp extends StatelessWidget {
+class ShelfApp extends StatefulWidget {
   const ShelfApp({super.key});
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'Shelf',
-    debugShowCheckedModeBanner: false,
-    builder: (context, child) {
-      final mq = MediaQuery.of(context);
-      return MediaQuery(
-        data: mq.copyWith(disableAnimations: true),
-        child: child ?? const SizedBox.shrink(),
+  State<ShelfApp> createState() => _ShelfAppState();
+}
+
+class _ShelfAppState extends State<ShelfApp> {
+  DisplayProfile? _profile;
+  var _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    loadDisplayProfile().then((profile) {
+      if (mounted) {
+        setState(() {
+          _profile = profile;
+          _ready = true;
+        });
+      }
+    });
+  }
+
+  Future<void> _chooseProfile(DisplayProfile profile) async {
+    await saveDisplayProfile(profile);
+    if (mounted) setState(() => _profile = profile);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) {
+      return const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(backgroundColor: paper, body: SizedBox.shrink()),
       );
-    },
-    theme: ThemeData(
-      brightness: Brightness.light,
-      scaffoldBackgroundColor: paper,
-      fontFamily: 'Plex',
-      splashFactory: NoSplash.splashFactory,
-      highlightColor: Colors.transparent,
-      hoverColor: Colors.transparent,
-      dividerColor: hairline,
-      colorScheme: const ColorScheme.light(
-        primary: ink,
-        secondary: soft,
-        surface: paper,
-        onSurface: ink,
-        onPrimary: paper,
-        outline: hairline,
+    }
+    final profile = _profile;
+    if (profile == null) {
+      return MaterialApp(
+        title: 'Shelf',
+        debugShowCheckedModeBanner: false,
+        theme: _shelfTheme,
+        home: DisplayProfileOnboarding(onChosen: _chooseProfile),
+      );
+    }
+    return MaterialApp(
+      title: 'Shelf',
+      debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(disableAnimations: profile.disableAnimations),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      theme: _shelfTheme,
+      home: ConnectScreen(profile: profile, onProfileChanged: _chooseProfile),
+    );
+  }
+}
+
+ThemeData get _shelfTheme => ThemeData(
+  brightness: Brightness.light,
+  scaffoldBackgroundColor: paper,
+  fontFamily: 'Plex',
+  splashFactory: NoSplash.splashFactory,
+  highlightColor: Colors.transparent,
+  hoverColor: Colors.transparent,
+  dividerColor: hairline,
+  colorScheme: const ColorScheme.light(
+    primary: ink,
+    secondary: soft,
+    surface: paper,
+    onSurface: ink,
+    onPrimary: paper,
+    outline: hairline,
+  ),
+  appBarTheme: const AppBarTheme(
+    backgroundColor: paper,
+    foregroundColor: ink,
+    elevation: 0,
+    scrolledUnderElevation: 0,
+    titleTextStyle: TextStyle(
+      fontFamily: 'Instrument',
+      fontSize: 28,
+      color: ink,
+    ),
+  ),
+  textTheme: const TextTheme(
+    displaySmall: TextStyle(
+      fontFamily: 'Instrument',
+      fontSize: 40,
+      height: 1.15,
+      color: ink,
+    ),
+    headlineSmall: TextStyle(
+      fontFamily: 'Instrument',
+      fontSize: 26,
+      height: 1.2,
+      color: ink,
+    ),
+    bodyLarge: TextStyle(fontSize: 18, height: 1.35, color: ink),
+    bodyMedium: TextStyle(fontSize: 16, height: 1.35, color: soft),
+    labelLarge: TextStyle(
+      fontSize: 17,
+      fontWeight: FontWeight.w600,
+      color: ink,
+    ),
+  ),
+  inputDecorationTheme: const InputDecorationTheme(
+    filled: false,
+    border: OutlineInputBorder(
+      borderSide: BorderSide(color: hairline, width: 1.5),
+      borderRadius: BorderRadius.zero,
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderSide: BorderSide(color: hairline, width: 1.5),
+      borderRadius: BorderRadius.zero,
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderSide: BorderSide(color: ink, width: 2),
+      borderRadius: BorderRadius.zero,
+    ),
+    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+    labelStyle: TextStyle(color: soft, fontSize: 16),
+    hintStyle: TextStyle(color: soft),
+  ),
+  filledButtonTheme: FilledButtonThemeData(
+    style: FilledButton.styleFrom(
+      backgroundColor: ink,
+      foregroundColor: paper,
+      disabledBackgroundColor: soft,
+      disabledForegroundColor: paper,
+      minimumSize: const Size(64, _minTap),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+      textStyle: const TextStyle(
+        fontFamily: 'Plex',
+        fontSize: 17,
+        fontWeight: FontWeight.w600,
       ),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: paper,
-        foregroundColor: ink,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        titleTextStyle: TextStyle(
-          fontFamily: 'Instrument',
-          fontSize: 28,
-          color: ink,
-        ),
-      ),
-      textTheme: const TextTheme(
-        displaySmall: TextStyle(
-          fontFamily: 'Instrument',
-          fontSize: 40,
-          height: 1.15,
-          color: ink,
-        ),
-        headlineSmall: TextStyle(
-          fontFamily: 'Instrument',
-          fontSize: 26,
-          height: 1.2,
-          color: ink,
-        ),
-        bodyLarge: TextStyle(fontSize: 18, height: 1.35, color: ink),
-        bodyMedium: TextStyle(fontSize: 16, height: 1.35, color: soft),
-        labelLarge: TextStyle(
-          fontSize: 17,
-          fontWeight: FontWeight.w600,
-          color: ink,
-        ),
-      ),
-      inputDecorationTheme: const InputDecorationTheme(
-        filled: false,
-        border: OutlineInputBorder(
-          borderSide: BorderSide(color: hairline, width: 1.5),
-          borderRadius: BorderRadius.zero,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: hairline, width: 1.5),
-          borderRadius: BorderRadius.zero,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: ink, width: 2),
-          borderRadius: BorderRadius.zero,
-        ),
-        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-        labelStyle: TextStyle(color: soft, fontSize: 16),
-        hintStyle: TextStyle(color: soft),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          backgroundColor: ink,
-          foregroundColor: paper,
-          disabledBackgroundColor: soft,
-          disabledForegroundColor: paper,
-          minimumSize: const Size(64, _minTap),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
-          textStyle: const TextStyle(
-            fontFamily: 'Plex',
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-          ),
-          elevation: 0,
-          shadowColor: Colors.transparent,
-        ),
-      ),
-      textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(
-          foregroundColor: ink,
-          minimumSize: const Size(64, _minTap),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          textStyle: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            decoration: TextDecoration.underline,
-          ),
-        ),
-      ),
-      iconButtonTheme: IconButtonThemeData(
-        style: IconButton.styleFrom(
-          foregroundColor: ink,
-          minimumSize: const Size(_minTap, _minTap),
-          padding: const EdgeInsets.all(12),
-        ),
-      ),
-      progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: ink,
-        linearTrackColor: Color(0xffdddddd),
-        linearMinHeight: 8,
-      ),
-      snackBarTheme: const SnackBarThemeData(
-        backgroundColor: ink,
-        contentTextStyle: TextStyle(color: paper, fontSize: 16),
-        behavior: SnackBarBehavior.floating,
-        elevation: 0,
-      ),
-      dialogTheme: const DialogThemeData(
-        backgroundColor: paper,
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          side: BorderSide(color: hairline, width: 1.5),
-          borderRadius: BorderRadius.zero,
-        ),
-      ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: ink,
-        foregroundColor: paper,
-        elevation: 0,
-        focusElevation: 0,
-        hoverElevation: 0,
-        highlightElevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.zero),
-        extendedPadding: EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+      elevation: 0,
+      shadowColor: Colors.transparent,
+    ),
+  ),
+  textButtonTheme: TextButtonThemeData(
+    style: TextButton.styleFrom(
+      foregroundColor: ink,
+      minimumSize: const Size(64, _minTap),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      textStyle: const TextStyle(
+        fontSize: 17,
+        fontWeight: FontWeight.w600,
+        decoration: TextDecoration.underline,
       ),
     ),
-    home: const ConnectScreen(),
+  ),
+  iconButtonTheme: IconButtonThemeData(
+    style: IconButton.styleFrom(
+      foregroundColor: ink,
+      minimumSize: const Size(_minTap, _minTap),
+      padding: const EdgeInsets.all(12),
+    ),
+  ),
+  progressIndicatorTheme: const ProgressIndicatorThemeData(
+    color: ink,
+    linearTrackColor: Color(0xffdddddd),
+    linearMinHeight: 8,
+  ),
+  snackBarTheme: const SnackBarThemeData(
+    backgroundColor: ink,
+    contentTextStyle: TextStyle(color: paper, fontSize: 16),
+    behavior: SnackBarBehavior.floating,
+    elevation: 0,
+  ),
+  dialogTheme: const DialogThemeData(
+    backgroundColor: paper,
+    elevation: 0,
+    shape: RoundedRectangleBorder(
+      side: BorderSide(color: hairline, width: 1.5),
+      borderRadius: BorderRadius.zero,
+    ),
+  ),
+  floatingActionButtonTheme: const FloatingActionButtonThemeData(
+    backgroundColor: ink,
+    foregroundColor: paper,
+    elevation: 0,
+    focusElevation: 0,
+    hoverElevation: 0,
+    highlightElevation: 0,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+    extendedPadding: EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+  ),
+);
+
+class DisplayProfileOnboarding extends StatelessWidget {
+  const DisplayProfileOnboarding({super.key, required this.onChosen});
+  final Future<void> Function(DisplayProfile profile) onChosen;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Are you using an e-ink display?',
+              style: Theme.of(context).textTheme.displaySmall,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'E-ink turns motion off for clearer refreshes. You can change this later.',
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const Spacer(),
+            FilledButton(
+              onPressed: () => onChosen(DisplayProfile.eink),
+              child: const Text('Yes, e-ink'),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: () => onChosen(DisplayProfile.lcd),
+              child: const Text('No, normal screen'),
+            ),
+          ],
+        ),
+      ),
+    ),
   );
 }
 
+Future<void> showDisplayProfilePicker({
+  required BuildContext context,
+  required DisplayProfile current,
+  required Future<void> Function(DisplayProfile profile) onChosen,
+}) async {
+  final next = await showDialog<DisplayProfile>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Display'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('Are you using an e-ink display?'),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, DisplayProfile.eink),
+            child: Text(
+              current == DisplayProfile.eink
+                  ? 'Yes, e-ink (current)'
+                  : 'Yes, e-ink',
+            ),
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, DisplayProfile.lcd),
+            child: Text(
+              current == DisplayProfile.lcd
+                  ? 'No, normal screen (current)'
+                  : 'No, normal screen',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    ),
+  );
+  if (next != null && next != current) await onChosen(next);
+}
+
 class ConnectScreen extends StatefulWidget {
-  const ConnectScreen({super.key});
+  const ConnectScreen({
+    super.key,
+    required this.profile,
+    required this.onProfileChanged,
+  });
+  final DisplayProfile profile;
+  final Future<void> Function(DisplayProfile profile) onProfileChanged;
   @override
   State<ConnectScreen> createState() => _ConnectScreenState();
 }
@@ -205,7 +338,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
         return;
       }
       final revoked = await Navigator.of(context).push<bool>(
-        MaterialPageRoute<bool>(builder: (_) => LibraryScreen(api: api!)),
+        MaterialPageRoute<bool>(
+          builder: (_) => LibraryScreen(
+            api: api!,
+            profile: widget.profile,
+            onProfileChanged: widget.onProfileChanged,
+          ),
+        ),
       );
       if (mounted && revoked == false) {
         setState(
@@ -313,6 +452,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       onPressed: _busy ? null : _connect,
                       child: Text(_busy ? 'Connecting…' : 'Open your library'),
                     ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: () => showDisplayProfilePicker(
+                        context: context,
+                        current: widget.profile,
+                        onChosen: widget.onProfileChanged,
+                      ),
+                      child: const Text('Display settings'),
+                    ),
                     const SizedBox(height: 24),
                     Text(
                       'Your session stays in memory. Signing in again is required after closing the app.',
@@ -330,8 +478,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
 }
 
 class LibraryScreen extends StatefulWidget {
-  const LibraryScreen({super.key, required this.api});
+  const LibraryScreen({
+    super.key,
+    required this.api,
+    required this.profile,
+    required this.onProfileChanged,
+  });
   final ShelfApi api;
+  final DisplayProfile profile;
+  final Future<void> Function(DisplayProfile profile) onProfileChanged;
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
@@ -340,10 +495,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
   List<Book> _books = [];
   bool _loading = true;
   String? _error;
+  late DisplayProfile _profile = widget.profile;
+
   @override
   void initState() {
     super.initState();
     _refresh();
+  }
+
+  Future<void> _changeProfile(DisplayProfile profile) async {
+    await widget.onProfileChanged(profile);
+    if (mounted) setState(() => _profile = profile);
   }
 
   @override
@@ -451,6 +613,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
         automaticallyImplyLeading: false,
         title: const Text('shelf'),
         actions: [
+          IconButton(
+            onPressed: () => showDisplayProfilePicker(
+              context: context,
+              current: _profile,
+              onChosen: _changeProfile,
+            ),
+            tooltip: 'Display settings',
+            icon: const Icon(Icons.display_settings_outlined, size: 28),
+          ),
           IconButton(
             onPressed: _signOut,
             tooltip: 'Sign out',
