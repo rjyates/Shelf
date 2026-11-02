@@ -22,8 +22,8 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Single-container Compose packaging | Implemented; published image begins after a successful main release |
 | Independent semantic server/mobile releases | Workflow implemented; publication verified only after main release |
 | EPUB upload/import and authenticated downloads | Implemented; exact-byte deduplication and embedded raster covers; single **Add book** action |
-| EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host usable; bookmarks/annotations/prefs still localStorage until Shelf APIs exist |
-| Mobile online Foliate WebView + progress sync | Next milestone |
+| EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host done; bookmarks/annotations/prefs still localStorage until Shelf APIs exist |
+| Mobile online Foliate WebView + progress sync | Done: WebView opens `/reader`, seeds session cookie, Foliate syncs CFI/%; catalogue refreshes on return |
 | Display profile onboarding (`eink` default / `lcd`) | Planned; lands early so later reader work can branch on one preference |
 | Offline book download + progress/annotation outbox | Planned; required before serious e-ink use |
 | Native Android EPUB navigator (e-ink profile) | Planned; same app, platform module; maps Locator ↔ Shelf CFI/% |
@@ -53,11 +53,11 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 ## Implementation milestones (ordered for mutual benefit)
 
-1. **Stabilize the Book Orbit web reader host** — mostly done: file open, CFI restore/save, Foliate assets, navigation, CI build of `web/orbit-reader`, AGPL attribution. No Shelf journal restyle of that chrome.
+1. **Stabilize the Book Orbit web reader host** — done: file open, CFI restore/save, Foliate assets, navigation, CI build of `web/orbit-reader`, AGPL attribution. No Shelf journal restyle of that chrome.
 
-2. **Mobile online reader (shared app, both platforms)** — harden Flutter WebView → `/reader`: auth cookie/bearer, EPUB file open, two-way CFI/% via `/location`, catalogue refresh after reading. This is the LCD path forever and the e-ink path until a native module exists.
+2. **Mobile online reader (shared app, both platforms)** — done: Flutter WebView → `/reader` with seeded `shelf_session` + Bearer, Foliate file/location sync, catalogue refresh on return. LCD path (and e-ink until a native module exists).
 
-3. **Display profile onboarding** — persist `eink` (default) vs `lcd` from a short first-run question (“Are you using an e-ink display?”). Wire settings to retoggle. Apply immediate UX defaults (theme density, animation/reduced motion, contrast) without yet swapping engines. Later milestones read this flag.
+3. **Display profile onboarding** — next: persist `eink` (default) vs `lcd` from a short first-run question (“Are you using an e-ink display?”). Wire settings to retoggle. Apply immediate UX defaults (theme density, animation/reduced motion, contrast) without yet swapping engines. Later milestones read this flag.
 
 4. **Persist reader data on Shelf** — bookmarks, highlights/notes, and per-book reader preferences in SQLite (replace localStorage). Keep CFI/% as the position contract. Unblocks web ↔ mobile sync and gives ink/highlights a server home before native drawing.
 

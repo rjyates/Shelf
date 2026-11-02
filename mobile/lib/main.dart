@@ -8,11 +8,13 @@ import 'api.dart';
 
 void main() => runApp(const ShelfApp());
 
-const ink = Color(0xff171916);
-const surface = Color(0xff21241f);
-const parchment = Color(0xffe4dcc8);
-const brass = Color(0xffb5a16b);
-const moss = Color(0xff7f9274);
+/// E-ink first: near-white paper, pure black ink, no mid-gray washes.
+const paper = Color(0xffffffff);
+const ink = Color(0xff111111);
+const hairline = Color(0xff111111);
+const soft = Color(0xff333333);
+
+const _minTap = 56.0;
 
 class ShelfApp extends StatelessWidget {
   const ShelfApp({super.key});
@@ -20,37 +22,144 @@ class ShelfApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     title: 'Shelf',
     debugShowCheckedModeBanner: false,
+    builder: (context, child) {
+      final mq = MediaQuery.of(context);
+      return MediaQuery(
+        data: mq.copyWith(disableAnimations: true),
+        child: child ?? const SizedBox.shrink(),
+      );
+    },
     theme: ThemeData(
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: ink,
+      brightness: Brightness.light,
+      scaffoldBackgroundColor: paper,
       fontFamily: 'Plex',
-      colorScheme: const ColorScheme.dark(
-        primary: brass,
-        secondary: moss,
-        surface: surface,
-        onSurface: parchment,
-        onPrimary: ink,
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      dividerColor: hairline,
+      colorScheme: const ColorScheme.light(
+        primary: ink,
+        secondary: soft,
+        surface: paper,
+        onSurface: ink,
+        onPrimary: paper,
+        outline: hairline,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: paper,
+        foregroundColor: ink,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        titleTextStyle: TextStyle(
+          fontFamily: 'Instrument',
+          fontSize: 28,
+          color: ink,
+        ),
       ),
       textTheme: const TextTheme(
         displaySmall: TextStyle(
           fontFamily: 'Instrument',
-          fontSize: 44,
-          color: parchment,
+          fontSize: 40,
+          height: 1.15,
+          color: ink,
         ),
         headlineSmall: TextStyle(
           fontFamily: 'Instrument',
-          fontSize: 30,
-          color: parchment,
+          fontSize: 26,
+          height: 1.2,
+          color: ink,
+        ),
+        bodyLarge: TextStyle(fontSize: 18, height: 1.35, color: ink),
+        bodyMedium: TextStyle(fontSize: 16, height: 1.35, color: soft),
+        labelLarge: TextStyle(
+          fontSize: 17,
+          fontWeight: FontWeight.w600,
+          color: ink,
         ),
       ),
       inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
+        filled: false,
+        border: OutlineInputBorder(
+          borderSide: BorderSide(color: hairline, width: 1.5),
+          borderRadius: BorderRadius.zero,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: hairline, width: 1.5),
+          borderRadius: BorderRadius.zero,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: ink, width: 2),
+          borderRadius: BorderRadius.zero,
+        ),
+        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+        labelStyle: TextStyle(color: soft, fontSize: 16),
+        hintStyle: TextStyle(color: soft),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
+          backgroundColor: ink,
+          foregroundColor: paper,
+          disabledBackgroundColor: soft,
+          disabledForegroundColor: paper,
+          minimumSize: const Size(64, _minTap),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+          textStyle: const TextStyle(
+            fontFamily: 'Plex',
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+          ),
+          elevation: 0,
+          shadowColor: Colors.transparent,
         ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: ink,
+          minimumSize: const Size(64, _minTap),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          textStyle: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+            decoration: TextDecoration.underline,
+          ),
+        ),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          foregroundColor: ink,
+          minimumSize: const Size(_minTap, _minTap),
+          padding: const EdgeInsets.all(12),
+        ),
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: ink,
+        linearTrackColor: Color(0xffdddddd),
+        linearMinHeight: 8,
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: ink,
+        contentTextStyle: TextStyle(color: paper, fontSize: 16),
+        behavior: SnackBarBehavior.floating,
+        elevation: 0,
+      ),
+      dialogTheme: const DialogThemeData(
+        backgroundColor: paper,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: hairline, width: 1.5),
+          borderRadius: BorderRadius.zero,
+        ),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: ink,
+        foregroundColor: paper,
+        elevation: 0,
+        focusElevation: 0,
+        hoverElevation: 0,
+        highlightElevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+        extendedPadding: EdgeInsets.symmetric(horizontal: 22, vertical: 14),
       ),
     ),
     home: const ConnectScreen(),
@@ -120,87 +229,104 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      child: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(28),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 440),
-            child: Form(
-              key: _form,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.menu_book_outlined, color: brass, size: 36),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Your reading room.',
-                    style: Theme.of(context).textTheme.displaySmall,
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Connect to your Shelf server. Create your account in the web app first.',
-                  ),
-                  const SizedBox(height: 32),
-                  TextFormField(
-                    controller: _server,
-                    keyboardType: TextInputType.url,
-                    autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Server address',
-                      hintText: 'https://shelf.example.com',
+  Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 700;
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.symmetric(
+              horizontal: wide ? 48 : 24,
+              vertical: 28,
+            ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: wide ? 520 : 480),
+              child: Form(
+                key: _form,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(Icons.menu_book_outlined, color: ink, size: 40),
+                    const SizedBox(height: 20),
+                    Text(
+                      'Your reading room.',
+                      style: Theme.of(context).textTheme.displaySmall,
                     ),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? 'Enter your server address.'
-                        : null,
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _username,
-                    autocorrect: false,
-                    autofillHints: const [AutofillHints.username],
-                    decoration: const InputDecoration(labelText: 'Username'),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? 'Enter your username.'
-                        : null,
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _password,
-                    obscureText: true,
-                    autofillHints: const [AutofillHints.password],
-                    decoration: const InputDecoration(labelText: 'Password'),
-                    validator: (value) => value == null || value.isEmpty
-                        ? 'Enter your password.'
-                        : null,
-                  ),
-                  const SizedBox(height: 24),
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 20),
-                      child: Text(
-                        _error!,
-                        semanticsLabel: 'Connection error: $_error',
+                    const SizedBox(height: 12),
+                    Text(
+                      'Connect to your Shelf server. Create your account in the web app first.',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 28),
+                    TextFormField(
+                      controller: _server,
+                      keyboardType: TextInputType.url,
+                      autocorrect: false,
+                      style: const TextStyle(fontSize: 18, color: ink),
+                      decoration: const InputDecoration(
+                        labelText: 'Server address',
+                        hintText: 'https://shelf.example.com',
                       ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                          ? 'Enter your server address.'
+                          : null,
                     ),
-                  FilledButton(
-                    onPressed: _busy ? null : _connect,
-                    child: Text(_busy ? 'Connecting…' : 'Open your library'),
-                  ),
-                  const SizedBox(height: 28),
-                  const Text(
-                    'Your session stays in memory. Signing in again is required after closing the app.',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _username,
+                      autocorrect: false,
+                      autofillHints: const [AutofillHints.username],
+                      style: const TextStyle(fontSize: 18, color: ink),
+                      decoration: const InputDecoration(labelText: 'Username'),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                          ? 'Enter your username.'
+                          : null,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _password,
+                      obscureText: true,
+                      autofillHints: const [AutofillHints.password],
+                      style: const TextStyle(fontSize: 18, color: ink),
+                      decoration: const InputDecoration(labelText: 'Password'),
+                      validator: (value) => value == null || value.isEmpty
+                          ? 'Enter your password.'
+                          : null,
+                    ),
+                    const SizedBox(height: 20),
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Text(
+                          _error!,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            color: ink,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          semanticsLabel: 'Connection error: $_error',
+                        ),
+                      ),
+                    FilledButton(
+                      onPressed: _busy ? null : _connect,
+                      child: Text(_busy ? 'Connecting…' : 'Open your library'),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Your session stays in memory. Signing in again is required after closing the app.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class LibraryScreen extends StatefulWidget {
@@ -316,122 +442,229 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text(
-        'shelf',
-        style: TextStyle(fontFamily: 'Instrument', fontSize: 32),
-      ),
-      actions: [
-        IconButton(
-          onPressed: _signOut,
-          tooltip: 'Sign out',
-          icon: const Icon(Icons.logout),
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= 700;
+    final pad = wide ? 40.0 : 20.0;
+    return Scaffold(
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        title: const Text('shelf'),
+        actions: [
+          IconButton(
+            onPressed: _signOut,
+            tooltip: 'Sign out',
+            icon: const Icon(Icons.logout, size: 28),
+          ),
+        ],
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: Divider(height: 1, thickness: 1.5, color: hairline),
         ),
-      ],
-    ),
-    floatingActionButton: FloatingActionButton.extended(
-      onPressed: _import,
-      label: const Text('Add book'),
-      icon: const Icon(Icons.add),
-    ),
-    body: RefreshIndicator(
-      onRefresh: _refresh,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 100),
-        children: [
-          Text(
-            'Your library.',
-            style: Theme.of(context).textTheme.displaySmall,
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '${_books.length} books · ${_books.fold<int>(0, (sum, book) => sum + book.pagesRead)} pages turned',
-          ),
-          const Divider(height: 40),
-          if (_loading) const Center(child: CircularProgressIndicator()),
-          if (_error != null)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(_error!),
-                TextButton(onPressed: _refresh, child: const Text('Try again')),
-              ],
-            ),
-          if (!_loading && _books.isEmpty && _error == null)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 48),
-              child: Text(
-                'Your next chapter starts here. Add a book with the + button.',
-              ),
-            ),
-          for (final book in _books)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 28),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _import,
+        label: const Text('Add book'),
+        icon: const Icon(Icons.add, size: 28),
+      ),
+      body: RefreshIndicator(
+        color: ink,
+        backgroundColor: paper,
+        onRefresh: _refresh,
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(pad, 20, pad, 120),
+          children: [
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: wide ? 900 : 640),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (book.hasCover)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Image.network(
-                        widget.api.base
-                            .resolve('/api/v1/books/${book.id}/cover')
-                            .toString(),
-                        headers: widget.api.readerHeaders,
-                        height: 140,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, error, stack) =>
-                            const Icon(Icons.menu_book_outlined, size: 48),
-                      ),
-                    ),
                   Text(
-                    book.title,
-                    style: Theme.of(context).textTheme.headlineSmall,
+                    'Your library.',
+                    style: Theme.of(context).textTheme.displaySmall,
                   ),
+                  const SizedBox(height: 10),
                   Text(
-                    book.author.isEmpty ? 'Author not recorded' : book.author,
+                    libraryReadingBlurb(_books),
+                    style: Theme.of(context).textTheme.bodyLarge,
                   ),
-                  const SizedBox(height: 12),
-                  LinearProgressIndicator(
-                    value: book.isEpub
-                        ? book.percentage
-                        : book.pagesRead / book.totalPages!,
-                    color: moss,
-                    backgroundColor: surface,
-                    minHeight: 5,
-                    semanticsLabel: book.isEpub
-                        ? '${book.title}: ${(book.percentage * 100).round()}% read'
-                        : '${book.title}: ${book.pagesRead} of ${book.totalPages} pages',
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    alignment: WrapAlignment.spaceBetween,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 12,
-                    runSpacing: 4,
-                    children: [
-                      Text(
-                        book.isEpub
-                            ? '${(book.percentage * 100).round()}% read · EPUB'
-                            : '${book.pagesRead} / ${book.totalPages} pages',
-                      ),
-                      TextButton(
-                        onPressed: () =>
-                            book.isEpub ? _read(book) : _record(book),
-                        child: Text(
-                          book.isEpub ? 'Read book' : 'Record progress',
+                  const SizedBox(height: 20),
+                  const Divider(height: 1, thickness: 1.5, color: hairline),
+                  const SizedBox(height: 20),
+                  if (_loading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 48),
+                      child: Center(
+                        child: SizedBox(
+                          width: 36,
+                          height: 36,
+                          child: CircularProgressIndicator(strokeWidth: 3),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  if (_error != null)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          _error!,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed: _refresh,
+                          child: const Text('Try again'),
+                        ),
+                      ],
+                    ),
+                  if (!_loading && _books.isEmpty && _error == null)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 48),
+                      child: Text(
+                        'Your next chapter starts here. Add a book with Add book.',
+                        style: TextStyle(fontSize: 18),
+                      ),
+                    ),
+                  for (final book in _books)
+                    _BookTile(
+                      api: widget.api,
+                      book: book,
+                      wide: wide,
+                      onOpen: () => book.isEpub ? _read(book) : _record(book),
+                    ),
                 ],
               ),
             ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
+}
+
+class _BookTile extends StatelessWidget {
+  const _BookTile({
+    required this.api,
+    required this.book,
+    required this.wide,
+    required this.onOpen,
+  });
+  final ShelfApi api;
+  final Book book;
+  final bool wide;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = book.isEpub
+        ? book.percentage
+        : book.pagesRead / book.totalPages!;
+    final progressLabel = book.isEpub
+        ? '${(book.percentage * 100).round()}% read · EPUB'
+        : '${book.pagesRead} / ${book.totalPages} pages';
+    final action = book.isEpub ? 'Read book' : 'Record progress';
+    final cover = book.hasCover
+        ? Image.network(
+            api.base.resolve('/api/v1/books/${book.id}/cover').toString(),
+            headers: api.readerHeaders,
+            width: wide ? 110 : 88,
+            height: wide ? 160 : 128,
+            fit: BoxFit.cover,
+            errorBuilder: (_, error, stack) =>
+                const Icon(Icons.menu_book_outlined, size: 48, color: ink),
+          )
+        : null;
+
+    final textBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(book.title, style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 6),
+        Text(
+          book.author.isEmpty ? 'Author not recorded' : book.author,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        const SizedBox(height: 14),
+        Semantics(
+          label: book.isEpub
+              ? '${book.title}: ${(book.percentage * 100).round()}% read'
+              : '${book.title}: ${book.pagesRead} of ${book.totalPages} pages',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                height: 10,
+                width: double.infinity,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: hairline, width: 1.5),
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: progress.clamp(0.0, 1.0),
+                      heightFactor: 1,
+                      child: const ColoredBox(color: ink),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                progressLabel,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(onPressed: onOpen, child: Text(action)),
+        ),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: hairline, width: 1.5),
+        ),
+        child: Material(
+          color: paper,
+          child: InkWell(
+            onTap: onOpen,
+            child: Padding(
+              padding: EdgeInsets.all(wide ? 20 : 16),
+              child: wide && cover != null
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        cover,
+                        const SizedBox(width: 20),
+                        Expanded(child: textBlock),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (cover != null) ...[
+                          cover,
+                          const SizedBox(height: 16),
+                        ],
+                        textBlock,
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class ProgressDialog extends StatefulWidget {
@@ -464,6 +697,7 @@ class _ProgressDialogState extends State<ProgressDialog> {
       child: TextFormField(
         controller: _pages,
         keyboardType: TextInputType.number,
+        style: const TextStyle(fontSize: 18, color: ink),
         decoration: InputDecoration(
           labelText: 'Pages read (0–${widget.book.totalPages})',
         ),

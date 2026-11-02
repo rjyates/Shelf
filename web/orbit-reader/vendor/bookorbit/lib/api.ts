@@ -83,13 +83,46 @@ function emptyResponse(status = 204): Response {
   return new Response(null, { status })
 }
 
-/** Map Shelf catalogue rows into the Book Orbit BookDetail fields the reader reads. */
-function shelfBookToDetail(book: {
+/** One catalogue row from Shelf. EPUB fields are flattened (`#[serde(flatten)]`), not nested. */
+type ShelfBookRow = {
   id: number
-  title: string
-  author: string
-  epub?: { percentage?: number | null; position?: string | null; has_cover?: boolean } | null
-}): Json {
+  title?: string
+  author?: string
+  format?: string
+  percentage?: number | null
+  position?: string | null
+  has_cover?: boolean
+  epub?: {
+    percentage?: number | null
+    position?: string | null
+    has_cover?: boolean
+  } | null
+}
+
+/** Resolve EPUB progress/cover from a Shelf book row (flat or nested). */
+export function shelfEpubFields(book: ShelfBookRow): {
+  percentage: number
+  position: string | null
+  has_cover: boolean
+} | null {
+  const nested = book.epub
+  const isEpub =
+    book.format === 'epub' ||
+    nested != null ||
+    typeof book.percentage === 'number' ||
+    typeof book.position === 'string' ||
+    book.has_cover === true
+  if (!isEpub) return null
+  return {
+    percentage: nested?.percentage ?? book.percentage ?? 0,
+    position: nested?.position ?? book.position ?? null,
+    has_cover: nested?.has_cover ?? book.has_cover === true,
+  }
+}
+
+/** Map Shelf catalogue rows into the Book Orbit BookDetail fields the reader reads. */
+function shelfBookToDetail(book: ShelfBookRow & { title: string; author: string }): Json {
+  const epub = shelfEpubFields(book)
   return {
     id: book.id,
     title: book.title,
@@ -101,8 +134,8 @@ function shelfBookToDetail(book: {
         size: 0,
       },
     ],
-    coverVersion: book.epub?.has_cover ? 1 : null,
-    coverSource: book.epub?.has_cover ? 'embedded' : null,
+    coverVersion: epub?.has_cover ? 1 : null,
+    coverSource: epub?.has_cover ? 'embedded' : null,
   }
 }
 
@@ -116,12 +149,7 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
     const id = Number(bookMatch[1])
     const list = await fetch('/api/v1/books', { credentials: 'same-origin' })
     if (!list.ok) return list
-    const books = (await list.json()) as Array<{
-      id: number
-      title: string
-      author: string
-      epub?: { percentage?: number | null; position?: string | null; has_cover?: boolean } | null
-    }>
+    const books = (await list.json()) as Array<ShelfBookRow & { title: string; author: string }>
     const book = books.find((item) => item.id === id)
     if (!book) return jsonResponse({ error: 'Not found' }, 404)
     return jsonResponse(shelfBookToDetail(book))
@@ -151,14 +179,12 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
     if (!fileId) return jsonResponse({ items: [] })
     const list = await fetch('/api/v1/books', { credentials: 'same-origin' })
     if (!list.ok) return list
-    const books = (await list.json()) as Array<{
-      id: number
-      epub?: { percentage?: number | null; position?: string | null } | null
-    }>
+    const books = (await list.json()) as ShelfBookRow[]
     const book = books.find((item) => item.id === fileId)
-    if (!book?.epub) return jsonResponse({ items: [] })
+    const epub = book ? shelfEpubFields(book) : null
+    if (!epub) return jsonResponse({ items: [] })
     // Book Orbit UI uses 0–100; Shelf stores 0–1.
-    const shelfPct = book.epub.percentage ?? 0
+    const shelfPct = epub.percentage ?? 0
     return jsonResponse({
       items: [
         {
@@ -166,7 +192,7 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
           percentage: shelfPct <= 1 ? shelfPct * 100 : shelfPct,
           updatedAt: null,
           text: {
-            cfi: book.epub.position ?? null,
+            cfi: epub.position ?? null,
             page: null,
             updatedAt: null,
           },

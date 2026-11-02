@@ -158,7 +158,8 @@ export type ReaderSettings =
 
 export const EPUB_READER_DEFAULTS: EpubReaderSettings = {
   themeName: "default",
-  isDark: true,
+  // Shelf reads on e-ink and paper-first mobile; Book Orbit's dark default is wrong here.
+  isDark: false,
   fontFamily: null,
   fontWeight: 400,
   fontStyle: "normal",

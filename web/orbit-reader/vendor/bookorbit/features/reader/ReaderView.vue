@@ -1243,8 +1243,19 @@ function onSearchClear() {
   clearSearch(foliateView.value as FoliateView | null)
 }
 
-function goBackToShelf() {
+async function goBackToShelf() {
   // Must live in script: template `window` compiles to `_ctx.window` and is undefined.
+  // Shelf's Flutter host listens on ShelfHost; location.assign blanks the WebView when intercepted.
+  try {
+    await progress.save()
+  } catch {
+    // Still leave; library refresh will show the last successful save.
+  }
+  const host = (globalThis as { ShelfHost?: { postMessage: (message: string) => void } }).ShelfHost
+  if (host?.postMessage) {
+    host.postMessage('close')
+    return
+  }
   globalThis.location.assign('/#library')
 }
 

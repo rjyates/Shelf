@@ -1,13 +1,40 @@
-import { onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 
 const AUTO_HIDE_DELAY_MS = 3000
+export const READER_CHROME_PIN_KEY = 'reader:chrome:pinned'
+
+function getLocalStorage(): Storage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage
+  } catch {
+    return null
+  }
+}
+
+/** Default pinned (true). Explicit `'false'` means the user unpinned. */
+export function readStoredChromePinned(): boolean {
+  try {
+    const raw = getLocalStorage()?.getItem(READER_CHROME_PIN_KEY)
+    if (raw === null || raw === undefined) return true
+    return raw !== 'false'
+  } catch {
+    return true
+  }
+}
+
+export function writeStoredChromePinned(pinned: boolean): void {
+  try {
+    getLocalStorage()?.setItem(READER_CHROME_PIN_KEY, pinned ? 'true' : 'false')
+  } catch {
+    // Private mode / quota — keep in-memory only.
+  }
+}
 
 export function useVisibility() {
-  // Shelf host: start with Book Orbit chrome pinned visible so the header/footer/settings
-  // match the shipped BO reader UX on first open. Unpin still auto-hides after idle.
+  const isPinned = ref(readStoredChromePinned())
+  // Show chrome on open; unpinned sessions still auto-hide after idle.
   const headerVisible = ref(true)
   const footerVisible = ref(true)
-  const isPinned = ref(true)
 
   let isVisibilityLocked = false
   let hideTimer: ReturnType<typeof setTimeout> | null = null
@@ -47,6 +74,7 @@ export function useVisibility() {
 
   function togglePinned() {
     isPinned.value = !isPinned.value
+    writeStoredChromePinned(isPinned.value)
     headerVisible.value = true
     footerVisible.value = true
 
@@ -85,6 +113,7 @@ export function useVisibility() {
     if (isVisibilityLocked && !force) return
 
     clearHideTimer()
+    // Temporary for TTS/narration — do not persist; remount restores last toggle.
     isPinned.value = false
     headerVisible.value = false
     footerVisible.value = false
@@ -109,6 +138,10 @@ export function useVisibility() {
     headerVisible.value = false
     footerVisible.value = false
   }
+
+  onMounted(() => {
+    if (!isPinned.value) scheduleHide()
+  })
 
   onUnmounted(clearHideTimer)
 
