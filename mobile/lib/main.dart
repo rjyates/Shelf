@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
+import 'connectivity.dart';
 import 'display_profile.dart';
 import 'eink_reader.dart';
 import 'epub_store.dart';
@@ -517,11 +520,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String? _error;
   late DisplayProfile _profile = widget.profile;
   final Set<int> _savedOffline = {};
+  StreamSubscription<List<ConnectivityResult>>? _connectivity;
 
   @override
   void initState() {
     super.initState();
     _refresh();
+    _connectivity = Connectivity().onConnectivityChanged.listen((results) {
+      if (connectivityLooksOnline(results)) _flushOutbox();
+    });
   }
 
   Future<void> _changeProfile(DisplayProfile profile) async {
@@ -531,6 +538,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   void dispose() {
+    _connectivity?.cancel();
     widget.api.close();
     super.dispose();
   }
@@ -545,14 +553,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return saved;
   }
 
+  Future<void> _flushOutbox() async {
+    final outbox = widget.outbox;
+    if (outbox == null) return;
+    try {
+      await outbox.flush((method, path, body) async {
+        await widget.api.request(path, method: method, body: body);
+      });
+    } catch (_) {
+      // Keep remaining queue; next refresh/connectivity event retries.
+    }
+  }
+
   Future<void> _refresh() async {
     try {
-      final outbox = widget.outbox;
-      if (outbox != null) {
-        await outbox.flush((method, path, body) async {
-          await widget.api.request(path, method: method, body: body);
-        });
-      }
+      await _flushOutbox();
       final books = await widget.api.books();
       final saved = await _cachedEpubs(books);
       if (mounted) {
@@ -627,26 +642,41 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _read(Book book) async {
     final epubs = widget.epubs;
     final cached = epubs != null && await epubs.has(book.id);
-    if (_profile == DisplayProfile.eink && Platform.isAndroid && !cached) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Save offline first to read on e-ink without Foliate.',
-            ),
-          ),
-        );
-      }
-    }
-    final useEink = shouldOpenEinkReader(
+    final online = connectivityLooksOnline(
+      await Connectivity().checkConnectivity(),
+    );
+    final useLocal = shouldOpenLocalEpubReader(
       profile: _profile,
       isAndroid: Platform.isAndroid,
       hasCachedEpub: cached,
+      online: online,
     );
+    if (!useLocal && !online) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Save offline first to read without a connection.'),
+          ),
+        );
+      }
+      return;
+    }
+    if (_profile == DisplayProfile.eink &&
+        Platform.isAndroid &&
+        !cached &&
+        mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Save offline first for the e-ink reader; opening Foliate.',
+          ),
+        ),
+      );
+    }
     if (!mounted) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => useEink
+        builder: (_) => useLocal
             ? EinkReaderScreen(
                 api: widget.api,
                 book: book,

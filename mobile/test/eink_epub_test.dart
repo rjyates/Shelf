@@ -68,36 +68,40 @@ void main() {
     expect(initialEinkSpineIndex(position: null, percentage: 1, length: 3), 2);
   });
 
-  test('e-ink reader gate requires Android, profile, and cache', () {
+  test('local reader gate covers e-ink online and any offline cache', () {
     expect(
-      shouldOpenEinkReader(
+      shouldOpenLocalEpubReader(
         profile: DisplayProfile.eink,
         isAndroid: true,
         hasCachedEpub: true,
+        online: true,
       ),
       isTrue,
     );
     expect(
-      shouldOpenEinkReader(
+      shouldOpenLocalEpubReader(
         profile: DisplayProfile.lcd,
         isAndroid: true,
         hasCachedEpub: true,
+        online: true,
       ),
       isFalse,
     );
     expect(
-      shouldOpenEinkReader(
-        profile: DisplayProfile.eink,
+      shouldOpenLocalEpubReader(
+        profile: DisplayProfile.lcd,
         isAndroid: false,
         hasCachedEpub: true,
+        online: false,
       ),
-      isFalse,
+      isTrue,
     );
     expect(
-      shouldOpenEinkReader(
+      shouldOpenLocalEpubReader(
         profile: DisplayProfile.eink,
         isAndroid: true,
         hasCachedEpub: false,
+        online: false,
       ),
       isFalse,
     );

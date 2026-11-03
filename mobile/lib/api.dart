@@ -2,8 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 class ShelfException implements Exception {
-  ShelfException(this.message);
+  ShelfException(this.message, {this.statusCode});
   final String message;
+  final int? statusCode;
   @override
   String toString() => message;
 }
@@ -167,6 +168,7 @@ class ShelfApi {
         data is Map
             ? data['error'] as String? ?? 'Request failed.'
             : 'Request failed.',
+        statusCode: response.statusCode,
       );
     }
     return data;
@@ -312,10 +314,11 @@ class ShelfApi {
     }
   }
 
-  /// True when the failure is a transport/reachability problem worth queuing.
+  /// Transport failures and HTTP 5xx are worth queuing for later sync.
   static bool isQueueFailure(Object error) =>
       error is ShelfException &&
-      error.message.contains('Could not reach your server');
+      (error.message.contains('Could not reach your server') ||
+          (error.statusCode != null && error.statusCode! >= 500));
 
   Future<void> logout() async {
     try {
