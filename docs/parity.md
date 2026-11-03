@@ -25,8 +25,8 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host done; bookmarks/annotations/prefs persist on Shelf SQLite |
 | Mobile online Foliate WebView + progress sync | Done: WebView opens `/reader`, seeds session cookie, Foliate syncs CFI/%; catalogue refreshes on return |
 | Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations |
-| Offline book download + progress/annotation outbox | Done on mobile: Save offline EPUB cache; JSON outbox for progress/location/marks (Foliate via ShelfHost); flush on library refresh. Offline Foliate open still Planned (M6) |
-| Native Android EPUB navigator (e-ink profile) | Planned; same app, platform module; maps Locator ↔ Shelf CFI/% |
+| Offline book download + progress/annotation outbox | Done on mobile: Save offline EPUB cache; JSON outbox for progress/location/marks (Foliate via ShelfHost); flush on library refresh |
+| Native Android EPUB navigator (e-ink profile) | Done (first slice): Android e-ink + cached EPUB opens local spine/text reader with Shelf CFI/%; Readium-class polish later |
 | Stylus / freehand ink on pages (native overlay) | Planned after offline + annotation persistence; vendor adapters later |
 | Folder scanning and multiple libraries | Planned |
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
@@ -61,9 +61,9 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 4. **Persist reader data on Shelf** — done: bookmarks, highlights/notes, per-book preferences, and account reader defaults in SQLite; Foliate adapter uses those APIs (no localStorage for those paths). CFI/% remains the position contract. Unblocks web ↔ mobile sync and gives ink/highlights a server home before native drawing.
 
-5. **Offline downloads + sync outbox** — done: Save offline stores EPUB bytes; sync outbox queues failed progress/location/bookmark/annotation/prefs writes (Flutter + Foliate ShelfHost) and flushes on library refresh. Opening the Foliate WebView still needs the network until M6.
+5. **Offline downloads + sync outbox** — done: Save offline stores EPUB bytes; sync outbox queues failed progress/location/bookmark/annotation/prefs writes (Flutter + Foliate ShelfHost) and flushes on library refresh. Foliate WebView open still needs the network (see follow-ups).
 
-6. **Native Android navigator behind e-ink profile** — next: same Flutter app; Android platform module (Readium Kotlin or equivalent) for EPUB when `displayProfile == eink`, using the offline EPUB cache from milestone 5. Map Locator ↔ Shelf CFI/%. iPhone and LCD Android keep Foliate WebView. Goal: e-ink reading quality without a second product.
+6. **Native Android navigator behind e-ink profile** — done (first slice): Android + `displayProfile == eink` + cached EPUB opens an in-app local spine/text reader with Shelf CFI/% sync. iPhone and LCD keep Foliate WebView. Not a full Readium port; richer pagination/CSS later if e-ink hardware needs it.
 
 7. **Stylus ink overlay + stroke sync** — native transparent ink layer over the e-ink navigator (not Foliate canvas). Store strokes with page/spine anchors; sync through Shelf annotation APIs from milestone 4. Prefer PDF/fixed-layout for stable ink; treat reflowable EPUB ink as best-effort. Vendor acceleration (Onyx, etc.) as adapters under one ink API—not per-device apps.
 
@@ -76,6 +76,17 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 11. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph; multi-user/OIDC as needed.
 
 Every milestone needs a branch/PR, meaningful tests, updated API contracts, and an accurate entry in the table above. Do not implement document parsers from scratch or provision paid services to fill a gap. Prefer one Flutter app with feature flags/profiles over forked products. Prefer Book Orbit's AGPL Foliate reader (with attribution) for the shared LCD/web experience; add native modules only where WebView cannot meet e-ink or stylus needs.
+
+## Deferred follow-ups (not full milestones)
+
+Parked from M4/M5 ultra cuts so they are not forgotten:
+
+| Item | When to revisit | Notes |
+| --- | --- | --- |
+| Connectivity-triggered outbox flush | After M6 offline reading is real, or sooner if Nomad QA shows missed syncs | Today flush runs on library refresh only; no `connectivity_plus` |
+| Queue outbox on HTTP 5xx (not only transport errors) | If server blips drop marks in the field | Today only `Could not reach your server` / Foliate `TypeError` enqueue |
+| One-shot migrate of pre-M4 Foliate `localStorage` marks | Only if a real install still holds those keys | M4 dropped local stubs; no automatic import by design |
+| Offline Foliate / LCD local open | After M6, or if LCD travelers need WebView without server | Separate from e-ink native path; would host/serve cached EPUB into Foliate without the Shelf origin |
 
 ## EPUB / Foliate host handoff, 2026-11-02
 

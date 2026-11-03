@@ -18,6 +18,7 @@ class Book {
     this.hasCover = false,
     this.isEpub = false,
     this.percentage = 0,
+    this.position,
   });
   factory Book.fromJson(Map<String, dynamic> json) {
     final id = json['id'];
@@ -27,6 +28,7 @@ class Book {
     final read = json['pages_read'];
     final epub = json['format'] == 'epub';
     final percentage = json['percentage'];
+    final position = json['position'];
     if (id is! int ||
         id < 1 ||
         title is! String ||
@@ -38,7 +40,11 @@ class Book {
                 percentage is! num ||
                 !percentage.isFinite ||
                 percentage < 0 ||
-                percentage > 1)) ||
+                percentage > 1 ||
+                (position != null &&
+                    (position is! String ||
+                        position.length > 4096 ||
+                        position.codeUnits.any((c) => c < 32))))) ||
         read is! int ||
         read < 0 ||
         (!epub && read > (total as int)) ||
@@ -55,6 +61,7 @@ class Book {
       isEpub: epub,
       hasCover: epub && json['has_cover'] == true,
       percentage: epub ? (percentage as num).toDouble() : 0,
+      position: epub ? position as String? : null,
       pagesRead: read,
     );
   }
@@ -65,6 +72,7 @@ class Book {
   final bool isEpub;
   final bool hasCover;
   final double percentage;
+  final String? position;
   final int pagesRead;
 
   /// Fraction complete for catalogue math (EPUB % or manual pages).
