@@ -6,6 +6,8 @@ import 'package:flutter_readium/flutter_readium.dart';
 import 'api.dart';
 import 'display_profile.dart';
 import 'epub_store.dart';
+import 'ink_overlay.dart';
+import 'ink_stroke.dart';
 import 'readium_position.dart';
 import 'sync_outbox.dart';
 
@@ -34,8 +36,10 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   Locator? _currentLocator;
   List<Map<String, dynamic>> _bookmarks = [];
   List<Map<String, dynamic>> _annotations = [];
+  List<InkStroke> _inkStrokes = [];
   String? _error;
   var _saving = false;
+  var _inkMode = false;
   DateTime? _openedAt;
   StreamSubscription<Locator>? _locatorSub;
 
@@ -68,7 +72,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       );
       _openedAt = DateTime.now();
       _locatorSub = _readium.onTextLocatorChanged.listen((locator) {
-        _currentLocator = locator;
+        if (!mounted) return;
+        setState(() => _currentLocator = locator);
         unawaited(_persist(locator));
       });
       final bookmarks = await _safeListBookmarks();
@@ -83,6 +88,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         _currentLocator = initial;
         _bookmarks = bookmarks;
         _annotations = annotations;
+        _inkStrokes = inkStrokesFromAnnotations(annotations);
         _error = null;
       });
       await _applyAnnotationDecorations();
@@ -148,6 +154,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   Future<void> _applyAnnotationDecorations() async {
     final decorations = <ReaderDecoration>[];
     for (final item in _annotations) {
+      if (item['style'] == 'ink') continue;
       final id = item['id']?.toString() ?? '';
       final cfi = item['cfi'];
       if (id.isEmpty || cfi is! String || cfi.isEmpty) continue;
@@ -210,6 +217,59 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     }
   }
 
+  Future<void> _saveInkStroke(InkStroke stroke) async {
+    final locator = _currentLocator;
+    final anchored = InkStroke(
+      points: stroke.points,
+      color: stroke.color,
+      width: stroke.width,
+      tool: stroke.tool,
+      cfi: locator == null ? null : shelfPositionFromLocator(locator),
+      percentage: locator == null
+          ? widget.book.percentage
+          : shelfPercentageFromLocator(locator),
+    );
+    setState(() => _inkStrokes = [..._inkStrokes, anchored]);
+    try {
+      await widget.api.createAnnotation(
+        widget.book.id,
+        cfi: anchored.cfi,
+        text: '[ink]',
+        color: anchored.color,
+        style: 'ink',
+        note: anchored.encode(),
+        chapterTitle: locator?.title,
+      );
+      final annotations = await widget.api.listAnnotations(widget.book.id);
+      if (mounted) {
+        setState(() {
+          _annotations = annotations;
+          _inkStrokes = inkStrokesFromAnnotations(annotations);
+        });
+      }
+    } catch (error) {
+      if (ShelfApi.isQueueFailure(error) && widget.outbox != null) {
+        await widget.outbox!.enqueue(
+          method: 'POST',
+          path: 'books/${widget.book.id}/annotations',
+          body: {
+            'cfi': ?anchored.cfi,
+            'text': '[ink]',
+            'color': anchored.color,
+            'style': 'ink',
+            'note': anchored.encode(),
+            'chapterTitle': ?locator?.title,
+          },
+        );
+        return;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
   Future<void> _addHighlight(SelectionActionEvent event) async {
     try {
       await widget.api.createAnnotation(
@@ -221,7 +281,12 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         chapterTitle: event.locator.title,
       );
       final annotations = await widget.api.listAnnotations(widget.book.id);
-      if (mounted) setState(() => _annotations = annotations);
+      if (mounted) {
+        setState(() {
+          _annotations = annotations;
+          _inkStrokes = inkStrokesFromAnnotations(annotations);
+        });
+      }
       await _applyAnnotationDecorations();
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -310,7 +375,10 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                         ),
                         _MarksList(
                           emptyLabel: 'No highlights yet.',
-                          items: _annotations,
+                          items: [
+                            for (final item in _annotations)
+                              if (item['style'] != 'ink') item,
+                          ],
                           titleOf: (item) {
                             final text = item['text']?.toString() ?? '';
                             final note = item['note']?.toString();
@@ -339,7 +407,12 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                             final annotations = await widget.api
                                 .listAnnotations(widget.book.id);
                             if (mounted) {
-                              setState(() => _annotations = annotations);
+                              setState(() {
+                                _annotations = annotations;
+                                _inkStrokes = inkStrokesFromAnnotations(
+                                  annotations,
+                                );
+                              });
                             }
                             await _applyAnnotationDecorations();
                             if (context.mounted) Navigator.pop(context);
@@ -384,6 +457,13 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: _inkMode ? 'Exit ink mode' : 'Ink mode (stylus)',
+            onPressed: publication == null
+                ? null
+                : () => setState(() => _inkMode = !_inkMode),
+            icon: Icon(_inkMode ? Icons.edit_off : Icons.edit),
+          ),
+          IconButton(
             tooltip: 'Bookmarks and highlights',
             onPressed: publication == null ? null : _showMarksSheet,
             icon: const Icon(Icons.bookmarks_outlined),
@@ -413,34 +493,50 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                 child: CircularProgressIndicator(strokeWidth: 3, color: ink),
               ),
             )
-          : ReadiumReaderWidget(
-              publication: publication,
-              initialLocator: _initialLocator,
-              selectionActions: const [
-                SelectionAction(id: 'highlight', title: 'Highlight'),
-                SelectionAction(id: 'bookmark', title: 'Bookmark'),
-              ],
-              onSelectionAction: (event) {
-                if (event.actionId == 'highlight') {
-                  unawaited(_addHighlight(event));
-                } else if (event.actionId == 'bookmark') {
-                  _currentLocator = event.locator;
-                  unawaited(_addBookmark());
-                }
-              },
-              loadingWidget: const ColoredBox(
-                color: paper,
-                child: Center(
-                  child: SizedBox(
-                    width: 36,
-                    height: 36,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                      color: ink,
+          : Stack(
+              fit: StackFit.expand,
+              children: [
+                ReadiumReaderWidget(
+                  publication: publication,
+                  initialLocator: _initialLocator,
+                  selectionActions: const [
+                    SelectionAction(id: 'highlight', title: 'Highlight'),
+                    SelectionAction(id: 'bookmark', title: 'Bookmark'),
+                  ],
+                  onSelectionAction: (event) {
+                    if (event.actionId == 'highlight') {
+                      unawaited(_addHighlight(event));
+                    } else if (event.actionId == 'bookmark') {
+                      _currentLocator = event.locator;
+                      unawaited(_addBookmark());
+                    }
+                  },
+                  loadingWidget: const ColoredBox(
+                    color: paper,
+                    child: Center(
+                      child: SizedBox(
+                        width: 36,
+                        height: 36,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: ink,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
+                InkOverlay(
+                  enabled: _inkMode,
+                  strokes: inkStrokesForPage(
+                    _inkStrokes,
+                    _currentLocator == null
+                        ? null
+                        : shelfPositionFromLocator(_currentLocator!),
+                  ),
+                  onStrokeComplete: (stroke) =>
+                      unawaited(_saveInkStroke(stroke)),
+                ),
+              ],
             ),
     );
   }
