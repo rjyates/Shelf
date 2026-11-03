@@ -19,7 +19,8 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "9.1.0" apply false
+    // flutter_readium 0.8 needs AGP 9.1.1+; keep Flutter's Kotlin 2.4 line (2.3+ OK for Readium).
+    id("com.android.application") version "9.1.1" apply false
     id("org.jetbrains.kotlin.android") version "2.4.0" apply false
 }
 

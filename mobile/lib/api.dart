@@ -271,6 +271,84 @@ class ShelfApi {
     );
   }
 
+  Future<List<Map<String, dynamic>>> listBookmarks(int bookId) async {
+    final data = await request('books/$bookId/bookmarks');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid bookmark list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) item,
+    ];
+  }
+
+  Future<Map<String, dynamic>> createBookmark(
+    int bookId, {
+    String? cfi,
+    String? title,
+    String? note,
+  }) async {
+    final data = await request(
+      'books/$bookId/bookmarks',
+      method: 'POST',
+      body: {'cfi': ?cfi, 'title': ?title, 'note': ?note},
+    );
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Bookmark create failed.');
+    }
+    return data;
+  }
+
+  Future<void> deleteBookmark(int bookId, int markId) async {
+    await request('books/$bookId/bookmarks/$markId', method: 'DELETE');
+  }
+
+  Future<List<Map<String, dynamic>>> listAnnotations(int bookId) async {
+    final data = await request('books/$bookId/annotations');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid annotation list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) item,
+    ];
+  }
+
+  Future<Map<String, dynamic>> createAnnotation(
+    int bookId, {
+    String? cfi,
+    String? text,
+    String? color,
+    String? style,
+    String? note,
+    String? chapterTitle,
+  }) async {
+    final data = await request(
+      'books/$bookId/annotations',
+      method: 'POST',
+      body: {
+        'cfi': ?cfi,
+        'text': ?text,
+        'color': ?color,
+        'style': ?style,
+        'note': ?note,
+        'chapterTitle': ?chapterTitle,
+      },
+    );
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Annotation create failed.');
+    }
+    return data;
+  }
+
+  Future<void> deleteAnnotation(int bookId, int annotationId) async {
+    await request('books/$bookId/annotations/$annotationId', method: 'DELETE');
+  }
+
   /// Authenticated EPUB bytes for offline storage.
   Future<List<int>> downloadEpub(int bookId) async {
     try {

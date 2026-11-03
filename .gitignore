@@ -1,6 +1,11 @@
 .venv/
 __pycache__/
 node_modules/
+.flutter-shadow/
+.agent-home/
+.gradle-home/
+.gradle-home2/
+.impeccable/
 web/orbit-reader/dist/
 server/target/
 .tools/

@@ -8,8 +8,8 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 - **One Flutter app** builds for Android and iPhone. No separate e-ink or stylus codebases.
 - **Display profile:** `eink` (default) or `lcd`. First-run onboarding asks whether the device is an e-ink display; choosing no switches to the normal LCD experience (and can be changed later in settings).
-- **E-ink default on** means e-ink-friendly defaults (contrast, chrome density, refresh-oriented behavior, and later the native navigator/ink path when present). LCD mode keeps the Foliate WebView reader experience aligned with the web app.
-- **Platform reality:** almost all e-ink tablets are Android. iPhone stays on the Foliate WebView path; Android may add a native reader/ink module *inside the same app* behind the e-ink profile, via Flutter platform channels—not a second app.
+- **E-ink default on** means e-ink-friendly defaults (contrast, chrome density, refresh-oriented behavior) and the Readium navigator when a cached EPUB is available. LCD mode keeps the Foliate WebView reader experience aligned with the web app.
+- **Platform reality:** almost all e-ink tablets are Android. Online LCD/iPhone stay on Foliate WebView; Android e-ink (and any offline cached open) uses `flutter_readium` inside the same app—not a second app. Stylus ink remains the next native overlay.
 
 ## Capability status
 
@@ -25,8 +25,8 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host done; bookmarks/annotations/prefs persist on Shelf SQLite |
 | Mobile online Foliate WebView + progress sync | Done: WebView opens `/reader`, seeds session cookie, Foliate syncs CFI/%; catalogue refreshes on return |
 | Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations |
-| Offline book download + progress/annotation outbox | Done: Save offline cache; outbox (transport + HTTP 5xx); flush on refresh and connectivity; LCD/offline opens local spine reader when cached; pre-M4 localStorage one-shot migrate |
-| Native Android EPUB navigator (e-ink profile) | Done (first slice): Android e-ink + cached EPUB opens local spine/text reader with Shelf CFI/%; Readium-class polish later |
+| Offline book download + progress/annotation outbox | Done: Save offline cache; outbox (transport + HTTP 5xx); flush on refresh and connectivity; offline/LCD cached opens use Readium; pre-M4 localStorage one-shot migrate |
+| Native Android EPUB navigator (e-ink profile) | Done: cached EPUB opens flutter_readium (paginated CSS); Shelf bookmarks/highlights UI; Locator ↔ CFI/% sync |
 | Stylus / freehand ink on pages (native overlay) | Planned after offline + annotation persistence; vendor adapters later |
 | Folder scanning and multiple libraries | Planned |
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
@@ -34,8 +34,8 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Comic archive reading | Planned |
 | Audiobook playback and background media controls | Planned |
 | EPUB Media Overlay read-along and alignment | Planned; BO media-overlay UI is present, Shelf audio serving is not |
-| Annotations, highlights, searchable/exportable notes | Persisted on Shelf; BO reader UI; export/search still Planned |
-| Bookmarks | Persisted on Shelf; BO reader UI |
+| Annotations, highlights, searchable/exportable notes | Persisted on Shelf; BO + e-ink Readium UI; export/search still Planned |
+| Bookmarks | Persisted on Shelf; BO + e-ink Readium UI |
 | Reader preference sync across devices | Per-book + account defaults on Shelf; chrome pin stays local |
 | Kobo and KOReader integrations | Planned |
 | OPDS and Send-to-Kindle | Planned |
@@ -55,15 +55,15 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 1. **Stabilize the Book Orbit web reader host** — done: file open, CFI restore/save, Foliate assets, navigation, CI build of `web/orbit-reader`, AGPL attribution. No Shelf journal restyle of that chrome.
 
-2. **Mobile online reader (shared app, both platforms)** — done: Flutter WebView → `/reader` with seeded `shelf_session` + Bearer, Foliate file/location sync, catalogue refresh on return. LCD path (and e-ink until a native module exists).
+2. **Mobile online reader (shared app, both platforms)** — done: Flutter WebView → `/reader` with seeded `shelf_session` + Bearer, Foliate file/location sync, catalogue refresh on return. Remains the online LCD/iPhone path.
 
-3. **Display profile onboarding** — done: persist `eink` vs `lcd` from first-run (“Are you using an e-ink display?”), retoggle from connect/library settings. E-ink disables animations; no engine swap yet. Later milestones read this flag.
+3. **Display profile onboarding** — done: persist `eink` vs `lcd` from first-run (“Are you using an e-ink display?”), retoggle from connect/library settings. E-ink disables animations and selects the Readium path when a cache exists.
 
 4. **Persist reader data on Shelf** — done: bookmarks, highlights/notes, per-book preferences, and account reader defaults in SQLite; Foliate adapter uses those APIs (no localStorage for those paths). CFI/% remains the position contract. Unblocks web ↔ mobile sync and gives ink/highlights a server home before native drawing.
 
 5. **Offline downloads + sync outbox** — done: Save offline stores EPUB bytes; sync outbox queues failed progress/location/bookmark/annotation/prefs writes (Flutter + Foliate ShelfHost) and flushes on library refresh. Foliate WebView open still needs the network (see follow-ups).
 
-6. **Native Android navigator behind e-ink profile** — done (first slice): Android + `displayProfile == eink` + cached EPUB opens an in-app local spine/text reader with Shelf CFI/% sync. iPhone and LCD keep Foliate WebView. Not a full Readium port; richer pagination/CSS later if e-ink hardware needs it.
+6. **Native Android navigator behind e-ink profile** — done: Android e-ink (and any offline cached open) uses `flutter_readium` for paginated CSS rendering, with Shelf-backed bookmarks/highlights and Locator ↔ CFI/% sync. Online LCD/iPhone keep Foliate WebView.
 
 7. **Stylus ink overlay + stroke sync** — native transparent ink layer over the e-ink navigator (not Foliate canvas). Store strokes with page/spine anchors; sync through Shelf annotation APIs from milestone 4. Prefer PDF/fixed-layout for stable ink; treat reflowable EPUB ink as best-effort. Vendor acceleration (Onyx, etc.) as adapters under one ink API—not per-device apps.
 
@@ -79,7 +79,7 @@ Every milestone needs a branch/PR, meaningful tests, updated API contracts, and 
 
 ## Deferred follow-ups (closed)
 
-Former M4/M5 ultra cuts, now shipped: connectivity outbox flush, HTTP 5xx enqueue, pre-M4 localStorage one-shot migrate, and offline/LCD open via the local spine reader (not offline Foliate hosting).
+Former M4/M5 ultra cuts, now shipped: connectivity outbox flush, HTTP 5xx enqueue, pre-M4 localStorage one-shot migrate, and offline/LCD open via Readium on a cached EPUB (not offline Foliate hosting). M6 polish shipped: `flutter_readium` pagination/CSS, Shelf bookmarks/highlights UI, Locator ↔ CFI/%.
 
 ## EPUB / Foliate host handoff, 2026-11-02
 
