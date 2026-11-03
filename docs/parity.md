@@ -22,7 +22,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Single-container Compose packaging | Implemented; published image begins after a successful main release |
 | Independent semantic server/mobile releases | Workflow implemented; publication verified only after main release |
 | EPUB upload/import and authenticated downloads | Implemented; exact-byte deduplication and embedded raster covers; single **Add book** action |
-| EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host done; bookmarks/annotations/prefs still localStorage until Shelf APIs exist |
+| EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host done; bookmarks/annotations/prefs persist on Shelf SQLite |
 | Mobile online Foliate WebView + progress sync | Done: WebView opens `/reader`, seeds session cookie, Foliate syncs CFI/%; catalogue refreshes on return |
 | Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations |
 | Offline book download + progress/annotation outbox | Planned; required before serious e-ink use |
@@ -34,9 +34,9 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Comic archive reading | Planned |
 | Audiobook playback and background media controls | Planned |
 | EPUB Media Overlay read-along and alignment | Planned; BO media-overlay UI is present, Shelf audio serving is not |
-| Annotations, highlights, searchable/exportable notes | UI in BO reader; server persistence Planned |
-| Bookmarks | UI in BO reader; server persistence Planned |
-| Reader preference sync across devices | Local in browser for now; server sync Planned |
+| Annotations, highlights, searchable/exportable notes | Persisted on Shelf; BO reader UI; export/search still Planned |
+| Bookmarks | Persisted on Shelf; BO reader UI |
+| Reader preference sync across devices | Per-book + account defaults on Shelf; chrome pin stays local |
 | Kobo and KOReader integrations | Planned |
 | OPDS and Send-to-Kindle | Planned |
 | Metadata providers and cover enrichment | Planned |
@@ -59,9 +59,9 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 3. **Display profile onboarding** — done: persist `eink` vs `lcd` from first-run (“Are you using an e-ink display?”), retoggle from connect/library settings. E-ink disables animations; no engine swap yet. Later milestones read this flag.
 
-4. **Persist reader data on Shelf** — next: bookmarks, highlights/notes, and per-book reader preferences in SQLite (replace localStorage). Keep CFI/% as the position contract. Unblocks web ↔ mobile sync and gives ink/highlights a server home before native drawing.
+4. **Persist reader data on Shelf** — done: bookmarks, highlights/notes, per-book preferences, and account reader defaults in SQLite; Foliate adapter uses those APIs (no localStorage for those paths). CFI/% remains the position contract. Unblocks web ↔ mobile sync and gives ink/highlights a server home before native drawing.
 
-5. **Offline downloads + sync outbox** — download EPUB bytes to device storage; queue location and annotation writes while offline; reconcile on reconnect. E-ink users need this; LCD travelers benefit too. Do this before investing in native ink so strokes and progress have somewhere to live.
+5. **Offline downloads + sync outbox** — next: download EPUB bytes to device storage; queue location and annotation writes while offline; reconcile on reconnect. E-ink users need this; LCD travelers benefit too. Do this before investing in native ink so strokes and progress have somewhere to live.
 
 6. **Native Android navigator behind e-ink profile** — same Flutter app; Android platform module (Readium Kotlin or equivalent) for EPUB when `displayProfile == eink`. Map Locator ↔ Shelf CFI/%. iPhone and LCD Android keep Foliate WebView. Goal: e-ink reading quality without a second product.
 
@@ -79,6 +79,6 @@ Every milestone needs a branch/PR, meaningful tests, updated API contracts, and 
 
 ## EPUB / Foliate host handoff, 2026-11-02
 
-Shelf vendors Book Orbit's EPUB reader and Foliate under `web/orbit-reader/` and serves the Vite build from the Rust binary. Opening `/reader?id=` loads that SPA. Progress uses Shelf's location API. Bookmarks, annotations, fonts, TTS backends, and preference sync are stubbed locally where Shelf has no API yet.
+Shelf vendors Book Orbit's EPUB reader and Foliate under `web/orbit-reader/` and serves the Vite build from the Rust binary. Opening `/reader?id=` loads that SPA. Progress uses Shelf's location API. Bookmarks, annotations, and reader preferences/defaults hit Shelf SQLite APIs. Fonts, TTS backends, and media overlays remain stubbed locally where Shelf has no API yet.
 
 The previous epub.js page (`web/reader.js`) is no longer routed. Import bounds and digest rules from decision 0003 remain. Decision 0004 records the Book Orbit base. Web and mobile use one **Add book** EPUB import action (manual-entry UI and fixed byte ceilings removed earlier).

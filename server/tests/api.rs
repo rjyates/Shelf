@@ -439,3 +439,212 @@ async fn validates_inputs_and_keeps_setup_atomic() {
         StatusCode::BAD_REQUEST
     );
 }
+
+#[tokio::test]
+async fn bookmarks_annotations_and_reader_prefs_persist() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("reader-data.db");
+    let app = shelf_server::app(path.clone()).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let book_id = call(
+        &app,
+        "POST",
+        "/api/v1/books",
+        json!({"title":"Notes","author":"Shelf","total_pages":10}),
+        Some(&token),
+    )
+    .await
+    .1["id"]
+        .as_i64()
+        .unwrap();
+    let bookmarks = format!("/api/v1/books/{book_id}/bookmarks");
+    let annotations = format!("/api/v1/books/{book_id}/annotations");
+    let prefs = format!("/api/v1/reader/preferences/{book_id}");
+
+    assert_eq!(
+        call(&app, "GET", &bookmarks, Value::Null, None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, "GET", &bookmarks, Value::Null, Some(&token))
+            .await
+            .1,
+        json!([])
+    );
+
+    let (status, mark) = call(
+        &app,
+        "POST",
+        &bookmarks,
+        json!({"cfi":"epubcfi(/6/2!/4)","chapterTitle":"Ch 1","note":"here"}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{mark}");
+    assert_eq!(mark["title"], "Ch 1");
+    assert_eq!(mark["bookId"], book_id);
+    let mark_id = mark["id"].as_i64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("{bookmarks}/{mark_id}"),
+            json!({"title":"Chapter one","note":null}),
+            Some(&token),
+        )
+        .await
+        .1["title"],
+        "Chapter one"
+    );
+
+    let (status, note) = call(
+        &app,
+        "POST",
+        &annotations,
+        json!({
+            "cfi":"epubcfi(/6/4!/4)",
+            "text":"highlighted",
+            "color":"#22C55E",
+            "style":"underline",
+            "note":"why",
+            "chapterTitle":"Ch 2"
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{note}");
+    let annotation_id = note["id"].as_i64().unwrap();
+    assert_eq!(note["jumpFileId"], book_id);
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("{annotations}?page=1"),
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .1["total"],
+        1
+    );
+
+    assert_eq!(
+        call(&app, "GET", &prefs, Value::Null, Some(&token)).await.1,
+        Value::Null
+    );
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &prefs,
+            json!({"theme":{"scheme":"light"},"fontSize":18}),
+            Some(&token),
+        )
+        .await
+        .1,
+        json!({"theme":{"scheme":"light"},"fontSize":18})
+    );
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &prefs,
+            json!({"theme":{"scheme":"sepia"}}),
+            Some(&token),
+        )
+        .await
+        .1,
+        json!({"theme":{"scheme":"sepia"},"fontSize":18})
+    );
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/api/v1/reader/defaults",
+            json!({"epub":{"fontSize":20}}),
+            Some(&token),
+        )
+        .await
+        .1,
+        json!({"epub":{"fontSize":20}})
+    );
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/v1/reader/defaults/epub",
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .1,
+        json!({"fontSize":20})
+    );
+
+    let restarted = shelf_server::app(path).unwrap();
+    let listed = call(&restarted, "GET", &bookmarks, Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["title"], "Chapter one");
+    assert_eq!(listed[0]["note"], Value::Null);
+    let notes = call(&restarted, "GET", &annotations, Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(notes[0]["text"], "highlighted");
+    assert_eq!(
+        call(&restarted, "GET", &prefs, Value::Null, Some(&token))
+            .await
+            .1["fontSize"],
+        18
+    );
+    assert_eq!(
+        call(
+            &restarted,
+            "DELETE",
+            &format!("{bookmarks}/{mark_id}"),
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &restarted,
+            "DELETE",
+            &format!("{annotations}/{annotation_id}"),
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&restarted, "GET", &bookmarks, Value::Null, Some(&token))
+            .await
+            .1,
+        json!([])
+    );
+    assert_eq!(
+        call(
+            &restarted,
+            "GET",
+            &format!("/api/v1/books/{}/bookmarks", book_id + 99),
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+}

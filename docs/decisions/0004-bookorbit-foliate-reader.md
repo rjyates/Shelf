@@ -20,4 +20,4 @@ Flutter continues to open `/reader?id=` in a WebView; the SPA redirects to `/rea
 
 ## Consequences
 
-Opening an EPUB downloads the whole file into Foliate (no Book Orbit streaming EPUB API yet). Server-backed bookmarks, annotations, synced preferences, fonts, TTS providers, and media overlays need later Shelf APIs. Decision 0003's import bounds, digest dedupe, and CFI/percentage columns remain. The old `web/reader.js` epub.js page is no longer served.
+Opening an EPUB downloads the whole file into Foliate (no Book Orbit streaming EPUB API yet). Bookmarks, annotations, and reader preferences/defaults persist via Shelf SQLite APIs. Fonts, TTS providers, and media overlays still need later Shelf APIs. Decision 0003's import bounds, digest dedupe, and CFI/percentage columns remain. The old `web/reader.js` epub.js page is no longer served.

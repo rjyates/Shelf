@@ -39,6 +39,20 @@ test("orbit progress adapter reads Shelf's flattened EPUB catalogue fields", () 
   );
 });
 
+test("orbit adapter leaves bookmarks annotations and prefs to Shelf APIs", () => {
+  const src = readFileSync(
+    new URL("../web/orbit-reader/vendor/bookorbit/lib/api.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(src, /Bookmarks, annotations, and reader preferences\/defaults hit Shelf SQLite APIs/);
+  assert.doesNotMatch(src, /storageKey\(/);
+  assert.doesNotMatch(src, /shelf:orbit-reader:bookmarks/);
+  assert.doesNotMatch(src, /shelf:orbit-reader:annotations/);
+  assert.doesNotMatch(src, /shelf:orbit-reader:preferences/);
+  assert.doesNotMatch(src, /\/api\/v1\/books\/\(\\d\+\)\/bookmarks/);
+  assert.doesNotMatch(src, /\/api\/v1\/reader\/preferences/);
+});
+
 test("reader chrome pin preference persists in localStorage", () => {
   const visibility = readFileSync(
     new URL(
