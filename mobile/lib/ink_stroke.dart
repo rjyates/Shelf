@@ -8,6 +8,7 @@ class InkPoint {
     required this.pressure,
     this.tilt = 0,
     this.orientation = 0,
+    this.timeMs,
   });
 
   final double x;
@@ -20,12 +21,16 @@ class InkPoint {
   /// Stylus azimuth / orientation (radians).
   final double orientation;
 
+  /// Sample time in milliseconds (stroke-local; used for speed).
+  final int? timeMs;
+
   Map<String, dynamic> toJson() => {
     'x': x,
     'y': y,
     'p': pressure,
     if (tilt != 0) 't': tilt,
     if (orientation != 0) 'o': orientation,
+    if (timeMs != null) 'ms': timeMs,
   };
 
   static InkPoint? fromJson(Object? raw) {
@@ -37,8 +42,10 @@ class InkPoint {
       x: x.clamp(0.0, 1.0),
       y: y.clamp(0.0, 1.0),
       pressure: ((raw['p'] as num?)?.toDouble() ?? 0.5).clamp(0.0, 1.0),
+      // Legacy JSON used `t` for tilt; timestamps live in `ms`.
       tilt: (raw['t'] as num?)?.toDouble() ?? 0,
       orientation: (raw['o'] as num?)?.toDouble() ?? 0,
+      timeMs: (raw['ms'] as num?)?.toInt(),
     );
   }
 }
@@ -116,6 +123,7 @@ class InkStroke {
     required double pressure,
     double tilt = 0,
     double orientation = 0,
+    int? timeMs,
   }) {
     final w = width <= 0 ? 1.0 : width;
     final h = height <= 0 ? 1.0 : height;
@@ -125,6 +133,7 @@ class InkStroke {
       pressure: pressure.clamp(0.0, 1.0),
       tilt: tilt,
       orientation: orientation,
+      timeMs: timeMs,
     );
   }
 }

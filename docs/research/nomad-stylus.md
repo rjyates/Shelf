@@ -112,9 +112,59 @@ Shelf now probes at runtime (`mobile/lib/eink_refresh.dart` + `EinkRefreshPlugin
 
 All calls are best-effort; failures stay on Canvas-only ink.
 
-## Unknowns (callability still open)
+## O1 Nomad callability (2026-11-03) — **pass**
 
-- Whether a **sideloaded** APK can invoke `EinkPWCoreController` / `EinkManager` (hiddenapi BLOCKED flags on the interface; binder `getSystemService("eink")` may still work).
-- Whether PW mode needs a Ratta View/Surface vs posting rects over Flutter’s surface.
-- Exact waveform ints for Nomad (defaults 0/1 until device smoke).
-- MotionEvent vs Notes latency on Nomad (on-device probe).
+Sideloaded debug APK on `SN078F10019410` against host `:8080` via `adb reverse`. Logcat tag `ShelfEink`.
+
+| Check | Result |
+| --- | --- |
+| `probe` | `ratta_pw` (`mgr=true`, `pwClass=true`, `hteink=true`, `eink=true`) |
+| `EinkManager.screenRefresh` | Live invoke OK on cold start; `endInk` → `callScreenRefresh full=true ok` |
+| `EinkPWCoreController.initForPw` | Callable (hiddenapi allowed) but leaves `bitmap_width=0` on FlutterView |
+| `FlutterView.setEinkUpdateMode(1,0)` | OK |
+| `postRectForPw` | JNI `nativeAddPWRect` errors (`bitmap_width=0`) — silent no-op; **not** used for live ink until O3 |
+| Live path after O1 follow-up | `setEinkUpdateModeWithView` + regional `View.invalidate` (no mid-stroke `screenRefresh` — that flashed the whole panel). `postRectForPw` still needs host bmp (O3). |
+| Stroke feel (REA re-check) | Linear `pressureMapping2Width`; softer tilt; densify sparse MotionEvent gaps (fast circle→box); `calculateSmoothedSpeedFactor` curve for speed thinning |
+| UI | Tooltip `Ink mode (stylus, fast refresh)` ⇒ Dart `isAccelerated` |
+
+**Do not** live-invoke PW/refresh from a hot `diagnose`/`ensureReady` path: a second `initForPw`+`screenRefresh` while the Readium reader was open **SIGSEGV**’d the process (uncaught by try/catch). Diagnose is passive (method/class presence only); ink-session APIs remain the sole live callers.
+
+Physical pen smoke (2026-11-03): stroke only appeared after lift because `postRectForPw` never refreshed; after lift, EMA `finalizeInkPoints` + reloading strokes from the server morphing the path. Fixed by screenRefresh fallback, thin-only finalize, and keeping local geometry after save. Annotation **Request failed** was an outdated `shelf-server` binary / missing `annotations` table on the local DB — rebuilt server + applied `schema.sql`.
+
+## Live-ink latency (2026-11-03 follow-up)
+
+Nomad Notes does **not** wait on Flutter frames. REA on `libeinkpwcoreapi` / `libeinkpwcorejni.so`:
+
+1. `EinkPWCoreController.initForPw`
+2. `setHostBmpOffsetXY(Bitmap, ox, oy)` — without this, `nativeAddPWRect` logs `bitmap_width=0` and no-ops
+3. Draw the stroke into that host bitmap (Notes: OpenCV `drawLineLive`)
+4. `postRectForPw(rect, …)` → `postEinkHostBmpRect` / `postEinkPWRectFastHL`
+
+Shelf mirrors that: PixelCopy the Flutter page into a host `Bitmap` on ink enter, then each stylus move calls native `drawSegment` + `postRectForPw`. Mid-stroke Flutter `CustomPaint` is skipped while `hostLive` to cut the ~0.5–0.7s Canvas follow lag. Stroke math now uses a 5-sample speed deque, `getSpeedMapWidth` EMA, azimuth×brush, and `InkPoint` timestamps.
+
+## Unknowns (still open after O1)
+
+- Whether PW over Flutter’s surface matches Notes latency, or a Ratta View/Surface host is required for “live” feel (O3).
+- Exact waveform ints for Nomad (defaults 0/1; revisit if partial refresh looks wrong — O2).
+- MotionEvent stylus vs Notes latency on Nomad (needs physical pen drawing).
+
+## Deferred optimizations (log — do not implement unless needed)
+
+Ledger of intentional skips after M7/M7.5/M8. Revisit when Nomad (or other e-ink) smoke shows a concrete gap. Prefer the portable `EinkRefresh` / `ink_pipeline` contracts; do not revive OEM clones.
+
+| ID | Item | Why skipped | When to revisit | Suggested approach |
+| --- | --- | --- | --- | --- |
+| O1 | Nomad callability smoke for M8 | **Done 2026-11-03** — see section above | — | — |
+| O2 | Waveform / `setEinkUpdateMode` ints | **Done 2026-11-03** — ink mode=`2` (DU/A2-class; IME uses DU) | Revisit if GC ghosts | Tuned in `EinkRefreshPlugin` |
+| O3 | Ratta PW host bitmap | **Done 2026-11-03** — `setHostBmpOffsetXY` + PixelCopy page + `drawSegment`/`postRectForPw` | If PixelCopy fails, falls back to View.invalidate | Nomad Notes path; not Flutter Canvas mid-stroke |
+| O4 | Hidden-API / binder hardening | Reflection may be BLOCKED for sideloads | Probe always returns `noop` on Nomad | Prefer binder stubs already returned by `getSystemService("eink")`; avoid `/dev/ebc` |
+| O5 | Raw `/dev/ebc` + `EINK_IOC_*` / `HTEINK_IOC_*` | Notes-native, SELinux fragile, non-portable | Only if O3–O4 fail and Nomad-only path is explicitly wanted | Last-resort Nomad adapter behind same `EinkRefresh` API |
+| O6 | `ThreadSampleEmr` | Privileged raw EMR; MotionEvents already work | Never for Shelf core | Keep Flutter stylus path |
+| O7 | OpenCV `drawLineLive` / `librPainter` | Tied to OEM buffer + refresh | Canvas lag *after* refresh is fixed | Dart isolate / Skia path — not OpenCV |
+| O8 | Wacom G12/G14 / Lamy LUT catalogs | SKU matrix; `normalizePressure` obsolete in their binary | Nomad pressure feel wrong after tilt+smoothstep | One empirical curve, not a pen catalog |
+| O9 | Nested `getLamyX1000Width` in tilt | Dropped from portable `procreateStyleWidth` | Calligraphy complain | Optional factor only if needed |
+| O10 | Azimuth × brush-dir blend | Ratta logged it; width return unused it | Users want chisel tips | Optional; `orientation` already stored on `InkPoint` |
+| O11 | Dedicated ink marks list / clear-all | Highlights sheet hides ink JSON | Users can’t manage strokes | Marks sheet “Ink” tab or filter |
+| O12 | Stable page anchors for reflow EPUB | CFI page-scope is best-effort | PDF / fixed-layout ink | Page/spine ids on fixed layout |
+| O13 | Per-vendor refresh settings UI | Adapter should stay invisible | Power users need mode toggle | Tiny e-ink settings, Shelf tokens, no motion |
+| O14 | iOS / LCD refresh backends | No e-ink controller | N/A | Keep `noop` |

@@ -232,6 +232,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
           ? widget.book.percentage
           : shelfPercentageFromLocator(locator),
     );
+    // Keep the as-drawn geometry on screen; do not reload/replace from the
+    // server (that was morphing strokes after a late e-ink refresh).
     setState(() => _inkStrokes = [..._inkStrokes, anchored]);
     try {
       await widget.api.createAnnotation(
@@ -243,13 +245,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         note: anchored.encode(),
         chapterTitle: locator?.title,
       );
+      if (!mounted) return;
       final annotations = await widget.api.listAnnotations(widget.book.id);
-      if (mounted) {
-        setState(() {
-          _annotations = annotations;
-          _inkStrokes = inkStrokesFromAnnotations(annotations);
-        });
-      }
+      if (!mounted) return;
+      // Refresh mark metadata only; preserve local stroke geometry.
+      setState(() => _annotations = annotations);
     } catch (error) {
       if (ShelfApi.isQueueFailure(error) && widget.outbox != null) {
         await widget.outbox!.enqueue(

@@ -1,7 +1,16 @@
 package app.shelf.shelf_mobile
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.PixelCopy
+import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -11,16 +20,48 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * M8 e-ink refresh adapter: reflect SuperNote / Onyx framework APIs when present.
  *
- * shortcut: waveform/mode ints are OEM-specific; 0/1 are probe defaults until
- * Nomad callability confirms better values. Never opens /dev/ebc.
+ * Nomad live ink (REA): Notes draws into a host [Bitmap], calls
+ * `setHostBmpOffsetXY`, then `postRectForPw` — that is the low-latency path.
+ * Flutter Canvas + `View.invalidate` alone trails ~0.5s on Nomad.
+ *
+ * O2: handwriting uses DU/A2-class modes; IME paths call `setEinkUpdateMode(DU)`.
+ * We use mode=2 for ink sessions (mode=1 was weaker follow on Nomad).
  */
 class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
+  companion object {
+    private const val TAG = "ShelfEink"
+    /** Normal / GC-class mode. */
+    private const val MODE_NORMAL = 0
+    /** Handwriting / DU-class mode (REA: IME + PW ink). */
+    private const val MODE_INK = 2
+  }
+
   private lateinit var channel: MethodChannel
   private var appContext: Context? = null
   private var activityView: View? = null
   private var backend: String = "noop"
   private var pwController: Any? = null
   private var einkManager: Any? = null
+  private var hostBmp: Bitmap? = null
+  private var hostCanvas: Canvas? = null
+  private var hostReady = false
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private val inkPaint =
+    Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.BLACK
+      style = Paint.Style.STROKE
+      strokeCap = Paint.Cap.ROUND
+      strokeJoin = Paint.Join.ROUND
+      isAntiAlias = false
+    }
+  private val eraserPaint =
+    Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.WHITE
+      style = Paint.Style.STROKE
+      strokeCap = Paint.Cap.ROUND
+      strokeJoin = Paint.Join.ROUND
+      isAntiAlias = false
+    }
 
   fun attachActivityView(root: View?) {
     activityView = root
@@ -30,20 +71,40 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     appContext = binding.applicationContext
     channel = MethodChannel(binding.binaryMessenger, "shelf.eink/refresh")
     channel.setMethodCallHandler(this)
+    try {
+      diagnose()
+    } catch (t: Throwable) {
+      Log.w(TAG, "startup diagnose failed", t)
+    }
   }
 
   override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
     channel.setMethodCallHandler(null)
     releasePw()
+    recycleHost()
     appContext = null
   }
 
   override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
     when (call.method) {
       "probe" -> result.success(probe())
+      "diagnose" -> result.success(diagnose())
       "beginInk" -> {
         beginInk()
         result.success(null)
+      }
+      "captureHost" -> {
+        captureHost { ok -> result.success(ok) }
+      }
+      "drawSegment" -> {
+        val x0 = call.argument<Number>("x0")?.toFloat() ?: 0f
+        val y0 = call.argument<Number>("y0")?.toFloat() ?: 0f
+        val x1 = call.argument<Number>("x1")?.toFloat() ?: 0f
+        val y1 = call.argument<Number>("y1")?.toFloat() ?: 0f
+        val width = call.argument<Number>("width")?.toFloat() ?: 2f
+        val eraser = call.argument<Boolean>("eraser") == true
+        drawSegment(x0, y0, x1, y1, width, eraser)
+        result.success(hostReady)
       }
       "invalidate" -> {
         val left = call.argument<Number>("left")?.toInt() ?: 0
@@ -65,24 +126,102 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
   }
 
+  /**
+   * Passive capability report only. Never invoke OEM refresh/PW APIs here —
+   * Nomad O1 showed a second live initForPw/screenRefresh during reader open
+   * can SIGSEGV the process (uncaught by try/catch).
+   */
+  private fun diagnose(): Map<String, Any?> {
+    val ctx = appContext
+    val mgr = ctx?.let { resolveEinkManager(it) }
+    val pwClass = classExists("com.htfyun.eink.pw.core.EinkPWCoreController")
+    val onyx =
+      classExists("com.onyx.android.sdk.api.device.epd.EpdController") ||
+        classExists("com.onyx.android.sdk.device.EpdController")
+    val hasHteink = ctx?.packageManager?.hasSystemFeature("android.software.hteink") == true
+    val hasEink = ctx?.packageManager?.hasSystemFeature("android.software.eink") == true
+    val flutterView = findFlutterView(activityView)
+    var setMode = false
+    if (flutterView != null) {
+      setMode =
+        try {
+          flutterView.javaClass.getMethod(
+            "setEinkUpdateMode",
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+          )
+          true
+        } catch (_: Throwable) {
+          false
+        }
+    }
+    val screenRefreshMethod =
+      mgr != null &&
+        try {
+          mgr.javaClass.getMethod(
+            "screenRefresh",
+            Boolean::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+          )
+          true
+        } catch (_: Throwable) {
+          false
+        }
+    val initPwMethod =
+      pwClass &&
+        try {
+          Class
+            .forName("com.htfyun.eink.pw.core.EinkPWCoreController")
+            .getMethod("initForPw")
+          true
+        } catch (_: Throwable) {
+          false
+        }
+    val selected = probe()
+    val report =
+      mapOf(
+        "backend" to selected,
+        "feature_hteink" to hasHteink,
+        "feature_eink" to hasEink,
+        "eink_service" to (mgr != null),
+        "pw_class" to pwClass,
+        "onyx_class" to onyx,
+        "flutter_view" to (flutterView != null),
+        "view_setEinkUpdateMode" to setMode,
+        "screenRefresh_method" to screenRefreshMethod,
+        "initForPw_method" to initPwMethod,
+        "host_bmp" to (hostBmp != null),
+        "host_ready" to hostReady,
+        "ink_mode" to MODE_INK,
+      )
+    Log.i(TAG, "diagnose $report")
+    return report
+  }
+
   private fun probe(): String {
     val ctx = appContext ?: return "noop"
     val pm = ctx.packageManager
     val hasHteink = pm.hasSystemFeature("android.software.hteink")
     val hasEink = pm.hasSystemFeature("android.software.eink")
-    if (resolveEinkManager(ctx) != null ||
-      classExists("com.htfyun.eink.pw.core.EinkPWCoreController")
-    ) {
+    val mgr = resolveEinkManager(ctx)
+    val pwClass = classExists("com.htfyun.eink.pw.core.EinkPWCoreController")
+    if (mgr != null || pwClass) {
       backend = "ratta_pw"
+      Log.i(
+        TAG,
+        "probe=$backend mgr=${mgr != null} pwClass=$pwClass hteink=$hasHteink eink=$hasEink",
+      )
       return backend
     }
     if (classExists("com.onyx.android.sdk.api.device.epd.EpdController") ||
       classExists("com.onyx.android.sdk.device.EpdController")
     ) {
       backend = "onyx_epd"
+      Log.i(TAG, "probe=$backend")
       return backend
     }
-    backend = if (hasHteink || hasEink) "noop" else "noop"
+    backend = "noop"
+    Log.i(TAG, "probe=noop hteink=$hasHteink eink=$hasEink")
     return backend
   }
 
@@ -117,57 +256,247 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
   private fun beginRatta() {
     val ctx = appContext ?: return
     einkManager = resolveEinkManager(ctx)
+    val view = findFlutterView(activityView)
+    hostReady = false
     try {
       val cls = Class.forName("com.htfyun.eink.pw.core.EinkPWCoreController")
       val instance = cls.getDeclaredConstructor().newInstance()
       cls.getMethod("initForPw").invoke(instance)
+      ensureHostBitmap(view)
+      val bmp = hostBmp
+      if (bmp != null) {
+        val boundHost =
+          tryInvoke(
+            instance,
+            "setHostBmpOffsetXY",
+            arrayOf(
+              Bitmap::class.java,
+              Int::class.javaPrimitiveType,
+              Int::class.javaPrimitiveType,
+            ),
+            arrayOf(bmp, 0, 0),
+          )
+        Log.i(TAG, "beginRatta setHostBmpOffsetXY=$boundHost size=${bmp.width}x${bmp.height}")
+      }
+      if (view != null) {
+        val bound =
+          tryInvoke(
+            instance,
+            "setEinkUpdateModeWithView",
+            arrayOf(
+              View::class.java,
+              Int::class.javaPrimitiveType,
+              Int::class.javaPrimitiveType,
+            ),
+            arrayOf(view, MODE_INK, 0),
+          )
+        tryInvoke(
+          view,
+          "setEinkUpdateMode",
+          arrayOf(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType),
+          arrayOf(MODE_INK, 0),
+        )
+        // One-arg DU path used by Nomad IME.
+        tryInvoke(
+          view,
+          "setEinkUpdateMode",
+          arrayOf(Int::class.javaPrimitiveType),
+          arrayOf(MODE_INK),
+        )
+        Log.i(TAG, "beginRatta setEinkUpdateModeWithView=$bound mode=$MODE_INK")
+      }
       pwController = instance
-    } catch (_: Throwable) {
+      Log.i(TAG, "beginRatta initForPw ok")
+      // Snapshot the page into the host bmp so postRectForPw does not flash white.
+      captureHost { ok -> Log.i(TAG, "beginRatta captureHost=$ok") }
+    } catch (t: Throwable) {
       pwController = null
+      Log.w(TAG, "beginRatta PW bind failed; view mode only", t)
+      if (view != null) {
+        tryInvoke(
+          view,
+          "setEinkUpdateMode",
+          arrayOf(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType),
+          arrayOf(MODE_INK, 0),
+        )
+      }
     }
-    // Prefer fast update mode on the Flutter surface when the OEM View API exists.
-    findFlutterView(activityView)?.let { view ->
-      tryInvoke(
-        view,
-        "setEinkUpdateMode",
-        arrayOf(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType),
-        arrayOf(1, 0),
+  }
+
+  private fun ensureHostBitmap(view: View?) {
+    if (view == null) return
+    val w = view.width
+    val h = view.height
+    if (w <= 1 || h <= 1) {
+      view.post {
+        if (view.width > 1 && view.height > 1) {
+          ensureHostBitmap(view)
+          pwController?.let { ctrl ->
+            hostBmp?.let { bmp ->
+              tryInvoke(
+                ctrl,
+                "setHostBmpOffsetXY",
+                arrayOf(
+                  Bitmap::class.java,
+                  Int::class.javaPrimitiveType,
+                  Int::class.javaPrimitiveType,
+                ),
+                arrayOf(bmp, 0, 0),
+              )
+            }
+          }
+        }
+      }
+      return
+    }
+    val existing = hostBmp
+    if (existing != null && existing.width == w && existing.height == h) {
+      return
+    }
+    recycleHost()
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    bmp.eraseColor(Color.WHITE)
+    hostBmp = bmp
+    hostCanvas = Canvas(bmp)
+    hostReady = false
+  }
+
+  private fun captureHost(done: (Boolean) -> Unit) {
+    val view = findFlutterView(activityView)
+    val bmp = hostBmp
+    if (view == null || bmp == null) {
+      done(false)
+      return
+    }
+    ensureHostBitmap(view)
+    val target = hostBmp ?: run {
+      done(false)
+      return
+    }
+    val surface = findSurfaceView(view)
+    if (surface == null || surface.holder.surface == null || !surface.holder.surface.isValid) {
+      // Fallback: draw the view hierarchy (may miss SurfaceView contents).
+      try {
+        val c = Canvas(target)
+        c.drawColor(Color.WHITE)
+        view.draw(c)
+        hostReady = true
+        done(true)
+      } catch (t: Throwable) {
+        Log.w(TAG, "captureHost view.draw failed", t)
+        done(false)
+      }
+      return
+    }
+    try {
+      PixelCopy.request(surface, target, { result ->
+        hostReady = result == PixelCopy.SUCCESS
+        if (!hostReady) {
+          Log.w(TAG, "captureHost PixelCopy result=$result")
+        }
+        done(hostReady)
+      }, mainHandler)
+    } catch (t: Throwable) {
+      Log.w(TAG, "captureHost PixelCopy threw", t)
+      done(false)
+    }
+  }
+
+  private fun drawSegment(
+    x0: Float,
+    y0: Float,
+    x1: Float,
+    y1: Float,
+    width: Float,
+    eraser: Boolean,
+  ) {
+    // Without a page capture, posting the host bmp would flash white over text.
+    if (!hostReady) return
+    val canvas = hostCanvas ?: return
+    val paint = if (eraser) eraserPaint else inkPaint
+    paint.strokeWidth = width.coerceAtLeast(1f)
+    canvas.drawLine(x0, y0, x1, y1, paint)
+    val pad = (width / 2f + 4f).toInt().coerceAtLeast(4)
+    val left = minOf(x0, x1).toInt() - pad
+    val top = minOf(y0, y1).toInt() - pad
+    val right = maxOf(x0, x1).toInt() + pad
+    val bottom = maxOf(y0, y1).toInt() + pad
+    postHostRect(left, top, right, bottom)
+  }
+
+  private fun postHostRect(left: Int, top: Int, right: Int, bottom: Int) {
+    val ctrl = pwController ?: return
+    val bmp = hostBmp ?: return
+    val rect =
+      Rect(
+        left.coerceIn(0, bmp.width - 1),
+        top.coerceIn(0, bmp.height - 1),
+        right.coerceIn(left + 1, bmp.width),
+        bottom.coerceIn(top + 1, bmp.height),
       )
+    try {
+      ctrl.javaClass
+        .getMethod(
+          "postRectForPw",
+          Rect::class.java,
+          Int::class.javaPrimitiveType,
+          Int::class.javaPrimitiveType,
+          Int::class.javaPrimitiveType,
+          Int::class.javaPrimitiveType,
+        ).invoke(ctrl, rect, 0, 0, 0, 0)
+    } catch (t: Throwable) {
+      Log.w(TAG, "postHostRect failed $rect", t)
     }
   }
 
   private fun invalidateRatta(left: Int, top: Int, right: Int, bottom: Int) {
-    val ctrl = pwController
-    if (ctrl != null) {
-      try {
-        val rect = Rect(left, top, right.coerceAtLeast(left + 1), bottom.coerceAtLeast(top + 1))
-        ctrl.javaClass
-          .getMethod(
-            "postRectForPw",
-            Rect::class.java,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-          ).invoke(ctrl, rect, 0, 0, 0, 0)
-        return
-      } catch (_: Throwable) {
-        // fall through to screenRefresh
-      }
+    val view = findFlutterView(activityView)
+    val rect =
+      Rect(
+        left.coerceAtLeast(0),
+        top.coerceAtLeast(0),
+        right.coerceAtLeast(left + 1),
+        bottom.coerceAtLeast(top + 1),
+      )
+    // When the host bmp is live, PW posts carry the ink; still poke the view
+    // so Flutter's committed layer stays in sync for the next capture.
+    if (hostReady) {
+      postHostRect(rect.left, rect.top, rect.right, rect.bottom)
+    } else {
+      view?.invalidate(rect)
     }
-    callScreenRefresh(full = false)
   }
 
   private fun endRatta() {
     findFlutterView(activityView)?.let { view ->
+      val ctrl = pwController
+      if (ctrl != null) {
+        tryInvoke(
+          ctrl,
+          "setEinkUpdateModeWithView",
+          arrayOf(
+            View::class.java,
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+          ),
+          arrayOf(view, MODE_NORMAL, 0),
+        )
+      }
       tryInvoke(
         view,
         "setEinkUpdateMode",
         arrayOf(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType),
-        arrayOf(0, 0),
+        arrayOf(MODE_NORMAL, 0),
+      )
+      tryInvoke(
+        view,
+        "setEinkUpdateMode",
+        arrayOf(Int::class.javaPrimitiveType),
+        arrayOf(MODE_NORMAL),
       )
     }
     releasePw()
+    recycleHost()
     callScreenRefresh(full = true)
   }
 
@@ -180,19 +509,31 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
   }
 
+  private fun recycleHost() {
+    hostCanvas = null
+    hostBmp?.recycle()
+    hostBmp = null
+    hostReady = false
+  }
+
   private fun callScreenRefresh(full: Boolean) {
-    val mgr = einkManager ?: appContext?.let { resolveEinkManager(it) } ?: return
+    val mgr = einkManager ?: appContext?.let { resolveEinkManager(it) }
+    if (mgr == null) {
+      Log.w(TAG, "callScreenRefresh no eink manager")
+      return
+    }
     try {
       mgr.javaClass
         .getMethod("screenRefresh", Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType)
         .invoke(mgr, full, if (full) 0 else 1)
-    } catch (_: Throwable) {
+      if (full) Log.i(TAG, "callScreenRefresh full=true ok")
+    } catch (t: Throwable) {
+      Log.w(TAG, "callScreenRefresh failed full=$full", t)
     }
   }
 
   private fun beginOnyx() {
     val view = findFlutterView(activityView) ?: return
-    // DW / scribble-style mode when EpdController is on the classpath.
     invokeOnyxUpdateMode(view, "DW")
   }
 
@@ -284,6 +625,17 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     return null
   }
 
+  private fun findSurfaceView(root: View?): SurfaceView? {
+    if (root == null) return null
+    if (root is SurfaceView) return root
+    if (root is ViewGroup) {
+      for (i in 0 until root.childCount) {
+        findSurfaceView(root.getChildAt(i))?.let { return it }
+      }
+    }
+    return null
+  }
+
   private fun classExists(name: String): Boolean =
     try {
       Class.forName(name)
@@ -307,10 +659,11 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     method: String,
     types: Array<Class<*>?>,
     args: Array<Any?>,
-  ) {
+  ): Boolean =
     try {
       target.javaClass.getMethod(method, *types).invoke(target, *args)
+      true
     } catch (_: Throwable) {
+      false
     }
-  }
 }

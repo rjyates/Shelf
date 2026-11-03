@@ -17,7 +17,6 @@ void main() {
     expect(widthFromPressure(0, ease: false), 1.2);
     expect(widthFromPressure(1, ease: false), 6.0);
     expect(widthFromPressure(0.5, ease: false), closeTo(3.6, 1e-9));
-    // eased mid is still 0.5 for classic smoothstep → same width
     expect(widthFromPressure(0.5, ease: true), closeTo(3.6, 1e-9));
     expect(
       widthFromPressure(0.25, ease: true),
@@ -40,43 +39,118 @@ void main() {
     expect(thinned.length, greaterThanOrEqualTo(2));
   });
 
-  test('finalize thins and smooths a noisy trail', () {
+  test('finalize thins without reshaping endpoints', () {
     final raw = [
       for (var i = 0; i < 20; i++)
         InkPoint(
           x: i * 0.001,
           y: (i.isEven ? 0.0 : 0.002),
           pressure: 0.3 + i * 0.02,
+          timeMs: i * 8,
         ),
     ];
     final done = finalizeInkPoints(raw);
     expect(done.length, greaterThanOrEqualTo(2));
     expect(done.length, lessThanOrEqualTo(raw.length));
     expect(done.first.x, 0);
+    expect(done.last.x, raw.last.x);
+    expect(done.last.y, raw.last.y);
   });
 
   test('segment width averages neighboring pressure', () {
-    const a = InkPoint(x: 0, y: 0, pressure: 0);
-    const b = InkPoint(x: 1, y: 0, pressure: 1);
+    const a = InkPoint(x: 0, y: 0, pressure: 0, timeMs: 0);
+    const b = InkPoint(x: 0.00005, y: 0, pressure: 1, timeMs: 8);
     expect(
       segmentWidth(a, b, minWidth: 2, maxWidth: 4),
-      closeTo(widthFromPressure(0.5, minWidth: 2, maxWidth: 4), 1e-9),
+      closeTo(widthFromPressure(0.5, minWidth: 2, maxWidth: 4), 1e-6),
     );
   });
 
   test('tilt width factor thins flat stylus and keeps upright full', () {
     expect(tiltWidthFactor(0), 1.0);
-    expect(tiltWidthFactor(math.pi / 2), closeTo(0.1, 1e-9));
+    expect(tiltWidthFactor(math.pi / 2), closeTo(0.45, 1e-9));
     expect(tiltWidthFactor(math.pi / 4), lessThan(1.0));
-    expect(tiltWidthFactor(math.pi / 4), greaterThan(0.1));
+    expect(tiltWidthFactor(math.pi / 4), greaterThan(0.35));
   });
 
   test('segment width applies tilt thinning on top of pressure', () {
-    const upright = InkPoint(x: 0, y: 0, pressure: 1, tilt: 0);
-    const flat = InkPoint(x: 1, y: 0, pressure: 1, tilt: math.pi / 2);
+    const upright = InkPoint(x: 0, y: 0, pressure: 1, tilt: 0, timeMs: 0);
+    const flat = InkPoint(
+      x: 0.00005,
+      y: 0,
+      pressure: 1,
+      tilt: math.pi / 2,
+      timeMs: 8,
+    );
     final full = segmentWidth(upright, upright, minWidth: 2, maxWidth: 4);
     final thin = segmentWidth(flat, flat, minWidth: 2, maxWidth: 4);
     expect(full, closeTo(4.0, 1e-9));
-    expect(thin, closeTo(4.0 * 0.1, 1e-9));
+    expect(thin, closeTo(4.0 * tiltWidthFactor(math.pi / 2), 1e-9));
+  });
+
+  test('densify keeps a quick circle from collapsing to a box', () {
+    final sparse = [
+      for (var i = 0; i < 8; i++)
+        InkPoint(
+          x: 0.5 + 0.2 * math.cos(i * math.pi / 4),
+          y: 0.5 + 0.2 * math.sin(i * math.pi / 4),
+          pressure: 0.5,
+          timeMs: i * 8,
+        ),
+    ];
+    final done = finalizeInkPoints(sparse);
+    expect(done.length, greaterThan(sparse.length));
+    var maxGap = 0.0;
+    for (var i = 1; i < done.length; i++) {
+      maxGap = math.max(maxGap, inkPointDistance(done[i - 1], done[i]));
+    }
+    expect(maxGap, lessThan(0.007));
+  });
+
+  test('speed factor thins long jumps (REA curve)', () {
+    const a = InkPoint(x: 0, y: 0, pressure: 1, timeMs: 0);
+    const near = InkPoint(x: 0.0001, y: 0, pressure: 1, timeMs: 8);
+    const far = InkPoint(x: 0.05, y: 0, pressure: 1, timeMs: 8);
+    expect(speedWidthFactor(a, near), greaterThan(speedWidthFactor(a, far)));
+    expect(speedWidthFactor(a, far), lessThan(1.0));
+    expect(speedWidthFactor(a, far), greaterThanOrEqualTo(0.22));
+  });
+
+  test('speed tracker keeps a 5-sample deque', () {
+    final tracker = InkSpeedTracker();
+    const a = InkPoint(x: 0, y: 0, pressure: 1, timeMs: 0);
+    double? last;
+    for (var i = 1; i <= 8; i++) {
+      last = tracker.push(
+        a,
+        InkPoint(x: i * 0.01, y: 0, pressure: 1, timeMs: i * 8),
+      );
+    }
+    expect(last, lessThan(1.0));
+    expect(InkSpeedTracker.window, 5);
+  });
+
+  test('getSpeedMapWidth approaches target by at most 1px', () {
+    expect(getSpeedMapWidth(6, 2), 3);
+    expect(getSpeedMapWidth(2.5, 2), closeTo(2.5, 1e-9));
+    expect(getSpeedMapWidth(2, 5), 4);
+    expect(getSpeedMapWidth(1, 2), 2);
+  });
+
+  test('azimuth brush thickens when nib is across the stroke', () {
+    // Travel +x; azimuth π/2 → across → thicker than aligned (0).
+    const across = InkPoint(x: 0, y: 0, pressure: 1, orientation: math.pi / 2);
+    const acrossEnd = InkPoint(
+      x: 0.01,
+      y: 0,
+      pressure: 1,
+      orientation: math.pi / 2,
+    );
+    const aligned = InkPoint(x: 0, y: 0, pressure: 1, orientation: 0);
+    const alignedEnd = InkPoint(x: 0.01, y: 0, pressure: 1, orientation: 0);
+    expect(
+      azimuthBrushFactor(across, acrossEnd),
+      greaterThan(azimuthBrushFactor(aligned, alignedEnd)),
+    );
   });
 }

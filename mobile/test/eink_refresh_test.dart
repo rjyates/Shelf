@@ -14,6 +14,11 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
           log.add(call);
           if (call.method == 'probe') return 'ratta_pw';
+          if (call.method == 'diagnose') {
+            return <String, Object?>{'backend': 'ratta_pw'};
+          }
+          if (call.method == 'captureHost') return true;
+          if (call.method == 'drawSegment') return true;
           return null;
         });
   });
@@ -29,16 +34,22 @@ void main() {
       final refresh = EinkRefresh(channel: channel);
       expect(await refresh.ensureReady(), 'ratta_pw');
       expect(refresh.isAccelerated, isTrue);
+      expect(await refresh.diagnose(), containsPair('backend', 'ratta_pw'));
       await refresh.beginInk();
+      expect(refresh.hostLive, isTrue);
+      // Host PW live: invalidate is a no-op (segments post their own rects).
       await refresh.invalidate(left: 1, top: 2, right: 3, bottom: 4);
+      await refresh.drawSegment(x0: 0, y0: 0, x1: 10, y1: 10, width: 2);
       await refresh.endInk();
       expect(log.map((c) => c.method), [
         'probe',
+        'diagnose',
         'beginInk',
-        'invalidate',
+        'captureHost',
+        'drawSegment',
         'endInk',
       ]);
-      expect(log[2].arguments, {'left': 1, 'top': 2, 'right': 3, 'bottom': 4});
+      expect(refresh.hostLive, isFalse);
     },
   );
 
