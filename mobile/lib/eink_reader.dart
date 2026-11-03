@@ -5,6 +5,7 @@ import 'package:flutter_readium/flutter_readium.dart';
 
 import 'api.dart';
 import 'display_profile.dart';
+import 'eink_refresh.dart';
 import 'epub_store.dart';
 import 'ink_overlay.dart';
 import 'ink_stroke.dart';
@@ -37,6 +38,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   List<Map<String, dynamic>> _bookmarks = [];
   List<Map<String, dynamic>> _annotations = [];
   List<InkStroke> _inkStrokes = [];
+  final _einkRefresh = EinkRefresh();
   String? _error;
   var _saving = false;
   var _inkMode = false;
@@ -51,6 +53,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
 
   Future<void> _open() async {
     try {
+      await _einkRefresh.ensureReady();
       _readium.setDefaultPreferences(
         const EPUBPreferences(
           scroll: false,
@@ -434,6 +437,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   @override
   void dispose() {
     _locatorSub?.cancel();
+    if (_inkMode) unawaited(_einkRefresh.endInk());
     final locator = _currentLocator;
     if (locator != null) unawaited(_persist(locator));
     unawaited(_readium.closePublication());
@@ -457,11 +461,12 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: _inkMode ? 'Exit ink mode' : 'Ink mode (stylus)',
-            onPressed: publication == null
-                ? null
-                : () => setState(() => _inkMode = !_inkMode),
-            icon: Icon(_inkMode ? Icons.edit_off : Icons.edit),
+            tooltip: _inkModeTooltip,
+            onPressed: publication == null ? null : _toggleInkMode,
+            icon: Icon(
+              _inkMode ? Icons.edit_off : Icons.edit,
+              color: _inkMode ? ink : null,
+            ),
           ),
           IconButton(
             tooltip: 'Bookmarks and highlights',
@@ -474,6 +479,29 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
             icon: const Icon(Icons.bookmark_add_outlined),
           ),
         ],
+        bottom: _inkMode
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(28),
+                child: ColoredBox(
+                  color: paper,
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(
+                        'Ink · stylus only · finger still turns pages',
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: 13,
+                          fontFamily: 'Plex',
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            : null,
       ),
       body: _error != null
           ? Center(
@@ -527,6 +555,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                 ),
                 InkOverlay(
                   enabled: _inkMode,
+                  refresh: _einkRefresh,
                   strokes: inkStrokesForPage(
                     _inkStrokes,
                     _currentLocator == null
@@ -539,6 +568,26 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
               ],
             ),
     );
+  }
+
+  String get _inkModeTooltip {
+    if (!_inkMode) {
+      return _einkRefresh.isAccelerated
+          ? 'Ink mode (stylus, fast refresh)'
+          : 'Ink mode (stylus)';
+    }
+    return 'Exit ink mode';
+  }
+
+  Future<void> _toggleInkMode() async {
+    final next = !_inkMode;
+    if (next) {
+      await _einkRefresh.beginInk();
+    } else {
+      await _einkRefresh.endInk();
+    }
+    if (!mounted) return;
+    setState(() => _inkMode = next);
   }
 }
 

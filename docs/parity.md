@@ -27,7 +27,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations |
 | Offline book download + progress/annotation outbox | Done: Save offline cache; outbox (transport + HTTP 5xx); flush on refresh and connectivity; offline/LCD cached opens use Readium; pre-M4 localStorage one-shot migrate |
 | Native Android EPUB navigator (e-ink profile) | Done: cached EPUB opens flutter_readium (paginated CSS); Shelf bookmarks/highlights UI; Locator ↔ CFI/% sync |
-| Stylus / freehand ink on pages (native overlay) | M7+M7.5 on branch: overlay, pressure/smooth, tilt thinning, annotation sync, page-scoped strokes; M8 refresh adapters next. Research: `docs/research/nomad-stylus.md` |
+| Stylus / freehand ink on pages (native overlay) | Done M7/M7.5: overlay + pressure/smooth/tilt + annotation sync. M8 in progress: `EinkRefresh` adapters (`noop`/`ratta_pw`/`onyx_epd`). Research: `docs/research/nomad-stylus.md` |
 | Folder scanning and multiple libraries | Planned |
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
 | PDF reading | Planned (strong fit for ink; after annotation/offline foundations) |
@@ -69,7 +69,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 7.5. **Tilt / calligraphy width** — done in the M7 PR: `tiltWidthFactor` + orientation capture. Azimuth×brush-dir calligraphy blend still unused (Ratta logged it; width return did not need it).
 
-8. **E-ink partial-refresh adapters** — before heavy PDF inking: `EinkRefresh` contract (`beginInk` / `invalidate(rect)` / `endInk` / `fullRefresh`); backends `noop` \| `ratta_pw` (probe `EinkPWCoreController` on Nomad) \| `onyx_epd`. Not `ThreadSampleEmr`, not OpenCV, not shipping ioctl tables as the primary path. Gate: sideloaded callability probe.
+8. **E-ink partial-refresh adapters** — in progress on `feat/eink-refresh-adapter`: Dart `EinkRefresh` + Android reflection plugin (`ratta_pw` via `eink` service / `EinkPWCoreController`, `onyx_epd` via `EpdController` when present, else `noop`). Wired to ink mode begin/end and live stroke dirty-rects. No `/dev/ebc` ioctls. Remaining: Nomad callability smoke + PR.
 
 9. **PDF and comic readers** — after M7 (+ ideally M8 refresh on e-ink): fixed-layout is the strong ink surface; comics follow.
 
