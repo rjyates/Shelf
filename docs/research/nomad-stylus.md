@@ -101,9 +101,20 @@ REA shows **three layers** on Nomad:
 
 **Shelf contract (KISS):** `beginInk()` / `invalidate(rect)` / `endInk()` / `fullRefresh()` with backends `noop` | `ratta_pw` | `onyx_epd`. Portable part is the contract, not ioctl numbers. Onyx’s documented DW scribble mode is the same product problem with a different private API.
 
+## M8 implementation note
+
+Shelf now probes at runtime (`mobile/lib/eink_refresh.dart` + `EinkRefreshPlugin.kt`):
+
+- `getSystemService("eink")` → `screenRefresh(boolean,int)`
+- `EinkPWCoreController` → `initForPw` / `postRectForPw` / `deinitForPw`
+- `View.setEinkUpdateMode(int,int)` when present on the Flutter view
+- Onyx `EpdController` / `handwritingRepaint` when those classes resolve
+
+All calls are best-effort; failures stay on Canvas-only ink.
+
 ## Unknowns (callability still open)
 
-- Whether a **sideloaded** APK can invoke `EinkPWCoreController` / `EinkManager` (DAC vs SELinux/binder unproven for `untrusted_app`).
+- Whether a **sideloaded** APK can invoke `EinkPWCoreController` / `EinkManager` (hiddenapi BLOCKED flags on the interface; binder `getSystemService("eink")` may still work).
 - Whether PW mode needs a Ratta View/Surface vs posting rects over Flutter’s surface.
-- Flutter historical points / hover without a custom Android view.
+- Exact waveform ints for Nomad (defaults 0/1 until device smoke).
 - MotionEvent vs Notes latency on Nomad (on-device probe).

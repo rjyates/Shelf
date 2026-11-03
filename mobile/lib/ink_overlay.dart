@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import 'eink_refresh.dart';
 import 'ink_pipeline.dart';
 import 'ink_stroke.dart';
 
@@ -14,12 +17,14 @@ class InkOverlay extends StatefulWidget {
     required this.enabled,
     required this.strokes,
     required this.onStrokeComplete,
+    this.refresh,
     this.absorbTouch = false,
   });
 
   final bool enabled;
   final List<InkStroke> strokes;
   final ValueChanged<InkStroke> onStrokeComplete;
+  final EinkRefresh? refresh;
 
   /// When true, also claim touch pointers (blocks Readium paging under the overlay).
   final bool absorbTouch;
@@ -75,16 +80,46 @@ class _InkOverlayState extends State<InkOverlay> {
       ),
     );
     setState(() {});
+    _requestPartialRefresh(size);
   }
 
   void _end(PointerEvent event) {
     if (_pointer != event.pointer) return;
+    final size = context.size ?? Size.zero;
     final points = finalizeInkPoints(_live);
     _pointer = null;
     _live.clear();
     setState(() {});
     if (points.length < 2) return;
+    _requestPartialRefresh(size, points: points);
     widget.onStrokeComplete(InkStroke(points: points, tool: _tool));
+  }
+
+  void _requestPartialRefresh(Size size, {List<InkPoint>? points}) {
+    final refresh = widget.refresh;
+    if (refresh == null || !refresh.isAccelerated || size.isEmpty) return;
+    final pts = points ?? _live;
+    if (pts.isEmpty) return;
+    var minX = pts.first.x;
+    var maxX = pts.first.x;
+    var minY = pts.first.y;
+    var maxY = pts.first.y;
+    for (final p in pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    const pad = 12.0;
+    unawaited(
+      refresh.invalidate(
+        left: (minX * size.width - pad) * dpr,
+        top: (minY * size.height - pad) * dpr,
+        right: (maxX * size.width + pad) * dpr,
+        bottom: (maxY * size.height + pad) * dpr,
+      ),
+    );
   }
 
   @override
