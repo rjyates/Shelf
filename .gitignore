@@ -5,6 +5,7 @@ node_modules/
 .agent-home/
 .gradle-home/
 .gradle-home2/
+.jdks/
 .impeccable/
 web/orbit-reader/dist/
 server/target/

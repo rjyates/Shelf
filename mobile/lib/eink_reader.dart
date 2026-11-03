@@ -36,6 +36,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   List<Map<String, dynamic>> _annotations = [];
   String? _error;
   var _saving = false;
+  DateTime? _openedAt;
   StreamSubscription<Locator>? _locatorSub;
 
   @override
@@ -60,7 +61,12 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       final path = widget.epubs.fileFor(widget.book.id).absolute.path;
       final url = Uri.file(path).toString();
       final publication = await _readium.openPublication(url);
-      final restored = locatorFromShelfPosition(widget.book.position);
+      final initial = restoreReadiumLocator(
+        publication: publication,
+        position: widget.book.position,
+        percentage: widget.book.percentage,
+      );
+      _openedAt = DateTime.now();
       _locatorSub = _readium.onTextLocatorChanged.listen((locator) {
         _currentLocator = locator;
         unawaited(_persist(locator));
@@ -73,17 +79,19 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       }
       setState(() {
         _publication = publication;
-        _initialLocator = restored;
-        _currentLocator = restored;
+        _initialLocator = initial;
+        _currentLocator = initial;
         _bookmarks = bookmarks;
         _annotations = annotations;
         _error = null;
       });
       await _applyAnnotationDecorations();
-      if (restored != null) {
-        await _readium.goToLocator(restored);
-      } else if (widget.book.percentage > 0) {
-        await _readium.goToProgression(widget.book.percentage);
+      // Native view reads [initialLocator] at creation. Re-assert after ready
+      // in case the first paint ignored it.
+      if (initial != null) {
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        if (!mounted) return;
+        await _readium.goToLocator(initial);
       }
     } on Exception catch (error) {
       if (!mounted) return;
@@ -109,9 +117,19 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
 
   Future<void> _persist(Locator locator) async {
     if (_saving) return;
+    final percentage = shelfPercentageFromLocator(locator);
+    // While opening, ignore title-page / start locators that would clobber the
+    // percentage we are restoring to (and that Foliate previously saved).
+    if (shouldDeferPersistDuringRestore(
+      openedAt: _openedAt,
+      now: DateTime.now(),
+      bookPercentage: widget.book.percentage,
+      locatorPercentage: percentage,
+    )) {
+      return;
+    }
     _saving = true;
     final position = shelfPositionFromLocator(locator);
-    final percentage = shelfPercentageFromLocator(locator);
     try {
       await widget.api.saveLocation(widget.book.id, position, percentage);
     } catch (error) {
