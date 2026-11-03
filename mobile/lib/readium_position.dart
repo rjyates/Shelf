@@ -21,9 +21,9 @@ Locator? locatorFromShelfPosition(String? position) {
       .firstMatch(position);
   if (packed != null) {
     try {
-      final json =
-          jsonDecode(utf8.decode(base64Url.decode(packed.group(1)!)))
-              as Map<String, dynamic>;
+      final json = jsonDecode(
+        utf8.decode(base64Url.decode(packed.group(1)!)),
+      ) as Map<String, dynamic>;
       return Locator.fromJson(json);
     } catch (_) {
       return null;
@@ -89,8 +89,7 @@ Locator? restoreReadiumLocator({
   required double percentage,
 }) {
   final stored = locatorFromShelfPosition(position);
-  final storedPct =
-      stored == null ? null : shelfPercentageFromLocator(stored);
+  final storedPct = stored == null ? null : shelfPercentageFromLocator(stored);
   final storedUsable =
       stored != null &&
       isNavigableReadiumLocator(stored) &&

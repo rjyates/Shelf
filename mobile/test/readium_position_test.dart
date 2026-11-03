@@ -6,8 +6,7 @@ Publication _pub(List<String> hrefs) {
   return Publication(
     metadata: Metadata(localizedTitle: LocalizedString.fromString('t')),
     readingOrder: [
-      for (final href in hrefs)
-        Link(href: href, type: 'application/xhtml+xml'),
+      for (final href in hrefs) Link(href: href, type: 'application/xhtml+xml'),
     ],
   );
 }
