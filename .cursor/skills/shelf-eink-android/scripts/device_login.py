@@ -110,7 +110,29 @@ def type_text(serial: str, text: str) -> None:
     time.sleep(0.35)
 
 
+def dismiss_display_profile(serial: str) -> None:
+    """First-run e-ink onboarding blocks the login form until answered."""
+    xml = dump_ui(serial)
+    if "Are you using an e-ink display?" not in xml and "Yes, e-ink" not in xml:
+        return
+    for m in re.finditer(
+        r'content-desc="Yes, e-ink"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+        r'|bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*content-desc="Yes, e-ink"',
+        xml,
+    ):
+        g = [int(x) for x in m.groups() if x]
+        if len(g) == 4:
+            tap(serial, (g[0] + g[2]) // 2, (g[1] + g[3]) // 2)
+            time.sleep(1.2)
+            return
+    buttons = centers(xml, "android.widget.Button")
+    if buttons:
+        tap(serial, *buttons[0])
+        time.sleep(1.2)
+
+
 def fill_login(serial: str, server: str, user: str, password: str) -> None:
+    dismiss_display_profile(serial)
     xml = dump_ui(serial)
     edits = centers(xml, "android.widget.EditText")
     if len(edits) < 3:

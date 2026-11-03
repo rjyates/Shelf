@@ -164,5 +164,45 @@ class ImageIndexTests(unittest.TestCase):
             publish.released_platforms(manifest("amd64"))
 
 
+class ReadiumMobileLayoutTests(unittest.TestCase):
+    """Guard the e-ink Readium layout so CI cannot regress to CocoaPods/JDK traps."""
+
+    root = Path(__file__).parents[1]
+
+    def test_ios_stays_on_spm_without_a_custom_podfile(self):
+        # flutter_readium 0.8 ships SPM; a custom Podfile forces CocoaPods while
+        # plugins stay SPM and breaks the iOS IPA with empty Pods xcfilelists.
+        self.assertFalse((self.root / "mobile/ios/Podfile").exists())
+        self.assertFalse((self.root / "mobile/ios/Podfile.lock").exists())
+        pbxproj = (self.root / "mobile/ios/Runner.xcodeproj/project.pbxproj").read_text(encoding="utf-8")
+        self.assertIn("FlutterGeneratedPluginSwiftPackage", pbxproj)
+        self.assertNotIn("Pods-Runner", pbxproj)
+        self.assertNotIn("Pods/Target Support Files", pbxproj)
+
+    def test_android_ci_uses_jdk_21_for_readium_java_18(self):
+        workflow = (self.root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        android = workflow[workflow.index("  android:\n"): workflow.index("  ios:\n")]
+        self.assertIn("java-version: '21'", android)
+        gradle = (self.root / "mobile/android/app/build.gradle.kts").read_text(encoding="utf-8")
+        self.assertRegex(gradle, r"JavaVersion\.VERSION_18|jvmTarget\s*=\s*\"18\"|release\s*=\s*18")
+        properties = (self.root / "mobile/android/gradle.properties").read_text(encoding="utf-8")
+        self.assertNotIn("org.gradle.java.home", properties)
+
+    def test_readium_position_helpers_and_tests_stay_shipped(self):
+        helpers = self.root / "mobile/lib/readium_position.dart"
+        tests = self.root / "mobile/test/readium_position_test.dart"
+        self.assertTrue(helpers.is_file())
+        self.assertTrue(tests.is_file())
+        helper_src = helpers.read_text(encoding="utf-8")
+        for name in (
+            "restoreReadiumLocator",
+            "shouldDeferPersistDuringRestore",
+            "locatorForTotalProgression",
+            "locatorFromShelfPosition",
+        ):
+            self.assertIn(name, helper_src)
+            self.assertIn(name, tests.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
