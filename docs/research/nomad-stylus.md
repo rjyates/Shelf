@@ -140,7 +140,7 @@ Nomad Notes does **not** wait on Flutter frames. REA on `libeinkpwcoreapi` / `li
 3. Draw the stroke into that host bitmap (Notes: OpenCV `drawLineLive`)
 4. `postRectForPw(rect, …)` → `postEinkHostBmpRect` / `postEinkPWRectFastHL`
 
-Shelf mirrors that: PixelCopy the Flutter page into a host `Bitmap` on ink enter, then each stylus move calls native `drawSegment` + `postRectForPw`. Mid-stroke Flutter `CustomPaint` is skipped while `hostLive` to cut the ~0.5–0.7s Canvas follow lag. Stroke math now uses a 5-sample speed deque, `getSpeedMapWidth` EMA, azimuth×brush, and `InkPoint` timestamps.
+Shelf mirrors that: PixelCopy + host `Bitmap` + `drawSegment`/`postRectForPw`, plus `MainActivity.dispatchTouchEvent` stylus interception (EMR history samples, no OEM `.so`). Flutter always paints live ink; the overlay uses a **global pointer route** + `IgnorePointer` so finger page-turns still reach Readium. Densify uses Catmull-Rom at `maxGap=0.003`. Stroke math now uses a 5-sample speed deque, `getSpeedMapWidth` EMA, azimuth×brush, and `InkPoint` timestamps.
 
 ## Unknowns (still open after O1)
 

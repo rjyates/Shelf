@@ -37,7 +37,6 @@ void main() {
       expect(await refresh.diagnose(), containsPair('backend', 'ratta_pw'));
       await refresh.beginInk();
       expect(refresh.hostLive, isTrue);
-      // Host PW live: invalidate is a no-op (segments post their own rects).
       await refresh.invalidate(left: 1, top: 2, right: 3, bottom: 4);
       await refresh.drawSegment(x0: 0, y0: 0, x1: 10, y1: 10, width: 2);
       await refresh.endInk();
@@ -46,6 +45,7 @@ void main() {
         'diagnose',
         'beginInk',
         'captureHost',
+        'invalidate',
         'drawSegment',
         'endInk',
       ]);

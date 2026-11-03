@@ -160,10 +160,36 @@ List<InkPoint> thinInkPoints(
   return out;
 }
 
-/// Insert linear samples when MotionEvent gaps are large (quick curves).
+/// Catmull-Rom interpolate between [a]→[b] using neighbors [p0]/[p3].
+InkPoint _catmull(InkPoint p0, InkPoint a, InkPoint b, InkPoint p3, double t) {
+  final t2 = t * t;
+  final t3 = t2 * t;
+  double axis(double v0, double v1, double v2, double v3) =>
+      0.5 *
+      ((2 * v1) +
+          (-v0 + v2) * t +
+          (2 * v0 - 5 * v1 + 4 * v2 - v3) * t2 +
+          (-v0 + 3 * v1 - 3 * v2 + v3) * t3);
+  final ta = a.timeMs;
+  final tb = b.timeMs;
+  return InkPoint(
+    x: axis(p0.x, a.x, b.x, p3.x).clamp(0.0, 1.0),
+    y: axis(p0.y, a.y, b.y, p3.y).clamp(0.0, 1.0),
+    pressure: (a.pressure + (b.pressure - a.pressure) * t).clamp(0.0, 1.0),
+    tilt: a.tilt + (b.tilt - a.tilt) * t,
+    orientation: a.orientation + (b.orientation - a.orientation) * t,
+    timeMs: (ta != null && tb != null) ? (ta + ((tb - ta) * t).round()) : null,
+  );
+}
+
+/// Insert samples when MotionEvent gaps are large (quick curves → chords).
+///
+/// Uses Catmull-Rom when neighbors exist so fast circles stay round instead of
+/// boxy; falls back to linear on endpoints. Default [maxGap] tightened after
+/// Nomad smoke (0.006 still left visible flats).
 List<InkPoint> densifyInkPoints(
   List<InkPoint> points, {
-  double maxGap = 0.006,
+  double maxGap = 0.003,
 }) {
   if (points.length < 2) return List<InkPoint>.from(points);
   final out = <InkPoint>[points.first];
@@ -172,23 +198,12 @@ List<InkPoint> densifyInkPoints(
     final b = points[i];
     final d = inkPointDistance(a, b);
     if (d > maxGap) {
-      final steps = (d / maxGap).ceil().clamp(2, 48);
+      final steps = (d / maxGap).ceil().clamp(2, 96);
+      final p0 = i >= 2 ? points[i - 2] : a;
+      final p3 = i + 1 < points.length ? points[i + 1] : b;
       for (var s = 1; s < steps; s++) {
         final t = s / steps;
-        final ta = a.timeMs;
-        final tb = b.timeMs;
-        out.add(
-          InkPoint(
-            x: (a.x + (b.x - a.x) * t).clamp(0.0, 1.0),
-            y: (a.y + (b.y - a.y) * t).clamp(0.0, 1.0),
-            pressure: a.pressure + (b.pressure - a.pressure) * t,
-            tilt: a.tilt + (b.tilt - a.tilt) * t,
-            orientation: a.orientation + (b.orientation - a.orientation) * t,
-            timeMs: (ta != null && tb != null)
-                ? (ta + ((tb - ta) * t).round())
-                : null,
-          ),
-        );
+        out.add(_catmull(p0, a, b, p3, t));
       }
     }
     out.add(b);

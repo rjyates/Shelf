@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.View
@@ -45,6 +46,10 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
   private var hostBmp: Bitmap? = null
   private var hostCanvas: Canvas? = null
   private var hostReady = false
+  /** True between beginInk/endInk — enables native stylus MotionEvent drawing. */
+  private var inkSession = false
+  private var lastStylusX = Float.NaN
+  private var lastStylusY = Float.NaN
   private val mainHandler = Handler(Looper.getMainLooper())
   private val inkPaint =
     Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -226,10 +231,69 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
   }
 
   private fun beginInk() {
+    inkSession = true
+    lastStylusX = Float.NaN
+    lastStylusY = Float.NaN
     when (probe()) {
       "ratta_pw" -> beginRatta()
       "onyx_epd" -> beginOnyx()
     }
+  }
+
+  /**
+   * Notes-like path without shipping their .so: intercept stylus MotionEvents
+   * on the UI thread and draw+postRect immediately (before Flutter frames).
+   * Finger events are ignored here so page turns stay with Flutter/WebView.
+   */
+  fun onMotionEvent(ev: MotionEvent): Boolean {
+    if (!inkSession || backend == "noop") return false
+    val idx = ev.actionIndex
+    val tool = ev.getToolType(idx)
+    if (tool != MotionEvent.TOOL_TYPE_STYLUS && tool != MotionEvent.TOOL_TYPE_ERASER) {
+      return false
+    }
+    val view = findFlutterView(activityView) ?: return false
+    val loc = IntArray(2)
+    view.getLocationOnScreen(loc)
+    val x = ev.rawX - loc[0]
+    val y = ev.rawY - loc[1]
+    val pressure = ev.pressure.coerceIn(0.05f, 1f)
+    val width = (1.2f + pressure * 4f)
+    val eraser = tool == MotionEvent.TOOL_TYPE_ERASER
+    when (ev.actionMasked) {
+      MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+        lastStylusX = x
+        lastStylusY = y
+        // Seed a tiny mark so the first pixel appears before MOVE.
+        drawSegment(x, y, x + 0.5f, y + 0.5f, width, eraser)
+      }
+      MotionEvent.ACTION_MOVE -> {
+        if (!lastStylusX.isNaN()) {
+          // Historical samples densify fast strokes at the EMR rate.
+          val hist = ev.historySize
+          var px = lastStylusX
+          var py = lastStylusY
+          for (h in 0 until hist) {
+            val hx = ev.getHistoricalX(idx, h) + (ev.rawX - ev.x) - loc[0]
+            val hy = ev.getHistoricalY(idx, h) + (ev.rawY - ev.y) - loc[1]
+            drawSegment(px, py, hx, hy, width, eraser)
+            px = hx
+            py = hy
+          }
+          drawSegment(px, py, x, y, width, eraser)
+        }
+        lastStylusX = x
+        lastStylusY = y
+      }
+      MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+        if (!lastStylusX.isNaN()) {
+          drawSegment(lastStylusX, lastStylusY, x, y, width, eraser)
+        }
+        lastStylusX = Float.NaN
+        lastStylusY = Float.NaN
+      }
+    }
+    return false // never consume — Flutter still records the stroke
   }
 
   private fun invalidate(left: Int, top: Int, right: Int, bottom: Int) {
@@ -243,6 +307,11 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     when (backend) {
       "ratta_pw" -> endRatta()
       "onyx_epd" -> endOnyx()
+      else -> {
+        inkSession = false
+        lastStylusX = Float.NaN
+        lastStylusY = Float.NaN
+      }
     }
   }
 
@@ -458,16 +527,17 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         right.coerceAtLeast(left + 1),
         bottom.coerceAtLeast(top + 1),
       )
-    // When the host bmp is live, PW posts carry the ink; still poke the view
-    // so Flutter's committed layer stays in sync for the next capture.
+    // Always invalidate the Flutter view — that is what the user sees.
+    view?.invalidate(rect)
     if (hostReady) {
       postHostRect(rect.left, rect.top, rect.right, rect.bottom)
-    } else {
-      view?.invalidate(rect)
     }
   }
 
   private fun endRatta() {
+    inkSession = false
+    lastStylusX = Float.NaN
+    lastStylusY = Float.NaN
     findFlutterView(activityView)?.let { view ->
       val ctrl = pwController
       if (ctrl != null) {
@@ -571,6 +641,9 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
   }
 
   private fun endOnyx() {
+    inkSession = false
+    lastStylusX = Float.NaN
+    lastStylusY = Float.NaN
     val view = findFlutterView(activityView) ?: return
     invokeOnyxUpdateMode(view, "GU")
     invokeOnyxInvalidate(view, "GC")

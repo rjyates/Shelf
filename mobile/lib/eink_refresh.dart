@@ -103,8 +103,10 @@ class EinkRefresh {
 
   DateTime? _lastInvalidate;
 
-  /// Ask the panel to show the latest Flutter frame. Throttled when host PW
-  /// is not live; host-bitmap segments already post their own rects.
+  /// Ask the panel to refresh the Flutter surface for [rect] (physical px).
+  ///
+  /// Always runs — host-bitmap `drawSegment` alone does not replace the
+  /// Flutter framebuffer the user sees mid-stroke on Nomad.
   Future<void> invalidate({
     required double left,
     required double top,
@@ -113,7 +115,6 @@ class EinkRefresh {
     Duration minInterval = const Duration(milliseconds: 16),
   }) async {
     if (_backend == 'noop') return;
-    if (hostLive) return; // drawSegment already posted the PW rect
     final now = DateTime.now();
     final last = _lastInvalidate;
     if (last != null && now.difference(last) < minInterval) return;

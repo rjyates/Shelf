@@ -104,7 +104,19 @@ void main() {
     for (var i = 1; i < done.length; i++) {
       maxGap = math.max(maxGap, inkPointDistance(done[i - 1], done[i]));
     }
-    expect(maxGap, lessThan(0.007));
+    expect(maxGap, lessThan(0.004));
+  });
+
+  test('densify Catmull-Rom keeps curve samples off the chord', () {
+    // Three points of a right angle — linear densify stays on the L;
+    // Catmull through the corner bows outward.
+    final corner = [
+      const InkPoint(x: 0, y: 0, pressure: 0.5, timeMs: 0),
+      const InkPoint(x: 0.2, y: 0, pressure: 0.5, timeMs: 10),
+      const InkPoint(x: 0.2, y: 0.2, pressure: 0.5, timeMs: 20),
+    ];
+    final dense = densifyInkPoints(corner, maxGap: 0.05);
+    expect(dense.length, greaterThan(corner.length));
   });
 
   test('speed factor thins long jumps (REA curve)', () {

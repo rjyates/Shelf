@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'eink_refresh.dart';
 import 'ink_pipeline.dart';
@@ -9,12 +10,9 @@ import 'ink_stroke.dart';
 
 /// Transparent stylus capture layer over the e-ink Readium view.
 ///
-/// Only [PointerDeviceKind.stylus] / [PointerDeviceKind.invertedStylus] draw;
-/// finger touches pass through for page turns when [absorbTouch] is false.
-///
-/// On Nomad (`EinkRefresh.hostLive`), live ink is drawn into the PW host
-/// bitmap (Notes path) so the panel follows within a frame; Flutter paint
-/// remains the committed layer after lift.
+/// Stylus is captured via a **global pointer route** so this overlay is never
+/// in the hit-test path — finger swipes still reach Readium for page turns.
+/// Live ink always paints on the Flutter canvas and also posts PW segments.
 class InkOverlay extends StatefulWidget {
   const InkOverlay({
     super.key,
@@ -45,6 +43,7 @@ class _InkOverlayState extends State<InkOverlay> {
   int? _strokeOriginMs;
   double? _prevWidth;
   Offset? _prevLocal;
+  Size _size = Size.zero;
 
   bool _isStylus(PointerEvent event) =>
       event.kind == PointerDeviceKind.stylus ||
@@ -56,10 +55,46 @@ class _InkOverlayState extends State<InkOverlay> {
     return DateTime.now().millisecondsSinceEpoch;
   }
 
-  void _begin(PointerDownEvent event, Size size) {
-    if (!widget.enabled) return;
-    if (!_isStylus(event) && !widget.absorbTouch) return;
-    if (!_isStylus(event)) return;
+  @override
+  void initState() {
+    super.initState();
+    // Global route receives stylus without winning the Stack hit test, so
+    // finger page-turns still reach the Readium WebView underneath.
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_onGlobalPointer);
+  }
+
+  @override
+  void dispose() {
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_onGlobalPointer);
+    super.dispose();
+  }
+
+  void _onGlobalPointer(PointerEvent event) {
+    if (!widget.enabled || !mounted) return;
+    // Default: stylus only. Fingers must reach Readium for page turns.
+    if (!_isStylus(event)) {
+      if (!(widget.absorbTouch && _pointer == event.pointer)) return;
+    }
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final local = box.globalToLocal(event.position);
+    final size = box.size;
+    _size = size;
+
+    if (event is PointerDownEvent) {
+      if (!_isStylus(event)) return;
+      if (!(Offset.zero & size).contains(local)) return;
+      _begin(event, local, size);
+    } else if (event is PointerMoveEvent) {
+      if (_pointer != event.pointer) return;
+      _move(event, local, size);
+    } else if (event is PointerUpEvent || event is PointerCancelEvent) {
+      if (_pointer != event.pointer) return;
+      _end(event);
+    }
+  }
+
+  void _begin(PointerDownEvent event, Offset local, Size size) {
     _pointer = event.pointer;
     _tool = event.kind == PointerDeviceKind.invertedStylus
         ? 'eraser'
@@ -67,13 +102,13 @@ class _InkOverlayState extends State<InkOverlay> {
     _speed.reset();
     _prevWidth = null;
     _strokeOriginMs = _nowMs(event);
-    _prevLocal = event.localPosition;
+    _prevLocal = local;
     _live
       ..clear()
       ..add(
         InkStroke.pointFromLocal(
-          dx: event.localPosition.dx,
-          dy: event.localPosition.dy,
+          dx: local.dx,
+          dy: local.dy,
           width: size.width,
           height: size.height,
           pressure: event.pressure,
@@ -85,12 +120,12 @@ class _InkOverlayState extends State<InkOverlay> {
     setState(() {});
   }
 
-  void _move(PointerMoveEvent event, Size size) {
+  void _move(PointerMoveEvent event, Offset local, Size size) {
     if (_pointer != event.pointer) return;
     final origin = _strokeOriginMs ?? _nowMs(event);
     final point = InkStroke.pointFromLocal(
-      dx: event.localPosition.dx,
-      dy: event.localPosition.dy,
+      dx: local.dx,
+      dy: local.dy,
       width: size.width,
       height: size.height,
       pressure: event.pressure,
@@ -100,7 +135,6 @@ class _InkOverlayState extends State<InkOverlay> {
     );
     final prev = _live.isEmpty ? null : _live.last;
     _live.add(point);
-    // Host-bmp PW path: draw the newest segment natively (Nomad Notes latency).
     if (prev != null) {
       final w = segmentWidth(
         prev,
@@ -114,32 +148,29 @@ class _InkOverlayState extends State<InkOverlay> {
       final refresh = widget.refresh;
       final dpr = MediaQuery.devicePixelRatioOf(context);
       if (refresh != null && refresh.isAccelerated) {
-        final a = _prevLocal ?? event.localPosition;
-        final b = event.localPosition;
+        final a = _prevLocal ?? local;
         unawaited(
           refresh.drawSegment(
             x0: a.dx * dpr,
             y0: a.dy * dpr,
-            x1: b.dx * dpr,
-            y1: b.dy * dpr,
+            x1: local.dx * dpr,
+            y1: local.dy * dpr,
             width: w * dpr,
             eraser: _tool == 'eraser',
           ),
         );
       }
     }
-    _prevLocal = event.localPosition;
-    // Flutter paint stays as committed/fallback; skip mid-stroke setState when
-    // host PW is carrying the live trail (cuts the 0.5s Canvas lag).
-    if (widget.refresh?.hostLive != true) {
-      setState(() {});
-      _requestPartialRefresh(size);
-    }
+    _prevLocal = local;
+    // Always paint live on Flutter — host PW alone was invisible mid-stroke
+    // (panel shows the Flutter surface; host bmp posts did not replace it).
+    setState(() {});
+    _requestPartialRefresh(size);
   }
 
   void _end(PointerEvent event) {
     if (_pointer != event.pointer) return;
-    final size = context.size ?? Size.zero;
+    final size = _size == Size.zero ? (context.size ?? Size.zero) : _size;
     final points = finalizeInkPoints(_live);
     _pointer = null;
     _prevLocal = null;
@@ -150,8 +181,6 @@ class _InkOverlayState extends State<InkOverlay> {
       setState(() {});
       return;
     }
-    // Keep the finished samples painted until the parent adds them to
-    // [strokes] (avoids a blank flash on slow e-ink).
     _live
       ..clear()
       ..addAll(points);
@@ -188,45 +217,34 @@ class _InkOverlayState extends State<InkOverlay> {
       if (p.y > maxY) maxY = p.y;
     }
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    const pad = 12.0;
-    unawaited(
-      refresh.invalidate(
-        left: (minX * size.width - pad) * dpr,
-        top: (minY * size.height - pad) * dpr,
-        right: (maxX * size.width + pad) * dpr,
-        bottom: (maxY * size.height + pad) * dpr,
-        minInterval: force ? Duration.zero : const Duration(milliseconds: 16),
-      ),
-    );
+    const pad = 16.0;
+    // Schedule after the frame so View.invalidate sees the new Flutter pixels.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        refresh.invalidate(
+          left: (minX * size.width - pad) * dpr,
+          top: (minY * size.height - pad) * dpr,
+          right: (maxX * size.width + pad) * dpr,
+          bottom: (maxY * size.height + pad) * dpr,
+          minInterval: force ? Duration.zero : const Duration(milliseconds: 16),
+        ),
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, constraints.maxHeight);
-        return Listener(
-          behavior: widget.enabled
-              ? HitTestBehavior.translucent
-              : HitTestBehavior.deferToChild,
-          onPointerDown: (event) => _begin(event, size),
-          onPointerMove: (event) => _move(event, size),
-          onPointerUp: _end,
-          onPointerCancel: _end,
-          child: CustomPaint(
-            painter: _InkPainter(
-              strokes: widget.strokes,
-              // When host PW is live, skip mid-stroke Flutter paint (native
-              // bitmap already shows the trail); still paint after lift.
-              live: widget.refresh?.hostLive == true && _pointer != null
-                  ? const []
-                  : _live,
-              liveTool: _tool,
-            ),
-            size: Size.infinite,
-          ),
-        );
-      },
+    // IgnorePointer: never win the Stack hit test (finger paging works).
+    // Stylus arrives through the global pointer route above.
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: _InkPainter(
+          strokes: widget.strokes,
+          live: _live,
+          liveTool: _tool,
+        ),
+        size: Size.infinite,
+      ),
     );
   }
 }
@@ -250,7 +268,7 @@ class _InkPainter extends CustomPainter {
       _paintStroke(
         canvas,
         size,
-        stroke.points,
+        densifyInkPoints(stroke.points),
         stroke.tool,
         stroke.width,
         speed,
@@ -258,7 +276,15 @@ class _InkPainter extends CustomPainter {
     }
     if (live.length >= 2) {
       speed.reset();
-      _paintStroke(canvas, size, densifyInkPoints(live), liveTool, 2, speed);
+      // Tighter densify for live trail so fast curves stay round mid-stroke.
+      _paintStroke(
+        canvas,
+        size,
+        densifyInkPoints(live, maxGap: 0.003),
+        liveTool,
+        2,
+        speed,
+      );
     }
   }
 
