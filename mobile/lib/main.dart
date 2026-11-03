@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'display_profile.dart';
+import 'eink_reader.dart';
 import 'epub_store.dart';
 import 'reader.dart';
 import 'sync_outbox.dart';
@@ -624,10 +625,35 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _read(Book book) async {
+    final epubs = widget.epubs;
+    final cached = epubs != null && await epubs.has(book.id);
+    if (_profile == DisplayProfile.eink && Platform.isAndroid && !cached) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Save offline first to read on e-ink without Foliate.',
+            ),
+          ),
+        );
+      }
+    }
+    final useEink = shouldOpenEinkReader(
+      profile: _profile,
+      isAndroid: Platform.isAndroid,
+      hasCachedEpub: cached,
+    );
+    if (!mounted) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) =>
-            ReaderScreen(api: widget.api, book: book, outbox: widget.outbox),
+        builder: (_) => useEink
+            ? EinkReaderScreen(
+                api: widget.api,
+                book: book,
+                epubs: epubs!,
+                outbox: widget.outbox,
+              )
+            : ReaderScreen(api: widget.api, book: book, outbox: widget.outbox),
       ),
     );
     await _refresh();
