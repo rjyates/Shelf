@@ -1,0 +1,82 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shelf_mobile/api.dart';
+import 'package:shelf_mobile/epub_store.dart';
+import 'package:shelf_mobile/reader.dart';
+import 'package:shelf_mobile/sync_outbox.dart';
+
+void main() {
+  late Directory temp;
+
+  setUp(() async {
+    temp = await Directory.systemTemp.createTemp('shelf-offline-');
+  });
+
+  tearDown(() async {
+    if (await temp.exists()) await temp.delete(recursive: true);
+  });
+
+  test('epub store writes bytes keyed by book id', () async {
+    final store = EpubStore(temp);
+    expect(await store.has(7), isFalse);
+    await store.save(7, [80, 75, 3, 4]);
+    expect(await store.has(7), isTrue);
+    expect(await store.fileFor(7).readAsBytes(), [80, 75, 3, 4]);
+  });
+
+  test('outbox enqueues and flushes in order, keeping failures', () async {
+    final outbox = SyncOutbox(temp);
+    await outbox.enqueue(
+      method: 'POST',
+      path: 'books/1/progress',
+      body: {'pages_read': 10},
+    );
+    await outbox.enqueue(
+      method: 'POST',
+      path: 'books/1/location',
+      body: {'position': 'epubcfi(/6/2)', 'percentage': 0.2},
+    );
+    expect(await outbox.length, 2);
+
+    final sent = <String>[];
+    final flushed = await outbox.flush((method, path, body) async {
+      sent.add('$method $path');
+      if (path.endsWith('/location')) {
+        throw ShelfException(
+          'Could not reach your server. Check the address and connection.',
+        );
+      }
+    });
+    expect(flushed, 1);
+    expect(sent, ['POST books/1/progress', 'POST books/1/location']);
+    expect(await outbox.length, 1);
+
+    final rest = await outbox.flush((method, path, body) async {
+      sent.add('retry $method $path ${jsonEncode(body)}');
+    });
+    expect(rest, 1);
+    expect(await outbox.length, 0);
+    expect(sent.last, contains('books/1/location'));
+  });
+
+  test('ShelfHost outbox messages normalize API paths', () {
+    final item = parseShelfHostOutbox(
+      jsonEncode({
+        'type': 'outbox',
+        'method': 'POST',
+        'path': '/api/v1/books/3/location',
+        'body': {'position': 'epubcfi(/6/2)', 'percentage': 0.5},
+      }),
+    );
+    expect(item?['path'], 'books/3/location');
+    expect(item?['method'], 'POST');
+    expect((item?['body'] as Map)['percentage'], 0.5);
+    expect(parseShelfHostOutbox('close'), isNull);
+    expect(
+      parseShelfHostOutbox('{"type":"outbox","method":"GET","path":"books"}'),
+      isNull,
+    );
+  });
+}

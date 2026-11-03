@@ -1,9 +1,14 @@
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'display_profile.dart';
+import 'epub_store.dart';
 import 'reader.dart';
+import 'sync_outbox.dart';
 
 void main() => runApp(const ShelfApp());
 
@@ -337,12 +342,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
         api.close();
         return;
       }
+      final offlineRoot = Directory(
+        '${(await getApplicationDocumentsDirectory()).path}/shelf_offline',
+      );
+      await offlineRoot.create(recursive: true);
+      if (!mounted) {
+        api.close();
+        return;
+      }
       final revoked = await Navigator.of(context).push<bool>(
         MaterialPageRoute<bool>(
           builder: (_) => LibraryScreen(
             api: api!,
             profile: widget.profile,
             onProfileChanged: widget.onProfileChanged,
+            outbox: SyncOutbox(offlineRoot),
+            epubs: EpubStore(offlineRoot),
           ),
         ),
       );
@@ -483,10 +498,14 @@ class LibraryScreen extends StatefulWidget {
     required this.api,
     required this.profile,
     required this.onProfileChanged,
+    this.outbox,
+    this.epubs,
   });
   final ShelfApi api;
   final DisplayProfile profile;
   final Future<void> Function(DisplayProfile profile) onProfileChanged;
+  final SyncOutbox? outbox;
+  final EpubStore? epubs;
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
@@ -496,6 +515,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool _loading = true;
   String? _error;
   late DisplayProfile _profile = widget.profile;
+  final Set<int> _savedOffline = {};
 
   @override
   void initState() {
@@ -514,12 +534,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
     super.dispose();
   }
 
+  Future<Set<int>> _cachedEpubs(List<Book> books) async {
+    final store = widget.epubs;
+    if (store == null) return {};
+    final saved = <int>{};
+    for (final book in books) {
+      if (book.isEpub && await store.has(book.id)) saved.add(book.id);
+    }
+    return saved;
+  }
+
   Future<void> _refresh() async {
     try {
+      final outbox = widget.outbox;
+      if (outbox != null) {
+        await outbox.flush((method, path, body) async {
+          await widget.api.request(path, method: method, body: body);
+        });
+      }
       final books = await widget.api.books();
+      final saved = await _cachedEpubs(books);
       if (mounted) {
         setState(() {
           _books = books;
+          _savedOffline
+            ..clear()
+            ..addAll(saved);
           _loading = false;
           _error = null;
         });
@@ -530,6 +570,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
           _error = error.toString();
           _loading = false;
         });
+      }
+    }
+  }
+
+  Future<void> _saveOffline(Book book) async {
+    final store = widget.epubs;
+    if (store == null || !book.isEpub) return;
+    try {
+      await store.save(book.id, await widget.api.downloadEpub(book.id));
+      if (mounted) {
+        setState(() => _savedOffline.add(book.id));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Saved for offline use.')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
       }
     }
   }
@@ -567,7 +626,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _read(Book book) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => ReaderScreen(api: widget.api, book: book),
+        builder: (_) =>
+            ReaderScreen(api: widget.api, book: book, outbox: widget.outbox),
       ),
     );
     await _refresh();
@@ -585,6 +645,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await widget.api.progress(book, pages);
       await _refresh();
     } catch (error) {
+      if (ShelfApi.isQueueFailure(error) && widget.outbox != null) {
+        await widget.outbox!.enqueue(
+          method: 'POST',
+          path: 'books/${book.id}/progress',
+          body: {'pages_read': pages},
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Saved offline. Will sync when you refresh.'),
+            ),
+          );
+        }
+        return;
+      }
       if (mounted) {
         setState(() => _error = error.toString());
       }
@@ -704,7 +779,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       api: widget.api,
                       book: book,
                       wide: wide,
+                      savedOffline: _savedOffline.contains(book.id),
                       onOpen: () => book.isEpub ? _read(book) : _record(book),
+                      onSaveOffline: book.isEpub && widget.epubs != null
+                          ? () => _saveOffline(book)
+                          : null,
                     ),
                 ],
               ),
@@ -721,12 +800,16 @@ class _BookTile extends StatelessWidget {
     required this.api,
     required this.book,
     required this.wide,
+    required this.savedOffline,
     required this.onOpen,
+    this.onSaveOffline,
   });
   final ShelfApi api;
   final Book book;
   final bool wide;
+  final bool savedOffline;
   final VoidCallback onOpen;
+  final VoidCallback? onSaveOffline;
 
   @override
   Widget build(BuildContext context) {
@@ -796,6 +879,16 @@ class _BookTile extends StatelessWidget {
           width: double.infinity,
           child: FilledButton(onPressed: onOpen, child: Text(action)),
         ),
+        if (onSaveOffline != null) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: savedOffline ? null : onSaveOffline,
+              child: Text(savedOffline ? 'Saved offline' : 'Save offline'),
+            ),
+          ),
+        ],
       ],
     );
 

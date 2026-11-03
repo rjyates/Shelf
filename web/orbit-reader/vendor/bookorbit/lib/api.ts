@@ -62,6 +62,28 @@ function emptyResponse(status = 204): Response {
   return new Response(null, { status })
 }
 
+/** Queue a failed write for Flutter's sync outbox (ShelfHost). */
+function shelfHostOutbox(method: string, path: string, body: unknown): void {
+  const host = (globalThis as { ShelfHost?: { postMessage: (message: string) => void } })
+    .ShelfHost
+  if (!host?.postMessage) return
+  const apiPath = path.startsWith('/api/v1/')
+    ? path.slice('/api/v1/'.length)
+    : path.replace(/^\//, '')
+  host.postMessage(JSON.stringify({ type: 'outbox', method, path: apiPath, body }))
+}
+
+function isPersistPath(path: string): boolean {
+  return (
+    path.includes('/location') ||
+    path.includes('/bookmarks') ||
+    path.includes('/annotations') ||
+    path.includes('/reader/preferences') ||
+    path.includes('/reader/defaults') ||
+    /\/books\/\d+\/progress$/.test(path)
+  )
+}
+
 /** One catalogue row from Shelf. EPUB fields are flattened (`#[serde(flatten)]`), not nested. */
 type ShelfBookRow = {
   id: number
@@ -194,13 +216,22 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
     // Book Orbit posts 0–100; Shelf POST /location requires 0..=1.
     const percentage = Math.min(1, Math.max(0, rawPct > 1 ? rawPct / 100 : rawPct))
     if (!position || !position.startsWith('epubcfi(')) return emptyResponse()
-    const res = await fetch(`/api/v1/books/${write.fileId}/location`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ position, percentage }),
-    })
-    return res.ok ? emptyResponse() : res
+    const locationBody = { position, percentage }
+    try {
+      const res = await fetch(`/api/v1/books/${write.fileId}/location`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(locationBody),
+      })
+      return res.ok ? emptyResponse() : res
+    } catch (error) {
+      if (error instanceof TypeError) {
+        shelfHostOutbox('POST', `/api/v1/books/${write.fileId}/location`, locationBody)
+        throw new NetworkError()
+      }
+      throw error
+    }
   }
 
   // Bookmarks, annotations, and reader preferences/defaults hit Shelf SQLite APIs (milestone 4).
@@ -254,6 +285,7 @@ export async function api(input: RequestInfo | URL, init: RequestInit = {}): Pro
     headers.set('Authorization', `Bearer ${_accessToken}`)
   }
 
+  const method = (init.method || 'GET').toUpperCase()
   try {
     const response = await fetch(url, {
       ...init,
@@ -263,6 +295,17 @@ export async function api(input: RequestInfo | URL, init: RequestInit = {}): Pro
     if (response.status === 401) _onAuthFailure?.()
     return response
   } catch {
+    if (method !== 'GET' && isPersistPath(url.pathname)) {
+      let body: unknown = null
+      if (init.body != null) {
+        try {
+          body = JSON.parse(String(init.body))
+        } catch {
+          body = null
+        }
+      }
+      shelfHostOutbox(method, url.pathname, body)
+    }
     throw new NetworkError()
   }
 }

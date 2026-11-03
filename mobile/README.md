@@ -4,7 +4,7 @@ One Flutter/Dart application for Android and iPhone. Use the Flutter version in 
 
 Create your account in the Shelf web app, then enter your HTTPS server address and sign in here. This is one Flutter app for Android and iPhone. The foundation supports catalogue, metadata, page progress, and opening EPUBs in a WebView against the shared Book Orbit reader.
 
-Product shape (see [roadmap](../docs/parity.md)): e-ink vs LCD display profile from first-run onboarding (retoggle in Display settings); later a native Android reader/ink module behind the e-ink profile inside this same app—not a separate codebase. Next milestone: offline downloads + sync outbox.
+Product shape (see [roadmap](../docs/parity.md)): e-ink vs LCD display profile from first-run onboarding (retoggle in Display settings); Save offline caches EPUB bytes and a sync outbox flushes queued writes on refresh. Later a native Android reader/ink module behind the e-ink profile inside this same app—not a separate codebase. Next milestone: native Android navigator for e-ink.
 
 From this directory, run `flutter pub get --enforce-lockfile`, `flutter analyze --fatal-infos`, and `flutter test`. Launch with `flutter run` on a configured device or emulator. A phone cannot reach a server bound only to another computer's loopback interface; use the HTTPS reverse-proxy setup described in the [root README](../README.md).
 
