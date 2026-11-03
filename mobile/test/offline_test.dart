@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf_mobile/api.dart';
+import 'package:shelf_mobile/connectivity.dart';
 import 'package:shelf_mobile/epub_store.dart';
 import 'package:shelf_mobile/reader.dart';
 import 'package:shelf_mobile/sync_outbox.dart';
@@ -78,5 +80,26 @@ void main() {
       parseShelfHostOutbox('{"type":"outbox","method":"GET","path":"books"}'),
       isNull,
     );
+  });
+
+  test('queue failures include transport and HTTP 5xx', () {
+    expect(
+      ShelfApi.isQueueFailure(
+        ShelfException(
+          'Could not reach your server. Check the address and connection.',
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      ShelfApi.isQueueFailure(ShelfException('boom', statusCode: 503)),
+      isTrue,
+    );
+    expect(
+      ShelfApi.isQueueFailure(ShelfException('bad', statusCode: 400)),
+      isFalse,
+    );
+    expect(connectivityLooksOnline([ConnectivityResult.none]), isFalse);
+    expect(connectivityLooksOnline([ConnectivityResult.wifi]), isTrue);
   });
 }

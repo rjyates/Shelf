@@ -84,6 +84,131 @@ function isPersistPath(path: string): boolean {
   )
 }
 
+function parseBody(init: RequestInit | undefined): unknown {
+  if (init?.body == null) return null
+  try {
+    return JSON.parse(String(init.body))
+  } catch {
+    return null
+  }
+}
+
+function queuePersistFailure(
+  method: string,
+  path: string,
+  init: RequestInit | undefined,
+  status?: number,
+): void {
+  if (method === 'GET' || !isPersistPath(path)) return
+  if (status != null && status < 500) return
+  shelfHostOutbox(method, path, parseBody(init))
+}
+
+const LOCAL_MIGRATE_FLAG = 'shelf:orbit-reader:migrated-v1'
+
+/** One-shot: push pre-M4 localStorage marks/prefs to Shelf, then clear those keys. */
+export async function migrateLocalReaderData(): Promise<void> {
+  if (typeof localStorage === 'undefined') return
+  if (localStorage.getItem(LOCAL_MIGRATE_FLAG)) return
+  const keys = Object.keys(localStorage)
+  for (const key of keys) {
+    const bookmark = key.match(/^shelf:orbit-reader:bookmarks:(\d+)$/)
+    if (bookmark) {
+      try {
+        const items = JSON.parse(localStorage.getItem(key) || '[]') as Array<Record<string, unknown>>
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            await fetch(`/api/v1/books/${bookmark[1]}/bookmarks`, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                cfi: item.cfi ?? null,
+                title: item.title ?? item.chapterTitle ?? 'Bookmark',
+                note: item.note ?? null,
+              }),
+            })
+          }
+        }
+      } catch {
+        // leave key for a later session
+        continue
+      }
+      localStorage.removeItem(key)
+      continue
+    }
+    const annotation = key.match(/^shelf:orbit-reader:annotations:(\d+)$/)
+    if (annotation) {
+      try {
+        const items = JSON.parse(localStorage.getItem(key) || '[]') as Array<Record<string, unknown>>
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            await fetch(`/api/v1/books/${annotation[1]}/annotations`, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                cfi: item.cfi ?? null,
+                text: item.text ?? '',
+                color: item.color ?? '#FACC15',
+                style: item.style ?? 'highlight',
+                note: item.note ?? null,
+                chapterTitle: item.chapterTitle ?? null,
+              }),
+            })
+          }
+        }
+      } catch {
+        continue
+      }
+      localStorage.removeItem(key)
+      continue
+    }
+    const prefs = key.match(/^shelf:orbit-reader:preferences:(\d+)$/)
+    if (prefs) {
+      try {
+        const body = JSON.parse(localStorage.getItem(key) || '{}')
+        if (body && typeof body === 'object') {
+          await fetch(`/api/v1/reader/preferences/${prefs[1]}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+        }
+      } catch {
+        continue
+      }
+      localStorage.removeItem(key)
+      continue
+    }
+    if (key === 'shelf:orbit-reader:defaults:0') {
+      try {
+        const body = JSON.parse(localStorage.getItem(key) || '{}')
+        if (body && typeof body === 'object') {
+          await fetch('/api/v1/reader/defaults', {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+        }
+      } catch {
+        continue
+      }
+      localStorage.removeItem(key)
+    }
+  }
+  localStorage.setItem(LOCAL_MIGRATE_FLAG, '1')
+}
+
+let _migrateStarted = false
+function ensureLocalMigration(): void {
+  if (_migrateStarted) return
+  _migrateStarted = true
+  void migrateLocalReaderData()
+}
+
 /** One catalogue row from Shelf. EPUB fields are flattened (`#[serde(flatten)]`), not nested. */
 type ShelfBookRow = {
   id: number
@@ -224,6 +349,9 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(locationBody),
       })
+      if (!res.ok && res.status >= 500) {
+        shelfHostOutbox('POST', `/api/v1/books/${write.fileId}/location`, locationBody)
+      }
       return res.ok ? emptyResponse() : res
     } catch (error) {
       if (error instanceof TypeError) {
@@ -265,6 +393,7 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
 }
 
 export async function api(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  ensureLocalMigration()
   const url =
     typeof input === 'string'
       ? new URL(input, window.location.origin)
@@ -293,19 +422,10 @@ export async function api(input: RequestInfo | URL, init: RequestInit = {}): Pro
       credentials: 'same-origin',
     })
     if (response.status === 401) _onAuthFailure?.()
+    if (!response.ok) queuePersistFailure(method, url.pathname, init, response.status)
     return response
   } catch {
-    if (method !== 'GET' && isPersistPath(url.pathname)) {
-      let body: unknown = null
-      if (init.body != null) {
-        try {
-          body = JSON.parse(String(init.body))
-        } catch {
-          body = null
-        }
-      }
-      shelfHostOutbox(method, url.pathname, body)
-    }
+    queuePersistFailure(method, url.pathname, init)
     throw new NetworkError()
   }
 }

@@ -46,11 +46,12 @@ test("orbit adapter leaves bookmarks annotations and prefs to Shelf APIs", () =>
   );
   assert.match(src, /Bookmarks, annotations, and reader preferences\/defaults hit Shelf SQLite APIs/);
   assert.doesNotMatch(src, /storageKey\(/);
-  assert.doesNotMatch(src, /shelf:orbit-reader:bookmarks/);
-  assert.doesNotMatch(src, /shelf:orbit-reader:annotations/);
-  assert.doesNotMatch(src, /shelf:orbit-reader:preferences/);
+  // Live requests go to Shelf; localStorage keys appear only in one-shot migrateLocalReaderData.
   assert.doesNotMatch(src, /\/api\/v1\/books\/\(\\d\+\)\/bookmarks/);
-  assert.doesNotMatch(src, /\/api\/v1\/reader\/preferences/);
+  assert.doesNotMatch(
+    src,
+    /if \(path === '\/api\/v1\/reader\/preferences/,
+  );
 });
 
 test("orbit adapter queues failed persist writes through ShelfHost", () => {
@@ -61,6 +62,19 @@ test("orbit adapter queues failed persist writes through ShelfHost", () => {
   assert.match(src, /function shelfHostOutbox/);
   assert.match(src, /type: 'outbox'/);
   assert.match(src, /isPersistPath/);
+  assert.match(src, /queuePersistFailure/);
+  assert.match(src, /status >= 500/);
+});
+
+test("orbit adapter one-shot migrates pre-M4 localStorage reader data", () => {
+  const src = readFileSync(
+    new URL("../web/orbit-reader/vendor/bookorbit/lib/api.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(src, /export async function migrateLocalReaderData/);
+  assert.match(src, /shelf:orbit-reader:migrated-v1/);
+  assert.match(src, /shelf:orbit-reader:bookmarks:/);
+  assert.match(src, /ensureLocalMigration/);
 });
 
 test("reader chrome pin preference persists in localStorage", () => {

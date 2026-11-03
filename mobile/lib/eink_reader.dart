@@ -193,8 +193,14 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   }
 }
 
-bool shouldOpenEinkReader({
+/// Local spine reader: Android e-ink with cache, or any offline open with cache.
+bool shouldOpenLocalEpubReader({
   required DisplayProfile profile,
   required bool isAndroid,
   required bool hasCachedEpub,
-}) => isAndroid && profile == DisplayProfile.eink && hasCachedEpub;
+  required bool online,
+}) {
+  if (!hasCachedEpub) return false;
+  if (!online) return true;
+  return isAndroid && profile == DisplayProfile.eink;
+}
