@@ -53,6 +53,16 @@ test("orbit adapter leaves bookmarks annotations and prefs to Shelf APIs", () =>
   assert.doesNotMatch(src, /\/api\/v1\/reader\/preferences/);
 });
 
+test("orbit adapter queues failed persist writes through ShelfHost", () => {
+  const src = readFileSync(
+    new URL("../web/orbit-reader/vendor/bookorbit/lib/api.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(src, /function shelfHostOutbox/);
+  assert.match(src, /type: 'outbox'/);
+  assert.match(src, /isPersistPath/);
+});
+
 test("reader chrome pin preference persists in localStorage", () => {
   const visibility = readFileSync(
     new URL(

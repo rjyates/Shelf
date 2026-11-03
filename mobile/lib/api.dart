@@ -249,6 +249,66 @@ class ShelfApi {
     );
   }
 
+  Future<void> saveLocation(
+    int bookId,
+    String position,
+    double percentage,
+  ) async {
+    await request(
+      'books/$bookId/location',
+      method: 'POST',
+      body: {'position': position, 'percentage': percentage},
+    );
+  }
+
+  /// Authenticated EPUB bytes for offline storage.
+  Future<List<int>> downloadEpub(int bookId) async {
+    try {
+      final request = await _client.getUrl(
+        base.resolve('/api/v1/books/$bookId/file'),
+      );
+      request.followRedirects = false;
+      if (_token != null) {
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      }
+      final response = await request.close().timeout(
+        const Duration(seconds: 90),
+      );
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        await response.drain<void>();
+        throw ShelfException(
+          'Enter the final HTTPS server address; redirects are not followed.',
+        );
+      }
+      final bytes = await response.fold<List<int>>(
+        <int>[],
+        (out, chunk) => out..addAll(chunk),
+      );
+      if (response.statusCode >= 400) {
+        throw ShelfException(
+          response.statusCode == 404
+              ? 'Book not found.'
+              : 'Could not download this EPUB.',
+        );
+      }
+      if (bytes.isEmpty) {
+        throw ShelfException('Could not download this EPUB.');
+      }
+      return bytes;
+    } on ShelfException {
+      rethrow;
+    } on Exception {
+      throw ShelfException(
+        'Could not reach your server. Check the address and connection.',
+      );
+    }
+  }
+
+  /// True when the failure is a transport/reachability problem worth queuing.
+  static bool isQueueFailure(Object error) =>
+      error is ShelfException &&
+      error.message.contains('Could not reach your server');
+
   Future<void> logout() async {
     try {
       await request('logout', method: 'POST');
