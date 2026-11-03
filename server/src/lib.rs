@@ -1,4 +1,5 @@
 mod epub;
+mod reader_data;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -7,7 +8,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use rand::{rngs::OsRng, RngCore};
@@ -110,6 +111,43 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/books/{id}/file", get(epub::file))
         .route("/api/v1/books/{id}/cover", get(epub::cover))
         .route("/api/v1/books/{id}/location", post(epub::location))
+        .route(
+            "/api/v1/books/{id}/bookmarks",
+            get(reader_data::list_bookmarks).post(reader_data::create_bookmark),
+        )
+        .route(
+            "/api/v1/books/{id}/bookmarks/{mark_id}",
+            patch(reader_data::patch_bookmark).delete(reader_data::delete_bookmark),
+        )
+        .route(
+            "/api/v1/books/{id}/annotations",
+            get(reader_data::list_annotations).post(reader_data::create_annotation),
+        )
+        .route(
+            "/api/v1/books/{id}/annotations/{annotation_id}",
+            patch(reader_data::patch_annotation).delete(reader_data::delete_annotation),
+        )
+        .route(
+            "/api/v1/reader/preferences/{id}",
+            get(reader_data::get_preferences)
+                .patch(reader_data::put_preferences)
+                .put(reader_data::put_preferences)
+                .delete(reader_data::delete_preferences),
+        )
+        .route(
+            "/api/v1/reader/defaults",
+            get(reader_data::get_defaults)
+                .patch(reader_data::put_defaults)
+                .put(reader_data::put_defaults)
+                .delete(reader_data::delete_defaults),
+        )
+        .route(
+            "/api/v1/reader/defaults/{group}",
+            get(reader_data::get_default_group)
+                .patch(reader_data::put_default_group)
+                .put(reader_data::put_default_group)
+                .delete(reader_data::delete_default_group),
+        )
         // Book Orbit EPUB reader (AGPL-3.0-only). Built assets live in web/orbit-reader/dist.
         .route("/reader", get(epub::reader))
         .route("/reader/{*rest}", get(epub::reader_path))

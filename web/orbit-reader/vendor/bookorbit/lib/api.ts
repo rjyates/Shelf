@@ -51,27 +51,6 @@ export async function fetchWithAuthProxyRecovery(
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 
-function storageKey(kind: string, bookId: number): string {
-  return `shelf:orbit-reader:${kind}:${bookId}`
-}
-
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : fallback
-  } catch {
-    return fallback
-  }
-}
-
-function writeJson(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // quota
-  }
-}
-
 function jsonResponse(body: Json, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -224,120 +203,7 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
     return res.ok ? emptyResponse() : res
   }
 
-  // Reader preferences / defaults — local only for now.
-  const prefMatch = path.match(/^\/api\/v1\/reader\/preferences\/(\d+)$/)
-  if (prefMatch) {
-    const key = storageKey('preferences', Number(prefMatch[1]))
-    if (method === 'GET') return jsonResponse(readJson(key, null))
-    if (method === 'PATCH' || method === 'PUT') {
-      const patch = init?.body ? JSON.parse(String(init.body)) : {}
-      const current = readJson<Record<string, unknown>>(key, {})
-      writeJson(key, { ...current, ...patch })
-      return jsonResponse(readJson(key, {}))
-    }
-    if (method === 'DELETE') {
-      localStorage.removeItem(key)
-      return emptyResponse()
-    }
-  }
-
-  if (path === '/api/v1/reader/defaults' || path.startsWith('/api/v1/reader/defaults/')) {
-    const key = storageKey('defaults', 0)
-    if (method === 'GET') return jsonResponse(readJson(key, {}))
-    if (method === 'PATCH' || method === 'PUT') {
-      const patch = init?.body ? JSON.parse(String(init.body)) : {}
-      const current = readJson<Record<string, unknown>>(key, {})
-      writeJson(key, { ...current, ...patch })
-      return jsonResponse(readJson(key, {}))
-    }
-    if (method === 'DELETE') {
-      localStorage.removeItem(key)
-      return emptyResponse()
-    }
-  }
-
-  // Bookmarks — Book Orbit's useBookmarks assigns `await res.json()` to an array ref.
-  const bookmarksMatch = path.match(/^\/api\/v1\/books\/(\d+)\/bookmarks(?:\/(\d+))?$/)
-  if (bookmarksMatch) {
-    const bookId = Number(bookmarksMatch[1])
-    const bookmarkId = bookmarksMatch[2] ? Number(bookmarksMatch[2]) : null
-    const key = storageKey('bookmarks', bookId)
-    type Bookmark = {
-      id: number
-      bookId: number
-      cfi: string | null
-      title: string
-      note?: string | null
-      createdAt: string
-    }
-    const items = readJson<Bookmark[]>(key, [])
-    if (method === 'GET') return jsonResponse(items)
-    if (method === 'POST') {
-      const body = init?.body ? JSON.parse(String(init.body)) : {}
-      const next: Bookmark = {
-        id: Date.now(),
-        bookId,
-        cfi: body.cfi ?? null,
-        title: body.title ?? body.chapterTitle ?? 'Bookmark',
-        note: body.note ?? null,
-        createdAt: new Date().toISOString(),
-      }
-      writeJson(key, [...items, next])
-      return jsonResponse(next, 201)
-    }
-    if (bookmarkId && method === 'DELETE') {
-      writeJson(
-        key,
-        items.filter((item) => item.id !== bookmarkId),
-      )
-      return emptyResponse()
-    }
-    if (bookmarkId && (method === 'PATCH' || method === 'PUT')) {
-      const body = init?.body ? JSON.parse(String(init.body)) : {}
-      const updated = items.map((item) =>
-        item.id === bookmarkId ? { ...item, ...body, id: bookmarkId, bookId } : item,
-      )
-      writeJson(key, updated)
-      return jsonResponse(updated.find((item) => item.id === bookmarkId) ?? body)
-    }
-  }
-
-  // Annotations — paginated `{ items, total }` when page= is present; bare array otherwise.
-  const annotationsMatch = path.match(/^\/api\/v1\/books\/(\d+)\/annotations(?:\/(\d+))?$/)
-  if (annotationsMatch) {
-    const bookId = Number(annotationsMatch[1])
-    const annotationId = annotationsMatch[2] ? Number(annotationsMatch[2]) : null
-    const key = storageKey('annotations', bookId)
-    type Annotation = Record<string, Json> & { id: number }
-    const items = readJson<Annotation[]>(key, [])
-    if (method === 'GET') {
-      if (url.searchParams.has('page') || url.searchParams.has('readerFileId')) {
-        return jsonResponse({ items, page: 1, pageSize: Math.max(items.length, 1), total: items.length })
-      }
-      return jsonResponse(items)
-    }
-    if (method === 'POST') {
-      const body = (init?.body ? JSON.parse(String(init.body)) : {}) as Record<string, Json>
-      const next = { ...body, id: Date.now() } as Annotation
-      writeJson(key, [...items, next])
-      return jsonResponse(next, 201)
-    }
-    if (annotationId && method === 'DELETE') {
-      writeJson(
-        key,
-        items.filter((item) => item.id !== annotationId),
-      )
-      return emptyResponse()
-    }
-    if (annotationId && (method === 'PATCH' || method === 'PUT')) {
-      const body = (init?.body ? JSON.parse(String(init.body)) : {}) as Record<string, Json>
-      const updated = items.map((item) =>
-        item.id === annotationId ? ({ ...item, ...body, id: annotationId } as Annotation) : item,
-      )
-      writeJson(key, updated)
-      return jsonResponse(updated.find((item) => item.id === annotationId) ?? body)
-    }
-  }
+  // Bookmarks, annotations, and reader preferences/defaults hit Shelf SQLite APIs (milestone 4).
 
   // Font lists must be arrays — Book Orbit does `await res.json()` then `.map(...)`.
   if (path === '/api/v1/fonts' || path === '/api/v1/server-fonts') {

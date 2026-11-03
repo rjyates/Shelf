@@ -3,7 +3,7 @@
   "info": {
     "title": "Shelf API",
     "version": "1.0.0",
-    "description": "Catalogue, manual page progress, authenticated EPUB import/download, and shared reader positions."
+    "description": "Catalogue, manual page progress, authenticated EPUB import/download, shared reader positions, and persisted bookmarks/annotations/reader preferences."
   },
   "servers": [
     {
@@ -365,6 +365,354 @@
           },
           "404": {
             "description": "EPUB not found or not owned"
+          }
+        }
+      }
+    },
+    "/books/{id}/bookmarks": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owned bookmark array (camelCase Book Orbit fields)"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found or not owned"
+          }
+        }
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Bookmark created"
+          },
+          "400": {
+            "description": "Invalid bookmark"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found or not owned"
+          }
+        }
+      }
+    },
+    "/books/{id}/bookmarks/{markId}": {
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "markId",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bookmark updated"
+          },
+          "404": {
+            "description": "Bookmark or book not found"
+          }
+        }
+      },
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "markId",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Bookmark deleted"
+          },
+          "404": {
+            "description": "Bookmark not found"
+          }
+        }
+      }
+    },
+    "/books/{id}/annotations": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation array, or {items,page,pageSize,total} when page/readerFileId is set"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found or not owned"
+          }
+        }
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Annotation created"
+          },
+          "400": {
+            "description": "Invalid annotation"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found or not owned"
+          }
+        }
+      }
+    },
+    "/books/{id}/annotations/{annotationId}": {
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "annotationId",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annotation updated"
+          },
+          "404": {
+            "description": "Annotation or book not found"
+          }
+        }
+      },
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "annotationId",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Annotation deleted"
+          },
+          "404": {
+            "description": "Annotation not found"
+          }
+        }
+      }
+    },
+    "/reader/preferences/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-book settings object, or null when unset"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found or not owned"
+          }
+        }
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "Merged preferences object"
+          }
+        }
+      },
+      "patch": {
+        "responses": {
+          "200": {
+            "description": "Merged preferences object"
+          }
+        }
+      },
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Preferences cleared"
+          }
+        }
+      }
+    },
+    "/reader/defaults": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Account-wide reader defaults object"
+          }
+        }
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "Merged defaults object"
+          }
+        }
+      },
+      "patch": {
+        "responses": {
+          "200": {
+            "description": "Merged defaults object"
+          }
+        }
+      },
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Defaults cleared"
+          }
+        }
+      }
+    },
+    "/reader/defaults/{group}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One defaults group object"
+          }
+        }
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "Merged group object"
+          }
+        }
+      },
+      "patch": {
+        "responses": {
+          "200": {
+            "description": "Merged group object"
+          }
+        }
+      },
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Group removed"
           }
         }
       }
