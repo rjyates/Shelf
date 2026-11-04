@@ -11,7 +11,6 @@ import 'connectivity.dart';
 import 'display_profile.dart';
 import 'eink_reader.dart';
 import 'epub_store.dart';
-import 'reader.dart';
 import 'sync_outbox.dart';
 
 void main() => runApp(const ShelfApp());
@@ -641,49 +640,43 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _read(Book book) async {
     final epubs = widget.epubs;
-    final cached = epubs != null && await epubs.has(book.id);
+    if (epubs == null) return;
     final online = connectivityLooksOnline(
       await Connectivity().checkConnectivity(),
     );
-    final useLocal = shouldOpenLocalEpubReader(
-      profile: _profile,
-      isAndroid: Platform.isAndroid,
-      hasCachedEpub: cached,
-      online: online,
-    );
-    if (!useLocal && !online) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Save offline first to read without a connection.'),
-          ),
-        );
+    var cached = await epubs.has(book.id);
+    if (!cached) {
+      if (!online) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Save offline first to read without a connection.'),
+            ),
+          );
+        }
+        return;
       }
-      return;
+      try {
+        await epubs.save(book.id, await widget.api.downloadEpub(book.id));
+        cached = true;
+        if (mounted) setState(() => _savedOffline.add(book.id));
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+        }
+        return;
+      }
     }
-    if (_profile == DisplayProfile.eink &&
-        Platform.isAndroid &&
-        !cached &&
-        mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Save offline first for the e-ink reader; opening Foliate.',
-          ),
-        ),
-      );
-    }
-    if (!mounted) return;
+    if (!mounted || !cached) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => useLocal
-            ? EinkReaderScreen(
-                api: widget.api,
-                book: book,
-                epubs: epubs!,
-                outbox: widget.outbox,
-              )
-            : ReaderScreen(api: widget.api, book: book, outbox: widget.outbox),
+        builder: (_) => EinkReaderScreen(
+          api: widget.api,
+          book: book,
+          epubs: epubs,
+          outbox: widget.outbox,
+        ),
       ),
     );
     await _refresh();

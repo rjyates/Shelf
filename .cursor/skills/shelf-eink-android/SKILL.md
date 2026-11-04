@@ -4,8 +4,8 @@ description: >-
   Sideload and exercise Shelf's Flutter Android app on a local e-ink tablet
   (SuperNote Nomad) against a loopback Shelf server via adb reverse. Use when
   installing or testing the mobile app on physical Android/e-ink hardware,
-  debugging WebView reader connection errors, automating login on device, or
-  continuing Nomad/device QA sessions.
+  debugging Readium open / EPUB download over adb reverse, automating login on
+  device, or continuing Nomad/device QA sessions.
 ---
 
 # Shelf e-ink Android device testing
@@ -18,8 +18,8 @@ Read this skill before inventing a new install/login/reader path.
 
 ## Hard-won facts (do not rediscover)
 
-1. **Dart API ≠ WebView networking.** Catalogue/login use Dart `HttpClient` (works over HTTP). The Foliate reader is a **WebView**, which enforces Android cleartext policy. Without cleartext, Read book shows: `Could not open the reader. Check your connection.`
-2. **Debug/profile already allow cleartext** in `mobile/android/app/src/{debug,profile}/AndroidManifest.xml` (`usesCleartextTraffic=true`). Release must stay HTTPS-only. If reader fails after a clean rebuild, confirm that flag is still in the **merged** debug manifest.
+1. **One mobile reader: Readium.** Read book downloads/caches the EPUB via Dart `HttpClient`, then opens `flutter_readium`. There is no Foliate WebView on mobile (Foliate is web-only).
+2. **Debug/profile already allow cleartext** in `mobile/android/app/src/{debug,profile}/AndroidManifest.xml` (`usesCleartextTraffic=true`) so HTTP loopback downloads work. Release must stay HTTPS-only.
 3. **Loopback to the host is `adb reverse`, not the LAN IP.** App accepts plain HTTP only for `localhost` / `127.0.0.1`. On device use `http://127.0.0.1:8080` after `adb reverse tcp:8080 tcp:8080`.
 4. **USB often fails through docks.** Prefer a **data** cable into a **direct** Framework/laptop port. Nomad enumerates as Rockchip `Supernote Nomad` (`idVendor=2207`). Empty `adb devices` + no new `lsusb` row ⇒ cable/port/sideloading, not the app.
 5. **Nomad sideloading:** Settings → Security & Privacy → **Sideloading** ON (accept disclaimer). First connect may prompt USB debugging — accept.
@@ -93,9 +93,8 @@ python3 .cursor/skills/shelf-eink-android/scripts/device_login.py
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `Could not open the reader. Check your connection.` | WebView cleartext blocked or reverse missing | Confirm debug cleartext + `adb reverse --list` shows `tcp:8080` |
-| `Could not open the reader.` (no “connection”) | Exception in cookie seed / `loadRequest` | Logcat; check `sessionToken` / cookie domain host |
-| Catalogue works, reader blank/error | Same cleartext/reverse split as (1) | Do not “fix” API client; fix WebView path |
+| Read fails / cannot download EPUB | Reverse missing or cleartext blocked | Confirm debug cleartext + `adb reverse --list` shows `tcp:8080` |
+| Catalogue works, Readium blank/error | Bad/missing local EPUB bytes or Readium open | Logcat `ShelfEink` / Readium; retry Save offline then Read |
 | Login validation “Enter your username” after automation | Keyboard ate taps | Dismiss keyboard between fields; username first |
 | `adb devices` empty | Cable/dock/sideloading | Direct port, data cable, Sideloading ON |
 | Reverse was fine, then broke | USB re-enumeration | Re-run `adb reverse tcp:8080 tcp:8080` |

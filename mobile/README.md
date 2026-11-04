@@ -2,9 +2,9 @@
 
 One Flutter/Dart application for Android and iPhone. Use the Flutter version in the repository's `.flutter-version` file.
 
-Create your account in the Shelf web app, then enter your HTTPS server address and sign in here. This is one Flutter app for Android and iPhone. The foundation supports catalogue, metadata, page progress, and opening EPUBs in a WebView against the shared Book Orbit reader.
+Create your account in the Shelf web app, then enter your HTTPS server address and sign in here. This is one Flutter app for Android and iPhone. Catalogue, metadata, page progress, and EPUB reading use the shared native Readium reader (`flutter_readium`); the Book Orbit Foliate host remains the **web** reader only.
 
-Product shape (see [roadmap](../docs/parity.md)): e-ink vs LCD display profile from first-run onboarding (retoggle in Display settings); Save offline caches EPUB bytes; the sync outbox flushes on refresh and when connectivity returns (including HTTP 5xx failures). Cached opens on Android e-ink (or any offline device) use Readium (`flutter_readium`) with bookmarks/highlights/stylus ink; online LCD/iPhone keep Foliate. Ink mode probes OEM partial-refresh adapters when present (`EinkRefresh`) — see [Nomad stylus notes](../docs/research/nomad-stylus.md).
+Product shape (see [roadmap](../docs/parity.md)): e-ink vs LCD display profile from first-run onboarding (retoggle in Display settings); Read book downloads the EPUB into the local store if needed, then opens Readium; Save offline pre-caches bytes; the sync outbox flushes on refresh and when connectivity returns (including HTTP 5xx failures). Stylus ink overlays the Readium surface; accelerated live ink is Nomad-only today — see [Nomad stylus notes](../docs/research/nomad-stylus.md).
 
 From this directory, run `flutter pub get --enforce-lockfile`, `flutter analyze --fatal-infos`, and `flutter test`. Launch with `flutter run` on a configured device or emulator. A phone cannot reach a server bound only to another computer's loopback interface; use the HTTPS reverse-proxy setup described in the [root README](../README.md).
 

@@ -5,13 +5,14 @@
 ```
 Nomad app (Flutter)
   ├─ Dart HttpClient → http://127.0.0.1:8080/api/...   (adb reverse)
-  └─ WebView → /reader?id=… (+ Bearer, seeded shelf_session cookie)
-       └─ Foliate XHR → /file, /location (same origin, cookie)
+  │    downloadEpub → EpubStore → flutter_readium open
+  └─ Readium native view (+ optional InkHostView overlay)
 Host
   └─ shelf-server SHELF_LISTEN=127.0.0.1:8080  SHELF_DATA=./data
 ```
 
-Cookie seed lives in `mobile/lib/reader.dart` (`WebViewCookieManager` + `shelf_session`). Clear cookies only immediately before seed; dispose still clears on leave.
+Mobile does **not** embed Foliate WebView. Book Orbit Foliate remains the web
+`/reader` host only.
 
 ## Supernote specifics
 
@@ -36,7 +37,7 @@ android:usesCleartextTraffic="true"
 
 Inspect: `mobile/build/app/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml`
 
-WebView sandboxed process logs `NetworkSecurityConfig: … platform default` either way; the application flag still controls cleartext allowance.
+Needed so EPUB download over `http://127.0.0.1:8080` works in debug.
 
 ## UI automation tips
 
@@ -45,6 +46,7 @@ WebView sandboxed process logs `NetworkSecurityConfig: … platform default` eit
 - `adb shell input text` rejects some shell-splitting URLs if the command is built via naive word-splitting — use Python `subprocess` list argv.
 - Colons in URLs are fine when passed as a single argv element.
 - After install, session is memory-only — every cold start needs login again.
+- `uiautomator dump` can return null on first frames — retry; dismiss IME with `KEYCODE_BACK` between fields.
 
 ## Screenshots
 
@@ -52,10 +54,8 @@ WebView sandboxed process logs `NetworkSecurityConfig: … platform default` eit
 adb exec-out screencap -p > /tmp/shelf-nomad/shot.png
 ```
 
-WebView content often has **empty** accessibility text dumps; screenshots are the ground truth for reader chrome.
-
 ## Related docs
 
 - `mobile/README.md` — product shape, HTTPS phone path
 - `AGENTS.md` — fmt/analyze/test gates
-- `docs/parity.md` — milestone status (mobile online reader vs display-profile onboarding)
+- `docs/research/nomad-stylus.md` — Nomad ink path + do-not-retread
