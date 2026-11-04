@@ -1,120 +1,233 @@
-# SuperNote Nomad stylus exposure (2026-11-02)
+# SuperNote Nomad stylus & live ink (Shelf)
 
-Device: `SN078F10019410` · model `Supernote Nomad` · Android 11 / SDK 30 · build `eng.supern.20261019.184438`.
+Device used for all physical smoke: `SN078F10019410` · Supernote Nomad · Android 11 /
+SDK 30 · build `eng.supern.20261019.184438`. Evidence: REA + `adb` / `getevent`.
 
-Evidence gathered with REA (`list_adb_*`, `pull_adb_package`, JADX class/method inspect) plus `getevent` / `dumpsys input` on the connected tablet.
+**Scope today:** accelerated live ink is **SuperNote Nomad only**. Physical
+smoke and OEM refresh knobs were proven on one device
+(`SN078F10019410`). Other Android tablets (LCD or e-ink) get Flutter Canvas
+via `noop` / `InkOverlay` — usable strokes, not Nomad tip feel.
 
-## What third-party apps (including Shelf) get
+**Shipped Nomad path (2026-11-04, ~0.15–0.2s tip lag):** translucent
+`InkHostView` + `ShelfEink` SPEED screen mode + A2 host update mode + tip lead.
+Code: `EinkRefreshPlugin.kt`, `InkHostView.kt`, `ShelfEink.kt`, `eink_refresh.dart`.
+Commit family: `feat/nomad-ink-latency` / “lock Shelf Nomad ink overlay…”.
+Mid-stroke “fill-in while drawing” experiments abandoned (see Do not retread).
 
-The EMR digitizer is exposed as a normal Android input device named **`Wacom-pen`** (`/dev/input/event7`, vendor `0x2d1f`).
+Read **Do not retread** before changing ink. Older sections are historical.
 
-Cooked Android `InputDevice` sources `0x00005002` (stylus + touchscreen class) with:
+### Roadmap (drawing)
 
-| Axis | Raw | Cooked |
+1. **Generic Android tablet drawing** — one portable mid-stroke path (Surface /
+   Flutter) that works on any stylus Android tablet without OEM refresh APIs.
+   Nomad keeps its SPEED+A2 backend behind the same `EinkRefresh` contract.
+2. **Golden tablets** — after the generic path is solid, deepen a few devices
+   that are open enough to hack (framework / EPD / binder access). Nomad is the
+   first golden; candidates later (e.g. Onyx `EpdController`) only when we can
+   smoke them the way we did Nomad. Do not invent backends from datasheets alone.
+
+---
+
+## Current product behavior
+
+1. Probe Android for `getSystemService("eink")` or features `android.software.eink` /
+   `hteink` → backend id `ratta_pw` (means “Shelf overlay on Ratta device”, not
+   Notes PWCore).
+2. Ink mode on: attach translucent `InkHostView` over the reader content rect;
+   `EinkManager.setScreenMode(SPEED=2)`; `View.setEinkUpdateMode(A2)` on the host;
+   harden WebView `user-select`; consume stylus in `MainActivity` (fingers still
+   page-turn).
+3. Mid-stroke: draw into a **transparent** host bitmap → one coalesced
+   `lockCanvas`/`present` per MotionEvent; tip lead (~28 ms velocity, max 14 px).
+4. Pen-up: emit stroke on `shelf.eink/strokes` for persistence; **no** soft refresh.
+5. Ink mode off: restore screen mode, soft DU once, remove host; Flutter paints
+   committed strokes. Live A2 looks thinner until this exit — accepted.
+
+LCD / `noop`: Flutter `InkOverlay` global pointer route + Canvas (no native host).
+
+### Portability (honest)
+
+| Piece | Scope today |
+| --- | --- |
+| Flutter `InkOverlay` + stroke math (`ink_pipeline`) | Any Android / LCD `noop` |
+| Probe → `ratta_pw` + SPEED/A2 + tip lead | **Nomad / Ratta only** (proven) |
+| `InkHostView` Surface overlay without SPEED/A2 | Built, not productized as “generic tablet” yet |
+
+Probe matching `eink` / `hteink` on a non-Nomad device may attach the overlay
+with no-op refresh → lag like plain Surface; that is **not** a supported
+backend. Treat non-Nomad as `noop` until the generic tablet path lands, then
+add golden backends one device at a time.
+
+### What Notes does (why we do not clone it)
+
+Notes tip feel is `librecgnition.so` `ThreadUpdateEpdc` → `HTEINK_IOC_DISPAREA` on
+`/dev/ebc` (direct overlay FB), plus HandWrite / SF STARTPW / PWCore. That is
+privileged OEM stack, not a public SDK. Shelf approximates with framework SPEED+A2
+on **our** Surface. Raw DISPAREA / shipping Notes `.so` is out of product scope.
+
+---
+
+## Do not retread (hard-won)
+
+| Do not | Why | Symptom we saw |
 | --- | --- | --- |
-| X / Y | 0…15819 / 0…11864 | mapped to display 1404×1872 |
-| Pressure | 0…4095 | 0…1 |
-| Tilt X/Y | ±9000 (res 5730) | `TILT` 0…π/2 |
-| Hover | `ABS_Z` −255…0 | via distance when reported |
-| Buttons | `BTN_TOUCH`, `BTN_STYLUS`, `BTN_STYLUS2`, `BTN_TOOL_RUBBER` | tool type stylus / eraser |
+| Mid-stroke `EinkManager.screenRefresh` | Queues panel GC | ~0.5s+ tip lag |
+| Soft refresh on every pen-up (sync) | Fights SPEED/A2 | Sticky tip, worse feel |
+| Mid-stroke fill-in (DU host, no SPEED, polish-after-lift, view-mode flip) | Fought tip feel or looked unchanged / worse | Abandoned 2026-11-04; keep SPEED+A2 |
+| `enableFullUiAuto(false)` without working EMR | Freezes UI partials | Ink invisible until mode exit |
+| Notes HandWrite binder as live paint | Reply `realTimeHandWriting` ≠ our pixels | No mid-stroke ink |
+| `PWCoreCtrl` / SF Communicate from sideload | SecurityException / no paint | Dead end |
+| FastPW `postRectForPw` + host bmp chase | Plateau ~0.5s; easy to blank page | White page / flash |
+| `SYNC_PW` mid-stroke | Bad waveform for our host | Flash + white page |
+| Seed WebView / PixelCopy into host bmp | Opaque page cover | White page when drawing |
+| PixelCopy Flutter SurfaceView | Unsafe | SIGBUS |
+| `deinitForPw` on exit | Firmware bug | Scudo abort |
+| Present every history sample | UI thread flood | ANR, 8–21s/event |
+| Live `initForPw`+refresh from `diagnose`/`ensureReady` | Hot path | SIGSEGV with reader open |
+| Mid-stroke Flutter Canvas on Nomad accelerated | Panel ignores Flutter damage | Ink only after mode exit |
+| `setState` on every native stroke while ink mode on | Flutter invalidate | Full GC flash |
+| Reload stroke geometry from server after save | EMA/finalize morph | Path changes after lift |
+| Cover EMR (if ever) with opaque Surface | Z-order | Overlay invisible |
 
-Flutter maps this to `PointerDeviceKind.stylus` / `invertedStylus` with `pressure`, `tilt`, and stylus buttons. **No special Ratta SDK is required for basic ink.**
+### Safe patterns (keep)
 
-`pm list features` declares `android.software.eink` and `android.software.hteink`, but **not** `android.hardware.faketouch.stylus` or any other stylus feature flag.
+- One `present` per MotionEvent after coalescing dirty rects.
+- Transparent host bitmap; ink only.
+- Diagnose passive (probe/flags only); live refresh only in begin/end ink.
+- Consume stylus only; never consume finger.
+- Persist via `nativeStrokes` without rebuilding the Flutter layer mid-session.
+- Clear native ink layer on page turn (`clearInkLayer`).
+- Temurin/Java 21 for Flutter Android builds when host JDK is 25+.
+- Device login: wait for ≥3 EditTexts (Nomad first frame is slow).
 
-## What is proprietary (do not depend on for Shelf)
+---
 
-`com.ratta.drawpath` (`DrawService`, action `com.ratta.DrawService`) is the system handwriting accelerator:
+## Input device (portable baseline)
 
-- Native methods `startDraw(boolean, String)` and JNI `MyNativeBridge.nativeTransactCompat` load `librecgnition.so` (plus `librPainter.so`).
-- On Nomad it passes log path `/data/vendor/eink/logd/realTimeHandWriting`.
-- Broadcasts include `android.intent.action.drawAppStart`, `android.intent.action.penup`, and pen-button double-click actions — system-user only.
-- This path is for Ratta’s own notes/docs stack (C++ / MyScript-class latency), not a supported API for sideloaded apps. Community reports match: Android Ink / Flutter alone is higher latency than Notes.
+EMR appears as **`Wacom-pen`** (`/dev/input/event7`, vendor `0x2d1f`). Cooked
+`InputDevice` sources stylus+touchscreen; Flutter `PointerDeviceKind.stylus` /
+`invertedStylus` with pressure/tilt. No Ratta SDK required for sampling.
 
-Binder services `eink` (`android.os.IEinkManager`), `hteink`, and `opt_service` are **display/refresh** control, not a pen stroke API. They are the right place for a **refresh adapter**, not for sampling ink.
+Features: `android.software.eink`, `android.software.hteink` (not
+`android.hardware.faketouch.stylus`).
 
-`com.ratta.supernote.inkhub` is the InkHub marketplace app, not an input SDK.
+## Proprietary (do not ship / do not depend)
 
-SuperNote’s published **plugin** APIs (`canHandwrite`, `getPenInfo` in `sn-plugin-lib`) apply inside the Notes/Document plugin host — not to arbitrary Flutter APKs. No `getPenInfo` class name appears in the pulled PluginHost APK inventory under that string.
+- `com.ratta.drawpath` + `librecgnition.so` / `librPainter.so` / `DrawService`
+- Notes HandWrite `service_myservice` / `superNoteNote` protocol
+- `ThreadSampleEmr`, OpenCV `drawLineLive`, Wacom/Lamy LUT catalogs
+- Raw `/dev/ebc` as **primary** product path (experimental O5 only; still OEM-specific)
 
-## Shelf plan
+Binder `eink` / `hteink` / `opt_service` = **refresh** control, not stroke APIs.
+`sn-plugin-lib` handwriting APIs are for Notes plugin host only.
 
-1. Capture stylus via Flutter `Listener` (`PointerDeviceKind.stylus` / `invertedStylus` only → palm rejection by kind).
-2. Overlay strokes on the e-ink Readium reader; sync as Shelf annotations (`style: "ink"`).
-3. Shape strokes with a portable pipeline (`mobile/lib/ink_pipeline.dart`) derived from REA math — not Ratta libs.
-4. Abstract partial refresh behind one ink-session API; vendor backends (Ratta PW, Onyx EPD, noop) — prefer framework reflection over raw ioctl.
+## Portable stroke math (from REA ideas, reimplemented)
 
-## Portable math derived from `librecgnition.so` (REA)
+In `mobile/lib/ink_pipeline.dart`: smoothstep, pressure→width, thin/EMA,
+`tiltWidthFactor` (procreate-style). Do not link Notes binaries.
 
-Treat decompiled formulas like a Stack Overflow answer — reimplement, do not ship their binary.
+## Deferred
 
-| Symbol (observed) | Formula we use | Shelf location |
+| ID | Item | Notes |
 | --- | --- | --- |
-| `smoothstep(edge0,edge1,x)` | clamp `t=(x−e0)/(e1−e0)` then `t²(3−2t)` | `inkSmoothstep` |
-| `pressureMapping2Width(scale,p,max,min)` | linear map clamped pressure span → width (+floor) | `widthFromPressure` on Android’s already-normalized `0…1` pressure |
-| `reduceSamplePoints` / contour smooth | min-distance thin + one-pass EMA (KISS stand-in for Gaussian) | `thinInkPoints` / `smoothInkPoints` / `finalizeInkPoints` |
-| `procreateStyleWidth` (tilt/azimuth) | **done in M7 PR** | `tiltWidthFactor` + `InkPoint.orientation`; Lamy LUT skipped |
+| G1 | Generic Android tablet mid-stroke drawing | Portable path before more OEM backends |
+| G2 | Golden-tablet backends | Per device that we can physically hack; Nomad first |
+| O5 | Shelf `HTEINK_IOC_DISPAREA` wrapper | **Experimental** behind `debug.shelf.ink.ebc=1` (see below) |
+| O10 | Azimuth×brush chisel | Optional feel |
+| O11 | Ink marks UI / clear-all | Product |
+| O12 | Stable PDF/fixed-layout anchors | After PDF reader |
+| O13 | Per-vendor refresh settings | Power users, after G2 |
+| Onyx (example golden) | `EpdController` DW | Only with device in hand + smoke; same `EinkRefresh` contract |
 
-**Partial refresh is not skipped — it gets its own adapter** (see below). Do not open `/dev/ebc` from Flutter first; prefer the framework PW APIs REA found.
+---
 
-## Deferred-item disposition (REA complete enough to plan)
+## Historical experiments (archive)
 
-| Item | Ship in Shelf? | Milestone | Why |
-| --- | --- | --- | --- |
-| Tilt / `procreateStyleWidth` | **Yes** (portable math) | **M7 PR** | Decompiled: `factor = clamp(1 − 0.98·smoothstep(sin(tilt)), 0.1, 1) * baseWidth` (Lamy nested term omitted). Azimuth stored; brush-dir dot was log-only in their binary. |
-| EPDC / PW / partial refresh | **Yes** (adapter, not ioctl clone) | **M8** (before or with PDF ink) | Prefer `EinkPWCoreController` / Onyx `EpdController`; raw `/dev/ebc` last resort. Probe callability first. |
-| OEM `ThreadSampleEmr` | **No** | never | Privileged raw EMR loop (`BTN_TOOL_PEN`/`RUBBER`, G12/G14, system pen-button broadcasts). Sideloaded apps already get cooked `Wacom-pen` MotionEvents. |
-| OpenCV `drawLineLive` / `librPainter` | **No** (as-is) | never as OpenCV | Tied to Notes framebuffer + EPDC. Keep Flutter `Canvas`; if laggy later, optional Dart isolate / Skia path — not OpenCV. |
-| Wacom / Lamy type LUTs | **No catalog** | only if Nomad feel wrong | `normalizePressure` itself logs *“should not use any more”*; `getLamyWidth` is huge `logIndex_X1000` tables per `WalcomEmrType`/`LineWidthType`. Android already normalizes 0…1. At most one empirical curve later — not a pen SKU matrix. |
+**2026-11-03 O1:** Framework PW callable; `postRectForPw` no-op without host bmp;
+diagnose+init SIGSEGV; Flutter invalidate mid-stroke ~0.5s + select issues.
 
-## What makes Notes feel “great” (observed in `librecgnition.so`)
+**2026-11-03–04 host-bmp + HandWrite + FastPW:** Live Surface present helped;
+FastPW/SYNC_PW/`enableFullUiAuto` caused white page or no gain past ~0.5s.
 
-Native stack (`librecgnition.so` ~1.4 MiB arm64, ~1496 dynamic exports; plus `librPainter.so`) is **not** a thin wrapper over `MotionEvent`. Strings/symbols show:
+**2026-11-04 EMR-only (no Surface):** Ink only after mode exit; abandoned.
 
-- `ThreadSampleEmr` — dedicated EMR sampler (`thread_sample_emr`, `getStylusIsSensed`, pen-type paths, hover points).
-- `thread_update_epdc` / `EINK_IOC_GETINFO` / `HTEINK_IOC_MISCCTL` — **direct e-ink controller ioctls** while writing (partial refresh), not Flutter/Canvas.
-- `thread_draw_path` / `drawLineLive` / OpenCV mats — live stroke rasterization off the UI thread.
-- Pressure calibration per Wacom EMR generation (`wacomEmrType`, G12/G14, `ADJUST_SAMPLE_PRESSURE`, “lamy shold use new pressure”).
-- Pen models (`FOUNTAIN_PEN`, `CALLIGRAPHY_PEN`, `MARK_PEN_*`, eraser via `BTN_TOOL_RUBBER`).
-- JNI only exposes `DrawService.startDraw` and `MyNativeBridge.nativeTransactCompat` — not a public stroke API.
+**2026-11-04 locked path:** Surface + SPEED + A2 + tip lead → ~0.15–0.2s tip lag.
 
-Hardware already separates **pen** (`Wacom-pen`) from **finger** (`pt_mt`, `cyttsp5_mt`). That is most of “palm rejection” for sideloaded apps: ignore touch while drawing with stylus. Notes’ remaining magic is privileged EMR + EPDC access inside a system service.
+### Latency wins (keep)
 
-## Can Shelf reverse-engineer and ship that stack?
+What actually moved tip feel from ~0.5s toward Notes-like (~0.15–0.2s) on Nomad:
 
-**Clone Notes’ native stack: no. Abstract partial refresh with OEM backends: yes — that is the intended path.**
+| Lever | Role |
+| --- | --- |
+| Translucent `InkHostView` Surface + host software bitmap | Visible mid-stroke plane (Flutter Canvas damage is ignored while accelerated) |
+| One coalesced `present` per `MotionEvent` | Avoids ANR from per-history-sample presents |
+| `EinkManager.setScreenMode(SPEED=2)` | System scribble-class refresh while inking |
+| `View.setEinkUpdateMode(A2)` on the host | Fast partial waveform for overlay damage |
+| Tip lead (~28 ms velocity, capped ~14 px) | Paints slightly ahead so lag *feels* smaller |
+| No soft refresh / `screenRefresh` mid-stroke or on every UP | Those queue GC / sticky tip |
+| Fingers not consumed | Page-turn still works; stylus-only capture |
 
-| Approach | Feasible? | Why |
-| --- | --- | --- |
-| Ship/link `librecgnition` / copy Notes’ EMR+OpenCV stack | No | System service, not a public SDK |
-| Raw `/dev/ebc` ioctls from Shelf | Last resort | `ThreadUpdateEpdc` opens `/dev/ebc` + `HTEINK_IOC_MISCCTL` (`CLERA_PW_RECT`); node is world-`rw` here but SELinux `rga_device` + buffer ownership; framework already wraps this |
-| **Abstract partial refresh + vendor adapters** | **Yes** | Same product idea as Onyx `EpdController` DW/GU; Ratta exposes pen-write (PW) framework APIs |
-| Standard Android stylus + Canvas (current M7) | Yes | Portable baseline until a refresh adapter is wired |
+Ink-off still does restore screen mode + one soft DU; live A2 ink looks thinner /
+scratchier than the post-exit Flutter+softDu view. **Accepted** for M8 tip speed.
 
-## Abstract e-ink refresh (REA-backed)
+### Quality / “fill-in while drawing” (abandoned 2026-11-04)
 
-REA shows **three layers** on Nomad:
+User-visible problem: live ink thin/jagged; toggling drawing off “fills in” blacks.
+Hypothesis was A2 vs DU. Device smoke showed otherwise:
 
-1. **Binder:** `eink` → `android.os.IEinkManager`; `hteink` → `hteink.IDeviceManagerService`; `opt_service` → `hteink.optimization.IOptService`. Features: `android.software.eink`, `android.software.hteink`.
-2. **Framework PW API (preferred adapter target):** `libeinkpwcoreapi.jar` / `htfyview.jar` / `htfypw.jar` — `EinkPWCoreController` (`initForPw`, `postRectForPw`, `nativeAddPWRect`, `setEinkUpdateMode`, `screenRefresh`), `android.view.EinkPWInterface`, `htfyun.penwrite.ctrl.PWCoreCtrl`.
-3. **Notes-only native:** `ThreadUpdateEpdc` → `/dev/ebc` + framebuffer mats. How Notes gets “ink now”; not the portable entry.
+| Attempt | Result |
+| --- | --- |
+| Soft DU on every pen-up | Sticky tip; fights SPEED/A2 |
+| Delayed local DU `present` after UP (~90 ms) | No visible change under SPEED |
+| Idle-coalesced polish (~28 ms, pressure-early arm, union across lifts) | Still no visible fill-in; speed unchanged |
+| Live host DU instead of A2 (still under SPEED) | **Identical** to A2 — `setEinkUpdateMode` does not override SPEED’s look |
+| Drop SPEED, keep host DU | Fill-in / solidity better for some strokes but tip feel worse — rejected |
+| Surface + `/dev/ebc` DISPAREA dual-path | Dashed trail then fill-in; slower; not product |
+| DISPAREA-only (`ebc_only`) | Invisible mid-stroke until ink-off soft DU |
 
-**Shelf contract (KISS):** `beginInk()` / `invalidate(rect)` / `endInk()` / `fullRefresh()` with backends `noop` | `ratta_pw` | `onyx_epd`. Portable part is the contract, not ioctl numbers. Onyx’s documented DW scribble mode is the same product problem with a different private API.
+**Conclusion:** The jump on ink-off is leave-SPEED + softDu + Flutter committed
+strokes becoming the visible plane — not a missing mid-stroke polish timer.
+Notes-quality mid-stroke needs a true panel overlay lane (privileged), not
+view-mode flips on our Surface. Do not reopen fill-in on this stack without new
+evidence; keep SPEED+A2.
 
-## M8 implementation note
+**2026-11-04 O5 ebc DISPAREA experiment:** Shelf-owned `/dev/ebc` path (not Notes
+`.so`). Recovered from `libeinkutils.so` + live Nomad probe + app smoke:
 
-Shelf now probes at runtime (`mobile/lib/eink_refresh.dart` + `EinkRefreshPlugin.kt`):
+| Item | Value |
+| --- | --- |
+| Node | `/dev/ebc` world-`rw`, SELinux `rga_device` — shell + app open OK on this build |
+| `HTEINK_IOC_GETINFO` | `0x48545201` — buffer must be **≥256 B** (16 B stack → `stack corruption` abort) |
+| Geometry | Panel FB **1872×1404 landscape**; app UI **1404×1872 portrait** → map 90° CW |
+| `HTEINK_IOC_DISPAREA` | `0x48545701` → `{l,t,r,b,offset,mode}`; mode `4`≈A2-ish, `7` default |
+| Code | `shelf_ebc.cpp` / `ShelfEbc.kt`; default **off** |
 
-- `getSystemService("eink")` → `screenRefresh(boolean,int)`
-- `EinkPWCoreController` → `initForPw` / `postRectForPw` / `deinitForPw`
-- `View.setEinkUpdateMode(int,int)` when present on the Flutter view
-- Onyx `EpdController` / `handwritingRepaint` when those classes resolve
+Enable (Nomad USB):
 
-All calls are best-effort; failures stay on Canvas-only ink.
+```bash
+adb shell setprop debug.shelf.ink.ebc 1
+adb shell setprop debug.shelf.ink.ebc_only 1   # optional: no Surface present
+adb shell setprop debug.shelf.ink.ebc_smoke 1  # optional: synthetic stroke on ink-enter
+# toggle ink;: adb logcat --pid=$(adb shell pidof app.shelf.shelf_mobile) | grep ShelfEbc
+```
 
-## Unknowns (callability still open)
+Disable: `setprop … 0`. Locked SPEED+A2 path stays default.
 
-- Whether a **sideloaded** APK can invoke `EinkPWCoreController` / `EinkManager` (hiddenapi BLOCKED flags on the interface; binder `getSystemService("eink")` may still work).
-- Whether PW mode needs a Ratta View/Surface vs posting rects over Flutter’s surface.
-- Exact waveform ints for Nomad (defaults 0/1 until device smoke).
-- MotionEvent vs Notes latency on Nomad (on-device probe).
+**Lessons this session**
+
+| Do not | Why |
+| --- | --- |
+| Undersized GETINFO stack buffer | SIGABRT `stack corruption detected` on launch |
+| mmap `/dev/ebc` in plugin `diagnose`/probe on UI thread | ~0.5s+ stall / skipped frames; app loses focus |
+| Assume screen coords == panel FB coords | Portrait UI vs landscape EPD; need rotation |
+| `adb shell sendevent` EMR for smoke | SELinux denies untrusted/shell write to input |
+| Trust ioctl out-params for logging DISPAREA rect | Driver may clobber the arg struct; log before ioctl |
+
+**2026-11-04 dual-path / invisible ebc:** Surface+DISPAREA together looked
+**dashed then filled in** (Surface lagging DISPAREA). DISPAREA-**only** made ink
+**invisible until ink mode off** (soft DU) — `/dev/ebc` updates are not the
+visible plane for our overlay. Visible mid-stroke = Surface+SPEED+A2. Leave
+`debug.shelf.ink.ebc=0` unless experimenting; `ebc_only` is currently unusable.
+
+**Risks still open:** shared panel FB vs SF; UI-thread `getPixels`+ioctl grows
+with stroke length; tip-lag still behind locked path. Present worker deferred.

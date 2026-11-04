@@ -27,7 +27,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations |
 | Offline book download + progress/annotation outbox | Done: Save offline cache; outbox (transport + HTTP 5xx); flush on refresh and connectivity; offline/LCD cached opens use Readium; pre-M4 localStorage one-shot migrate |
 | Native Android EPUB navigator (e-ink profile) | Done: cached EPUB opens flutter_readium (paginated CSS); Shelf bookmarks/highlights UI; Locator ↔ CFI/% sync |
-| Stylus / freehand ink on pages (native overlay) | Done M7/M7.5: overlay + pressure/smooth/tilt + annotation sync. M8 in progress: `EinkRefresh` adapters (`noop`/`ratta_pw`/`onyx_epd`). Research: `docs/research/nomad-stylus.md` |
+| Stylus / freehand ink on pages (native overlay) | **M7–M8 complete** (2026-11-04): Nomad SPEED+A2+tip lead (~0.15–0.2s); Flutter `noop` elsewhere. Mid-stroke fill-in experiments closed. Next phase: generic Android tablet drawing → golden backends — `docs/research/nomad-stylus.md` |
 | Folder scanning and multiple libraries | Planned |
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
 | PDF reading | Planned (strong fit for ink; after annotation/offline foundations) |
@@ -65,13 +65,13 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 6. **Native Android navigator behind e-ink profile** — done: Android e-ink (and any offline cached open) uses `flutter_readium` for paginated CSS rendering, with Shelf-backed bookmarks/highlights and Locator ↔ CFI/% sync. Online LCD/iPhone keep Foliate WebView.
 
-7. **Stylus ink overlay + stroke sync (+ tilt)** — on `feat/stylus-ink-overlay`: Flutter ink over e-ink Readium (`Listener` stylus/eraser only), `ink_pipeline` (smoothstep + pressure→width + thin/EMA + REA `procreateStyleWidth` tilt factor; Lamy LUT skipped), `InkPoint` stores tilt/orientation, annotations `style: "ink"`, page-scoped redraw via stroke CFI, ink hidden from highlights list. Nomad via `Wacom-pen` MotionEvents. Reflowable EPUB ink is best-effort until PDF. Remaining: PR + Nomad smoke.
+7. **Stylus ink overlay + stroke sync (+ tilt)** — done: Flutter ink over e-ink Readium (`Listener` stylus/eraser only), `ink_pipeline` (smoothstep + pressure→width + thin/EMA + REA `procreateStyleWidth` tilt factor; Lamy LUT skipped), `InkPoint` stores tilt/orientation, annotations `style: "ink"`, page-scoped redraw via stroke CFI, ink hidden from highlights list. Nomad via `Wacom-pen` MotionEvents. Reflowable EPUB ink is best-effort until PDF.
 
 7.5. **Tilt / calligraphy width** — done in the M7 PR: `tiltWidthFactor` + orientation capture. Azimuth×brush-dir calligraphy blend still unused (Ratta logged it; width return did not need it).
 
-8. **E-ink partial-refresh adapters** — in progress on `feat/eink-refresh-adapter`: Dart `EinkRefresh` + Android reflection plugin (`ratta_pw` via `eink` service / `EinkPWCoreController`, `onyx_epd` via `EpdController` when present, else `noop`). Wired to ink mode begin/end and live stroke dirty-rects. No `/dev/ebc` ioctls. Remaining: Nomad callability smoke + PR.
+8. **E-ink partial-refresh adapters** — **complete for SuperNote Nomad** (2026-11-04): Dart `EinkRefresh` + Shelf `InkHostView` + SPEED/A2/tip lead (~0.15–0.2s tip lag). Not Notes HandWrite/PWCore. Live A2 thinner until ink-off softDu — accepted. Experimental `/dev/ebc` DISPAREA stays opt-in (`debug.shelf.ink.ebc`), not default. Other Android tablets stay Flutter Canvas (`noop`). Lessons + do-not-retread: `docs/research/nomad-stylus.md`. Post-M8 drawing work is G1/G2 (generic tablet → golden OEM), not open M8 scope.
 
-9. **PDF and comic readers** — after M7 (+ ideally M8 refresh on e-ink): fixed-layout is the strong ink surface; comics follow.
+9. **PDF and comic readers** — after M8: fixed-layout is the strong ink surface; comics follow.
 
 10. **TTS and media overlays** — Foliate/BO hooks first on the WebView path; native/e-ink listen features after reading stacks are stable. Then Storyteller-like extras (sleep timer, sync offset, PiP) where they fit.
 
@@ -79,7 +79,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph; multi-user/OIDC as needed.
 
-**Explicitly out of milestones (REA closed):** clone `ThreadSampleEmr`; ship OpenCV/`librPainter`; port Wacom G12/G14/Lamy LUT catalogs (`normalizePressure` is marked obsolete in their own binary). If Nomad pressure feel is wrong after M7, add one empirical curve—not a pen matrix.
+**Explicitly out of milestones (REA closed):** clone `ThreadSampleEmr`; ship OpenCV/`librPainter`; port Wacom G12/G14/Lamy LUT catalogs; Notes HandWrite/PWCore EMR. Raw `/dev/ebc` DISPAREA is an **optional Nomad experiment** (`debug.shelf.ink.ebc`), not the default product path. Future ink: generic Android tablet path → golden tablets (Nomad first); see `docs/research/nomad-stylus.md`.
 
 Every milestone needs a branch/PR, meaningful tests, updated API contracts, and an accurate entry in the table above. Do not implement document parsers from scratch or provision paid services to fill a gap. Prefer one Flutter app with feature flags/profiles over forked products. Prefer Book Orbit's AGPL Foliate reader (with attribution) for the shared LCD/web experience; add native modules only where WebView cannot meet e-ink or stylus needs.
 

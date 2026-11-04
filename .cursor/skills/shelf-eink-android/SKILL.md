@@ -99,15 +99,20 @@ python3 .cursor/skills/shelf-eink-android/scripts/device_login.py
 | Login validation “Enter your username” after automation | Keyboard ate taps | Dismiss keyboard between fields; username first |
 | `adb devices` empty | Cable/dock/sideloading | Direct port, data cable, Sideloading ON |
 | Reverse was fine, then broke | USB re-enumeration | Re-run `adb reverse tcp:8080 tcp:8080` |
+| Login OK, library unreachable | Dart keep-alive over `adb reverse` | Rebuild with ShelfApi `idleTimeout = Duration.zero` |
+| `uiautomator` null / 0 login fields | Nomad asleep or lock screen | `KEYCODE_WAKEUP` + unlock PIN; `svc power stayon true` |
 
 Useful probes:
 
 ```bash
 adb reverse --list
-# from device through reverse:
-adb shell 'echo -e "GET /api/v1/health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" | toybox nc 127.0.0.1 8080'
+# from device through reverse (prefer busybox wget — toybox nc often returns empty
+# even when the tunnel is fine):
+adb shell 'busybox wget -qO- -T 3 http://127.0.0.1:8080/api/v1/health'
 adb logcat -d -t 200 | rg -i 'cleartext|NetworkSecurityConfig|WebView|ERR_'
 ```
+
+**Login works, library says unreachable:** Dart `HttpClient` keep-alive through `adb reverse` can poison the pool after the first response. ShelfApi disables persistent connections (`idleTimeout = Duration.zero`). Rebuild/sideload if an older APK still pools.
 
 ## Verify after mobile changes
 

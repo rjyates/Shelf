@@ -54,8 +54,42 @@ adb exec-out screencap -p > /tmp/shelf-nomad/shot.png
 
 WebView content often has **empty** accessibility text dumps; screenshots are the ground truth for reader chrome.
 
+## Nomad live ink (locked path)
+
+Accelerated drawing is **Nomad-only** until a generic Android tablet path lands
+(then golden-device backends). Do **not** revive Notes HandWrite / PWCore /
+mid-stroke `screenRefresh` / WebView seeding / PixelCopy / `deinitForPw`. Full
+ledger: [`docs/research/nomad-stylus.md`](../../../docs/research/nomad-stylus.md).
+
+Shipped Nomad feel (~0.15–0.2s tip lag): translucent `InkHostView` +
+`EinkManager.setScreenMode(SPEED)` + `View.setEinkUpdateMode(A2)` + tip lead.
+Logcat tag `ShelfEink`. Ink mode AppBar control:
+`content-desc="Ink mode (stylus, fast refresh)"`.
+
+Do not chase mid-stroke “fill-in” with DU polish / dropping SPEED — smoke showed
+no win or worse tip feel; ledger in `nomad-stylus.md`.
+
+Java for Flutter builds: prefer JDK 21 when the host default is 25+.
+
+Device login: `uiautomator dump` can return null on first frames — retry; dismiss
+IME with `KEYCODE_BACK` between fields (not while dump is stale); `pm clear` if
+fields are corrupted from a bad automation pass.
+
+### Experimental DISPAREA (`debug.shelf.ink.ebc`)
+
+```bash
+adb shell setprop debug.shelf.ink.ebc 1          # Surface + ebc
+adb shell setprop debug.shelf.ink.ebc_only 1     # ebc only (no Surface present)
+adb shell setprop debug.shelf.ink.ebc_smoke 1    # synthetic stroke on ink-enter
+adb logcat --pid="$(adb shell pidof app.shelf.shelf_mobile)" | grep ShelfEbc
+```
+
+Panel FB is landscape vs portrait UI — native maps 90° CW. Default remains
+Surface+SPEED+A2. Details: `docs/research/nomad-stylus.md`.
+
 ## Related docs
 
 - `mobile/README.md` — product shape, HTTPS phone path
 - `AGENTS.md` — fmt/analyze/test gates
-- `docs/parity.md` — milestone status (mobile online reader vs display-profile onboarding)
+- `docs/parity.md` — milestone status
+- `docs/research/nomad-stylus.md` — ink portability + do-not-retread
