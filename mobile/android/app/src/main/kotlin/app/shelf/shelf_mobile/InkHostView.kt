@@ -59,8 +59,6 @@ class InkHostView(
     setBackgroundColor(Color.TRANSPARENT)
   }
 
-  fun bitmap(): Bitmap? = bmp
-
   fun ensureSize(
     w: Int,
     h: Int,

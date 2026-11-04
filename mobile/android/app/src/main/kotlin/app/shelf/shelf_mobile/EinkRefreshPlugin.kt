@@ -108,10 +108,6 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
         endInk()
         result.success(null)
       }
-      "fullRefresh" -> {
-        appContext?.let { ShelfEink.softDu(it) }
-        result.success(null)
-      }
       else -> result.notImplemented()
     }
   }

@@ -109,14 +109,6 @@ class EinkRefresh {
     } catch (_) {}
   }
 
-  Future<void> fullRefresh() async {
-    await ensureReady();
-    if (_backend == 'noop') return;
-    try {
-      await _channel.invokeMethod<void>('fullRefresh');
-    } catch (_) {}
-  }
-
   Future<void> dispose() async {
     await _strokeSub?.cancel();
     _strokeSub = null;
