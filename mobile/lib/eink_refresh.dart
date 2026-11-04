@@ -7,10 +7,10 @@ import 'ink_stroke.dart';
 
 /// E-ink ink / refresh contract.
 ///
-/// On SuperNote (`ratta_pw`): native translucent [InkHostView] draws live ink
-/// with SPEED screen mode + A2 host update (see `docs/research/nomad-stylus.md`).
-/// Dart receives completed strokes for persistence / post-exit paint.
-/// LCD / missing adapters stay `noop` (Flutter Canvas in [InkOverlay]).
+/// Accelerated live ink is **Nomad / `ratta_pw` only** today: native
+/// [InkHostView] + SPEED/A2 (see `docs/research/nomad-stylus.md`). Elsewhere
+/// `noop` → Flutter Canvas in [InkOverlay]. Planned: generic Android tablet
+/// mid-stroke path, then golden-device OEM backends.
 class EinkRefresh {
   EinkRefresh({MethodChannel? channel, EventChannel? strokes})
     : _channel = channel ?? const MethodChannel('shelf.eink/refresh'),

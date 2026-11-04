@@ -56,11 +56,12 @@ WebView content often has **empty** accessibility text dumps; screenshots are th
 
 ## Nomad live ink (locked path)
 
-Do **not** revive Notes HandWrite / PWCore / mid-stroke `screenRefresh` /
-WebView seeding / PixelCopy / `deinitForPw`. Full ledger:
-[`docs/research/nomad-stylus.md`](../../../docs/research/nomad-stylus.md).
+Accelerated drawing is **Nomad-only** until a generic Android tablet path lands
+(then golden-device backends). Do **not** revive Notes HandWrite / PWCore /
+mid-stroke `screenRefresh` / WebView seeding / PixelCopy / `deinitForPw`. Full
+ledger: [`docs/research/nomad-stylus.md`](../../../docs/research/nomad-stylus.md).
 
-Shipped feel (~0.15–0.2s tip lag): translucent `InkHostView` +
+Shipped Nomad feel (~0.15–0.2s tip lag): translucent `InkHostView` +
 `EinkManager.setScreenMode(SPEED)` + `View.setEinkUpdateMode(A2)` + tip lead.
 Logcat tag `ShelfEink`. Ink mode AppBar control:
 `content-desc="Ink mode (stylus, fast refresh)"`.

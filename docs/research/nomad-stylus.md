@@ -3,12 +3,27 @@
 Device used for all physical smoke: `SN078F10019410` · Supernote Nomad · Android 11 /
 SDK 30 · build `eng.supern.20261019.184438`. Evidence: REA + `adb` / `getevent`.
 
-**Shipped path (2026-11-04, ~0.15–0.2s tip lag on Nomad):** translucent
+**Scope today:** accelerated live ink is **SuperNote Nomad only**. Physical
+smoke and OEM refresh knobs were proven on one device
+(`SN078F10019410`). Other Android tablets (LCD or e-ink) get Flutter Canvas
+via `noop` / `InkOverlay` — usable strokes, not Nomad tip feel.
+
+**Shipped Nomad path (2026-11-04, ~0.15–0.2s tip lag):** translucent
 `InkHostView` + `ShelfEink` SPEED screen mode + A2 host update mode + tip lead.
 Code: `EinkRefreshPlugin.kt`, `InkHostView.kt`, `ShelfEink.kt`, `eink_refresh.dart`.
 Commit family: `feat/nomad-ink-latency` / “lock Shelf Nomad ink overlay…”.
 
 Read **Do not retread** before changing ink. Older sections are historical.
+
+### Roadmap (drawing)
+
+1. **Generic Android tablet drawing** — one portable mid-stroke path (Surface /
+   Flutter) that works on any stylus Android tablet without OEM refresh APIs.
+   Nomad keeps its SPEED+A2 backend behind the same `EinkRefresh` contract.
+2. **Golden tablets** — after the generic path is solid, deepen a few devices
+   that are open enough to hack (framework / EPD / binder access). Nomad is the
+   first golden; candidates later (e.g. Onyx `EpdController`) only when we can
+   smoke them the way we did Nomad. Do not invent backends from datasheets alone.
 
 ---
 
@@ -29,16 +44,18 @@ Read **Do not retread** before changing ink. Older sections are historical.
 
 LCD / `noop`: Flutter `InkOverlay` global pointer route + Canvas (no native host).
 
-### Portability
+### Portability (honest)
 
-| Piece | Scope |
+| Piece | Scope today |
 | --- | --- |
-| `InkHostView`, stroke paint, tip lead, stylus consume | Any Android |
-| Probe `eink` / `hteink` / `getSystemService("eink")` | SuperNote / Ratta |
-| `setScreenMode(SPEED)`, `setEinkUpdateMode(A2)`, exit soft DU | SuperNote framework only |
+| Flutter `InkOverlay` + stroke math (`ink_pipeline`) | Any Android / LCD `noop` |
+| Probe → `ratta_pw` + SPEED/A2 + tip lead | **Nomad / Ratta only** (proven) |
+| `InkHostView` Surface overlay without SPEED/A2 | Built, not productized as “generic tablet” yet |
 
-Non-SuperNote e-ink: overlay may still attach if probe matches; SPEED/A2 no-op →
-lag closer to plain Surface. Onyx needs a separate `EpdController` backend later.
+Probe matching `eink` / `hteink` on a non-Nomad device may attach the overlay
+with no-op refresh → lag like plain Surface; that is **not** a supported
+backend. Treat non-Nomad as `noop` until the generic tablet path lands, then
+add golden backends one device at a time.
 
 ### What Notes does (why we do not clone it)
 
@@ -107,16 +124,18 @@ Binder `eink` / `hteink` / `opt_service` = **refresh** control, not stroke APIs.
 In `mobile/lib/ink_pipeline.dart`: smoothstep, pressure→width, thin/EMA,
 `tiltWidthFactor` (procreate-style). Do not link Notes binaries.
 
-## Deferred (only if Nomad smoke demands it)
+## Deferred
 
 | ID | Item | Notes |
 | --- | --- | --- |
-| O5 | Shelf `HTEINK_IOC_DISPAREA` wrapper | Only if SPEED+A2 regresses and Nomad-only is explicit |
+| G1 | Generic Android tablet mid-stroke drawing | Portable path before more OEM backends |
+| G2 | Golden-tablet backends | Per device that we can physically hack; Nomad first |
+| O5 | Shelf `HTEINK_IOC_DISPAREA` wrapper | Nomad-only escape if SPEED+A2 regresses |
 | O10 | Azimuth×brush chisel | Optional feel |
 | O11 | Ink marks UI / clear-all | Product |
 | O12 | Stable PDF/fixed-layout anchors | After PDF reader |
-| O13 | Per-vendor refresh settings | Power users |
-| Onyx backend | `EpdController` DW | Separate adapter, same `EinkRefresh` contract |
+| O13 | Per-vendor refresh settings | Power users, after G2 |
+| Onyx (example golden) | `EpdController` DW | Only with device in hand + smoke; same `EinkRefresh` contract |
 
 ---
 
