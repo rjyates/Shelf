@@ -100,13 +100,10 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
         beginInk(args)
         result.success(null)
       }
-      "captureHost" -> result.success(hostReady)
       "clearInk" -> {
         inkHost?.clearInk()
         result.success(null)
       }
-      "drawSegment" -> result.success(hostReady)
-      "invalidate" -> result.success(null)
       "endInk" -> {
         endInk()
         result.success(null)

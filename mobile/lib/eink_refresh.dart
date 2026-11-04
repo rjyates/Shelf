@@ -5,11 +5,12 @@ import 'package:flutter/services.dart';
 
 import 'ink_stroke.dart';
 
-/// Portable e-ink ink / refresh contract (M8).
+/// E-ink ink / refresh contract.
 ///
-/// On Nomad (`ratta_pw`): Shelf's native translucent [InkHostView] draws live
-/// ink. Dart receives completed strokes for persistence / post-exit paint.
-/// Not the Notes HandWrite/PW EMR stack.
+/// On SuperNote (`ratta_pw`): native translucent [InkHostView] draws live ink
+/// with SPEED screen mode + A2 host update (see `docs/research/nomad-stylus.md`).
+/// Dart receives completed strokes for persistence / post-exit paint.
+/// LCD / missing adapters stay `noop` (Flutter Canvas in [InkOverlay]).
 class EinkRefresh {
   EinkRefresh({MethodChannel? channel, EventChannel? strokes})
     : _channel = channel ?? const MethodChannel('shelf.eink/refresh'),
@@ -25,6 +26,7 @@ class EinkRefresh {
 
   String get backend => _backend;
 
+  /// True when native Shelf overlay owns mid-stroke paint.
   bool get isAccelerated => _backend != 'noop';
 
   /// Native-completed strokes (accelerated path).
@@ -92,48 +94,11 @@ class EinkRefresh {
     }
   }
 
-  Future<bool> recaptureHost() async => hostLive;
-
   Future<void> clearInkLayer() async {
     if (_backend == 'noop') return;
     try {
       await _channel.invokeMethod<void>('clearInk');
     } catch (_) {}
-  }
-
-  Future<bool> drawSegment({
-    required double x0,
-    required double y0,
-    required double x1,
-    required double y1,
-    required double width,
-    bool eraser = false,
-  }) async {
-    if (_backend == 'noop') return false;
-    try {
-      final ok = await _channel.invokeMethod<bool>('drawSegment', {
-        'x0': x0,
-        'y0': y0,
-        'x1': x1,
-        'y1': y1,
-        'width': width,
-        'eraser': eraser,
-      });
-      return ok == true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<void> invalidate({
-    required double left,
-    required double top,
-    required double right,
-    required double bottom,
-    Duration minInterval = const Duration(milliseconds: 16),
-  }) async {
-    // Accelerated: native InkHostView owns mid-stroke refresh.
-    if (_backend == 'noop') return;
   }
 
   Future<void> endInk() async {

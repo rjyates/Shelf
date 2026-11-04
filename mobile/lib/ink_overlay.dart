@@ -7,8 +7,8 @@ import 'ink_stroke.dart';
 
 /// Stylus capture / paint over the e-ink Readium view.
 ///
-/// On accelerated Nomad: native [InkHostView] owns the live trail; this overlay
-/// only paints **committed** strokes (and skips the global stylus route).
+/// On accelerated SuperNote: native [InkHostView] owns the live trail; this
+/// overlay paints **committed** strokes only (global stylus route skipped).
 /// On noop / LCD: stylus is captured here via a global pointer route.
 class InkOverlay extends StatefulWidget {
   const InkOverlay({

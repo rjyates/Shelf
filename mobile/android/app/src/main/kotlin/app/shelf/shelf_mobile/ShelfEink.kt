@@ -23,11 +23,9 @@ object ShelfEink {
   /** android.view.View.EINK_SHOW_MODE_* */
   const val SHOW_DU = 1
   const val SHOW_A2 = 4
-  const val SHOW_DU4 = 17
 
-  /** android.view.View.EINK_DATA_MODE_* */
+  /** android.view.View.EINK_DATA_MODE_A2 */
   const val DATA_A2 = 1
-  const val DATA_DEFAULT = 3
 
   fun setScreenMode(
     context: Context,

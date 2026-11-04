@@ -69,7 +69,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 7.5. **Tilt / calligraphy width** — done in the M7 PR: `tiltWidthFactor` + orientation capture. Azimuth×brush-dir calligraphy blend still unused (Ratta logged it; width return did not need it).
 
-8. **E-ink partial-refresh adapters** — done: Dart `EinkRefresh` + Android reflection (`noop` / `ratta_pw` / `onyx_epd`), wired to ink mode. Nomad live path uses host `Bitmap` + `postRectForPw` (O3) with DU-class mode `2` (O2); stroke math has 5-sample speed deque, `getSpeedMapWidth` EMA, azimuth×brush, and timestamps. See `docs/research/nomad-stylus.md`.
+8. **E-ink partial-refresh adapters** — done: Dart `EinkRefresh` + Shelf `InkHostView` overlay. On SuperNote Nomad (`ratta_pw`): SPEED screen mode + A2 host update + tip lead (~0.15–0.2s tip lag). Not Notes HandWrite/PWCore. Stroke math has tilt/pressure/EMA. Portability + do-not-retread: `docs/research/nomad-stylus.md`.
 
 9. **PDF and comic readers** — after M7 (+ ideally M8 refresh on e-ink): fixed-layout is the strong ink surface; comics follow.
 
@@ -79,7 +79,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph; multi-user/OIDC as needed.
 
-**Explicitly out of milestones (REA closed):** clone `ThreadSampleEmr`; ship OpenCV/`librPainter`; port Wacom G12/G14/Lamy LUT catalogs; raw `/dev/ebc` as primary path. Future ink/e-ink optimizations: see deferred ledger in `docs/research/nomad-stylus.md` (O1–O14).
+**Explicitly out of milestones (REA closed):** clone `ThreadSampleEmr`; ship OpenCV/`librPainter`; port Wacom G12/G14/Lamy LUT catalogs; Notes HandWrite/PWCore EMR; raw `/dev/ebc` as primary path. Future ink work: see deferred + do-not-retread in `docs/research/nomad-stylus.md`.
 
 Every milestone needs a branch/PR, meaningful tests, updated API contracts, and an accurate entry in the table above. Do not implement document parsers from scratch or provision paid services to fill a gap. Prefer one Flutter app with feature flags/profiles over forked products. Prefer Book Orbit's AGPL Foliate reader (with attribution) for the shared LCD/web experience; add native modules only where WebView cannot meet e-ink or stylus needs.
 
