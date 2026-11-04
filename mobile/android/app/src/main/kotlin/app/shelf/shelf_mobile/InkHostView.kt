@@ -59,6 +59,9 @@ class InkHostView(
     setBackgroundColor(Color.TRANSPARENT)
   }
 
+  /** Host software bitmap (ARGB). Used by experimental ebc DISPAREA path. */
+  fun hostBitmap(): Bitmap? = bmp
+
   fun ensureSize(
     w: Int,
     h: Int,

@@ -114,7 +114,7 @@ Features: `android.software.eink`, `android.software.hteink` (not
 - `com.ratta.drawpath` + `librecgnition.so` / `librPainter.so` / `DrawService`
 - Notes HandWrite `service_myservice` / `superNoteNote` protocol
 - `ThreadSampleEmr`, OpenCV `drawLineLive`, Wacom/Lamy LUT catalogs
-- Raw `/dev/ebc` as primary product path (world-rw here, still OEM-specific)
+- Raw `/dev/ebc` as **primary** product path (experimental O5 only; still OEM-specific)
 
 Binder `eink` / `hteink` / `opt_service` = **refresh** control, not stroke APIs.
 `sn-plugin-lib` handwriting APIs are for Notes plugin host only.
@@ -130,7 +130,7 @@ In `mobile/lib/ink_pipeline.dart`: smoothstep, pressure→width, thin/EMA,
 | --- | --- | --- |
 | G1 | Generic Android tablet mid-stroke drawing | Portable path before more OEM backends |
 | G2 | Golden-tablet backends | Per device that we can physically hack; Nomad first |
-| O5 | Shelf `HTEINK_IOC_DISPAREA` wrapper | Nomad-only escape if SPEED+A2 regresses |
+| O5 | Shelf `HTEINK_IOC_DISPAREA` wrapper | **Experimental** behind `debug.shelf.ink.ebc=1` (see below) |
 | O10 | Azimuth×brush chisel | Optional feel |
 | O11 | Ink marks UI / clear-all | Product |
 | O12 | Stable PDF/fixed-layout anchors | After PDF reader |
@@ -150,3 +150,29 @@ FastPW/SYNC_PW/`enableFullUiAuto` caused white page or no gain past ~0.5s.
 **2026-11-04 EMR-only (no Surface):** Ink only after mode exit; abandoned.
 
 **2026-11-04 locked path:** Surface + SPEED + A2 + tip lead → ~0.15–0.2s tip lag.
+
+**2026-11-04 O5 ebc DISPAREA experiment:** Shelf-owned `/dev/ebc` path (not Notes
+`.so`). Recovered from `libeinkutils.so` + live Nomad probe:
+
+| Item | Value |
+| --- | --- |
+| Node | `/dev/ebc` world-`rw`, SELinux `rga_device` — shell + app open OK on this build |
+| `HTEINK_IOC_GETINFO` | `0x48545201` → `w/h/vir_w/fbsize` (Nomad 1872×1404, fb=2628288) |
+| `HTEINK_IOC_DISPAREA` | `0x48545701` → `{l,t,r,b,offset,mode}` (~20 B); mode `4`≈A2-ish, `7` default |
+| Code | `shelf_ebc.cpp` / `ShelfEbc.kt`; default **off** |
+
+Enable (Nomad USB):
+
+```bash
+adb shell setprop debug.shelf.ink.ebc 1
+# optional: skip Surface present — pure panel lane
+adb shell setprop debug.shelf.ink.ebc_only 1
+# toggle ink mode off/on; logcat -s ShelfEbc ShelfEink
+```
+
+Disable: `setprop … 0` (or reboot). Locked SPEED+A2 path stays default.
+
+**Risks:** writing the shared panel FB can fight SF/Notes; wrong coords flash
+garbage; `getPixels`+ioctl on UI thread may ANR if dirty rects are huge; do not
+make this primary without Nomad smoke. Present worker thread still deferred —
+unlikely to beat panel floor once DISPAREA is on the hot path.

@@ -68,6 +68,16 @@ Logcat tag `ShelfEink`. Ink mode AppBar control:
 
 Java for Flutter builds: prefer JDK 21 when the host default is 25+.
 
+### Experimental DISPAREA (`debug.shelf.ink.ebc`)
+
+```bash
+adb shell setprop debug.shelf.ink.ebc 1          # Surface + ebc
+adb shell setprop debug.shelf.ink.ebc_only 1     # ebc only (no Surface present)
+adb logcat -s ShelfEbc ShelfEink
+```
+
+Default remains Surface+SPEED+A2. Details: `docs/research/nomad-stylus.md`.
+
 ## Related docs
 
 - `mobile/README.md` — product shape, HTTPS phone path

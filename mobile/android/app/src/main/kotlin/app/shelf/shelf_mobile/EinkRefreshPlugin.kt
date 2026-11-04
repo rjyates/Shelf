@@ -21,6 +21,9 @@ import io.flutter.plugin.common.MethodChannel
  * ThreadUpdateEpdc → HTEINK_IOC_DISPAREA (direct panel), not Surface damage.
  * We approximate with [ShelfEink] SPEED screen mode + A2 on the host, plus tip
  * lead — no Notes .so / HandWrite / PWCore.
+ *
+ * Experimental (prop `debug.shelf.ink.ebc=1`): also push dirty strips through
+ * Shelf-owned `/dev/ebc` [ShelfEbc] DISPAREA (Notes-like panel lane).
  */
 class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
   companion object {
@@ -114,12 +117,18 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
 
   private fun diagnose(): Map<String, Any?> {
     val selected = probe()
+    val ebcWant = ShelfEbc.wantExperiment()
+    val ebcProbe = if (ebcWant) ShelfEbc.probe() else false
     val report =
       mapOf(
         "backend" to selected,
         "ink_session" to inkSession,
         "host_ready" to hostReady,
         "path" to "shelf_surface_overlay",
+        "ebc_experiment" to ebcWant,
+        "ebc_probe" to ebcProbe,
+        "ebc_active" to ShelfEbc.active,
+        "ebc_diag" to ShelfEbc.diagnose(),
       )
     Log.i(TAG, "diagnose $report")
     return report
@@ -220,6 +229,12 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
       }
     parent.addView(host, lp)
     host.post { bindHost(host) }
+    if (ShelfEbc.wantExperiment()) {
+      val ok = ShelfEbc.begin()
+      Log.i(TAG, "beginInk ebc experiment begin=$ok ${ShelfEbc.diagnose()}")
+    } else {
+      ShelfEbc.end()
+    }
     Log.i(TAG, "beginInk shelf overlay attached")
   }
 
@@ -408,7 +423,26 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     if (dirtyUnion.isEmpty) return
     postRectScratch.set(dirtyUnion)
     dirtyUnion.setEmpty()
-    inkHost?.present(postRectScratch)
+    val host = inkHost ?: return
+    val ebcOnly = ShelfEbc.active && ShelfEbc.wantEbcOnly()
+    // Locked path: Surface present (SPEED+A2). Skip only for ebc_only smoke.
+    if (!ebcOnly) {
+      host.present(postRectScratch)
+    }
+    if (ShelfEbc.active) {
+      val bmp = host.hostBitmap() ?: return
+      val loc = IntArray(2)
+      host.getLocationOnScreen(loc)
+      ShelfEbc.postBitmap(
+        bmp,
+        postRectScratch.left,
+        postRectScratch.top,
+        postRectScratch.right,
+        postRectScratch.bottom,
+        loc[0],
+        loc[1],
+      )
+    }
   }
 
   private fun appendPoint(
@@ -467,6 +501,7 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     velX = 0f
     velY = 0f
     loggedStylus = false
+    ShelfEbc.end()
     inkHost?.let { ShelfEink.setHostInkMode(it, enable = false) }
     restoreWebViewSelection()
     teardownHostViewOnly()

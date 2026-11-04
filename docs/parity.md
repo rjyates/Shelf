@@ -79,7 +79,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph; multi-user/OIDC as needed.
 
-**Explicitly out of milestones (REA closed):** clone `ThreadSampleEmr`; ship OpenCV/`librPainter`; port Wacom G12/G14/Lamy LUT catalogs; Notes HandWrite/PWCore EMR; raw `/dev/ebc` as primary path. Future ink: generic Android tablet path → golden tablets (Nomad first); see deferred + do-not-retread in `docs/research/nomad-stylus.md`.
+**Explicitly out of milestones (REA closed):** clone `ThreadSampleEmr`; ship OpenCV/`librPainter`; port Wacom G12/G14/Lamy LUT catalogs; Notes HandWrite/PWCore EMR. Raw `/dev/ebc` DISPAREA is an **optional Nomad experiment** (`debug.shelf.ink.ebc`), not the default product path. Future ink: generic Android tablet path → golden tablets (Nomad first); see `docs/research/nomad-stylus.md`.
 
 Every milestone needs a branch/PR, meaningful tests, updated API contracts, and an accurate entry in the table above. Do not implement document parsers from scratch or provision paid services to fill a gap. Prefer one Flutter app with feature flags/profiles over forked products. Prefer Book Orbit's AGPL Foliate reader (with attribution) for the shared LCD/web experience; add native modules only where WebView cannot meet e-ink or stylus needs.
 
