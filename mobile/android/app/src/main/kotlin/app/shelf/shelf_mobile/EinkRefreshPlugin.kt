@@ -251,6 +251,34 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     ShelfEink.setHostInkMode(host, enable = true)
     hostReady = true
     Log.i(TAG, "bindHost ready ${w}x$h a2=true")
+    // Synthetic stroke for Nomad smoke (adb cannot inject EMR — SELinux).
+    if (ShelfEbc.active && ShelfEbc.wantSmokeStroke()) {
+      host.post { smokeEbcStroke(host) }
+    }
+  }
+
+  private fun smokeEbcStroke(host: InkHostView) {
+    if (!ShelfEbc.active || !hostReady) return
+    val dirty = host.drawSegment(80f, 80f, 320f, 280f, 5f, eraser = false)
+    if (dirty.isEmpty) return
+    val bmp = host.hostBitmap() ?: return
+    val loc = IntArray(2)
+    host.getLocationOnScreen(loc)
+    val ok =
+      ShelfEbc.postBitmap(
+        bmp,
+        dirty.left,
+        dirty.top,
+        dirty.right,
+        dirty.bottom,
+        loc[0],
+        loc[1],
+      )
+    Log.i(TAG, "smokeEbcStroke ok=$ok dirty=$dirty origin=${loc[0]},${loc[1]}")
+    // Also present so Surface path shows the same mark when not ebc_only.
+    if (!ShelfEbc.wantEbcOnly()) {
+      host.present(dirty)
+    }
   }
 
   fun onMotionEvent(ev: MotionEvent): Boolean {

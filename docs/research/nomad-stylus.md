@@ -152,27 +152,37 @@ FastPW/SYNC_PW/`enableFullUiAuto` caused white page or no gain past ~0.5s.
 **2026-11-04 locked path:** Surface + SPEED + A2 + tip lead → ~0.15–0.2s tip lag.
 
 **2026-11-04 O5 ebc DISPAREA experiment:** Shelf-owned `/dev/ebc` path (not Notes
-`.so`). Recovered from `libeinkutils.so` + live Nomad probe:
+`.so`). Recovered from `libeinkutils.so` + live Nomad probe + app smoke:
 
 | Item | Value |
 | --- | --- |
 | Node | `/dev/ebc` world-`rw`, SELinux `rga_device` — shell + app open OK on this build |
-| `HTEINK_IOC_GETINFO` | `0x48545201` → `w/h/vir_w/fbsize` (Nomad 1872×1404, fb=2628288) |
-| `HTEINK_IOC_DISPAREA` | `0x48545701` → `{l,t,r,b,offset,mode}` (~20 B); mode `4`≈A2-ish, `7` default |
+| `HTEINK_IOC_GETINFO` | `0x48545201` — buffer must be **≥256 B** (16 B stack → `stack corruption` abort) |
+| Geometry | Panel FB **1872×1404 landscape**; app UI **1404×1872 portrait** → map 90° CW |
+| `HTEINK_IOC_DISPAREA` | `0x48545701` → `{l,t,r,b,offset,mode}`; mode `4`≈A2-ish, `7` default |
 | Code | `shelf_ebc.cpp` / `ShelfEbc.kt`; default **off** |
 
 Enable (Nomad USB):
 
 ```bash
 adb shell setprop debug.shelf.ink.ebc 1
-# optional: skip Surface present — pure panel lane
-adb shell setprop debug.shelf.ink.ebc_only 1
-# toggle ink mode off/on; logcat -s ShelfEbc ShelfEink
+adb shell setprop debug.shelf.ink.ebc_only 1   # optional: no Surface present
+adb shell setprop debug.shelf.ink.ebc_smoke 1  # optional: synthetic stroke on ink-enter
+# toggle ink;: adb logcat --pid=$(adb shell pidof app.shelf.shelf_mobile) | grep ShelfEbc
 ```
 
-Disable: `setprop … 0` (or reboot). Locked SPEED+A2 path stays default.
+Disable: `setprop … 0`. Locked SPEED+A2 path stays default.
 
-**Risks:** writing the shared panel FB can fight SF/Notes; wrong coords flash
-garbage; `getPixels`+ioctl on UI thread may ANR if dirty rects are huge; do not
-make this primary without Nomad smoke. Present worker thread still deferred —
-unlikely to beat panel floor once DISPAREA is on the hot path.
+**Lessons this session**
+
+| Do not | Why |
+| --- | --- |
+| Undersized GETINFO stack buffer | SIGABRT `stack corruption detected` on launch |
+| mmap `/dev/ebc` in plugin `diagnose`/probe on UI thread | ~0.5s+ stall / skipped frames; app loses focus |
+| Assume screen coords == panel FB coords | Portrait UI vs landscape EPD; need rotation |
+| `adb shell sendevent` EMR for smoke | SELinux denies untrusted/shell write to input |
+| Trust ioctl out-params for logging DISPAREA rect | Driver may clobber the arg struct; log before ioctl |
+
+**Risks still open:** shared panel FB vs SF; UI-thread `getPixels`+ioctl on large dirty
+rects; tip-lag vs locked path not yet A/B’d with a real stylus. Present worker
+still deferred.

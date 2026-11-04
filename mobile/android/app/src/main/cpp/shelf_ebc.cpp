@@ -25,12 +25,16 @@ constexpr uint32_t kIocDisparea = 0x48545701u;
 constexpr uint8_t kModeDefault = 7;
 constexpr uint8_t kModeA2ish = 4;
 
+// GETINFO writes more than the documented head fields (probe: ≥0x18 bytes;
+// libeinkutils keeps a larger blob at ebc+0x3c). Undersized stack buffer
+// → stack-protector abort on Nomad.
 struct HteinkInfo {
   uint32_t hdr;
   uint16_t w;
   uint16_t h;
   uint32_t vir_w;
   uint32_t fbsize;
+  uint8_t rest[240];
 };
 
 struct HteinkDispArea {
@@ -110,12 +114,14 @@ void closeEbcLocked() {
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_app_shelf_shelf_1mobile_ShelfEbc_nativeProbe(JNIEnv*, jclass) {
-  std::lock_guard<std::mutex> lock(gMu);
+  // Lightweight: do not mmap on the UI thread during plugin diagnose.
   if (gReady) return JNI_TRUE;
-  bool ok = openEbcLocked();
-  // Probe should not keep the device open if caller only asked probe — but
-  // keeping it warm avoids reopen cost for the experiment session.
-  return ok ? JNI_TRUE : JNI_FALSE;
+  const int fd = open("/dev/ebc", O_RDWR | O_CLOEXEC);
+  if (fd < 0) return JNI_FALSE;
+  HteinkInfo info{};
+  const int rc = ioctl(fd, kIocGetinfo, &info);
+  close(fd);
+  return (rc == 0 && info.w > 0 && info.h > 0) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -139,6 +145,31 @@ Java_app_shelf_shelf_1mobile_ShelfEbc_nativeSetMode(JNIEnv*, jclass, jint mode) 
   }
 }
 
+// Nomad panel FB is landscape (1872×1404) while the app UI is portrait
+// (1404×1872). Map portrait screen → panel with 90° CW:
+//   px = sy;  py = (panelH-1) - sx
+static void screenToPanel(
+    int sx,
+    int sy,
+    int screenW,
+    int screenH,
+    int* px,
+    int* py) {
+  if (gWidth > gHeight && screenH > screenW) {
+    *px = sy;
+    *py = (gHeight - 1) - sx;
+    return;
+  }
+  if (gHeight > gWidth && screenW > screenH) {
+    // Inverse case (app landscape, panel portrait) — 90° CCW.
+    *px = (gWidth - 1) - sy;
+    *py = sx;
+    return;
+  }
+  *px = sx;
+  *py = sy;
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_app_shelf_shelf_1mobile_ShelfEbc_nativePostRgba(
     JNIEnv* env,
@@ -151,7 +182,9 @@ Java_app_shelf_shelf_1mobile_ShelfEbc_nativePostRgba(
     jint dirtyR,
     jint dirtyB,
     jint screenOriginX,
-    jint screenOriginY) {
+    jint screenOriginY,
+    jint screenW,
+    jint screenH) {
   if (rgba == nullptr || bmpW <= 0 || bmpH <= 0) return JNI_FALSE;
 
   std::lock_guard<std::mutex> lock(gMu);
@@ -172,52 +205,56 @@ Java_app_shelf_shelf_1mobile_ShelfEbc_nativePostRgba(
   jint* pixels = env->GetIntArrayElements(rgba, nullptr);
   if (pixels == nullptr) return JNI_FALSE;
 
-  // ARGB_8888 ints → gray8 panel FB. Ink (opaque dark) → 0; leave other FB
-  // pixels alone (RMW) so we do not blank the page.
+  int outL = gWidth;
+  int outT = gHeight;
+  int outR = 0;
+  int outB = 0;
+
+  // ARGB_8888 ints → gray8 panel FB (with screen→panel rotation).
   for (int y = t; y < b; ++y) {
     const int srcRow = y * bmpW;
-    const int dstY = screenOriginY + y;
-    if (dstY < 0 || dstY >= gHeight) continue;
-    uint8_t* dstRow = gMap + static_cast<size_t>(dstY) * static_cast<size_t>(gStride);
     for (int x = l; x < r; ++x) {
-      const int dstX = screenOriginX + x;
-      if (dstX < 0 || dstX >= gWidth) continue;
       const uint32_t c = static_cast<uint32_t>(pixels[srcRow + x]);
       const uint32_t a = (c >> 24) & 0xffu;
-      if (a < 32u) continue;  // transparent host pixel
+      if (a < 32u) continue;
+      const int sx = screenOriginX + x;
+      const int sy = screenOriginY + y;
+      int px = 0;
+      int py = 0;
+      screenToPanel(sx, sy, screenW, screenH, &px, &py);
+      if (px < 0 || py < 0 || px >= gWidth || py >= gHeight) continue;
+      uint8_t* dst = gMap + static_cast<size_t>(py) * static_cast<size_t>(gStride) + px;
       const uint32_t R = (c >> 16) & 0xffu;
       const uint32_t G = (c >> 8) & 0xffu;
       const uint32_t B = c & 0xffu;
-      // Eraser clears to transparent in the host bmp; treat near-white opaque as
-      // white (0xff) so we can scrub strokes on the panel FB.
-      if (R > 200u && G > 200u && B > 200u) {
-        dstRow[dstX] = 0xff;
-      } else {
-        dstRow[dstX] = 0x00;
-      }
+      *dst = (R > 200u && G > 200u && B > 200u) ? 0xff : 0x00;
+      if (px < outL) outL = px;
+      if (py < outT) outT = py;
+      if (px + 1 > outR) outR = px + 1;
+      if (py + 1 > outB) outB = py + 1;
     }
   }
   env->ReleaseIntArrayElements(rgba, pixels, JNI_ABORT);
 
+  if (outR <= outL || outB <= outT) return JNI_FALSE;
+
   HteinkDispArea area{};
-  area.left = screenOriginX + l;
-  area.top = screenOriginY + t;
-  area.right = screenOriginX + r;
-  area.bottom = screenOriginY + b;
-  if (area.left < 0) area.left = 0;
-  if (area.top < 0) area.top = 0;
-  if (area.right > gWidth) area.right = gWidth;
-  if (area.bottom > gHeight) area.bottom = gHeight;
-  if (area.right <= area.left || area.bottom <= area.top) return JNI_FALSE;
+  area.left = outL;
+  area.top = outT;
+  area.right = outR;
+  area.bottom = outB;
   area.offset = 0;
   area.mode = gMode;
 
+  ALOGI("DISPAREA submit [%d,%d-%d,%d] mode=%u (screen %dx%d panel %dx%d)", area.left,
+        area.top, area.right, area.bottom, area.mode, screenW, screenH, gWidth, gHeight);
+
   const int rc = ioctl(gFd, kIocDisparea, &area);
   if (rc != 0) {
-    ALOGW("DISPAREA failed ret=%d errno=%d [%d,%d-%d,%d] mode=%u", rc, errno, area.left,
-          area.top, area.right, area.bottom, area.mode);
+    ALOGW("DISPAREA failed ret=%d errno=%d", rc, errno);
     return JNI_FALSE;
   }
+  ALOGI("DISPAREA ok");
   return JNI_TRUE;
 }
 

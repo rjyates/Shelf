@@ -17,6 +17,7 @@ object ShelfEbc {
   private const val TAG = "ShelfEbc"
   private const val PROP = "debug.shelf.ink.ebc"
   private const val PROP_ONLY = "debug.shelf.ink.ebc_only"
+  private const val PROP_SMOKE = "debug.shelf.ink.ebc_smoke"
 
   @Volatile private var loaded = false
   @Volatile private var loadFailed = false
@@ -40,6 +41,9 @@ object ShelfEbc {
 
   /** When true, skip Surface present and only DISPAREA (pure panel lane). */
   fun wantEbcOnly(): Boolean = propBool(PROP_ONLY)
+
+  /** When true, draw a synthetic stroke on ink-enter (adb cannot inject EMR). */
+  fun wantSmokeStroke(): Boolean = propBool(PROP_SMOKE)
 
   private fun ensureLoaded(): Boolean {
     if (loaded) return true
@@ -127,8 +131,9 @@ object ShelfEbc {
       scratchInts.set(ints)
     }
     bmp.getPixels(ints, 0, dw, l, t, dw, dh)
+    // Full display size for portrait↔landscape panel mapping inside native.
+    val dm = android.content.res.Resources.getSystem().displayMetrics
     return try {
-      // Cropped buffer: origin is dirty top-left in screen space.
       nativePostRgba(
         ints,
         dw,
@@ -139,6 +144,8 @@ object ShelfEbc {
         dh,
         screenOriginX + l,
         screenOriginY + t,
+        dm.widthPixels,
+        dm.heightPixels,
       )
     } catch (t: Throwable) {
       Log.w(TAG, "postBitmap failed", t)
@@ -174,6 +181,8 @@ object ShelfEbc {
     dirtyB: Int,
     screenOriginX: Int,
     screenOriginY: Int,
+    screenW: Int,
+    screenH: Int,
   ): Boolean
 
   @JvmStatic private external fun nativeDiagnose(): String

@@ -73,10 +73,12 @@ Java for Flutter builds: prefer JDK 21 when the host default is 25+.
 ```bash
 adb shell setprop debug.shelf.ink.ebc 1          # Surface + ebc
 adb shell setprop debug.shelf.ink.ebc_only 1     # ebc only (no Surface present)
-adb logcat -s ShelfEbc ShelfEink
+adb shell setprop debug.shelf.ink.ebc_smoke 1    # synthetic stroke on ink-enter
+adb logcat --pid="$(adb shell pidof app.shelf.shelf_mobile)" | grep ShelfEbc
 ```
 
-Default remains Surface+SPEED+A2. Details: `docs/research/nomad-stylus.md`.
+Panel FB is landscape vs portrait UI — native maps 90° CW. Default remains
+Surface+SPEED+A2. Details: `docs/research/nomad-stylus.md`.
 
 ## Related docs
 
