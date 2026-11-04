@@ -52,6 +52,9 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
   private val strokePts = ArrayList<HashMap<String, Any>>(256)
   private val mainHandler = Handler(Looper.getMainLooper())
   private val dirtyUnion = Rect()
+  /** Whole in-progress stroke bounds — ebc re-stamps this each flush so the
+   * trail stays continuous (per-event strips looked dashed until Surface caught up). */
+  private val strokeDirtyUnion = Rect()
   private val postRectScratch = Rect()
   private var webSelectHardened = false
   private var savedScreenMode = ShelfEink.SCREEN_DEFAULT
@@ -318,6 +321,7 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
         strokeOriginMs = now
         strokePts.clear()
         dirtyUnion.setEmpty()
+        strokeDirtyUnion.setEmpty()
         velX = 0f
         velY = 0f
         appendPoint(x / vw, y / vh, pressure, tilt, orientation, 0)
@@ -445,6 +449,11 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     } else {
       dirtyUnion.union(dirty)
     }
+    if (strokeDirtyUnion.isEmpty) {
+      strokeDirtyUnion.set(dirty)
+    } else {
+      strokeDirtyUnion.union(dirty)
+    }
   }
 
   private fun flushLive() {
@@ -452,25 +461,27 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     postRectScratch.set(dirtyUnion)
     dirtyUnion.setEmpty()
     val host = inkHost ?: return
-    val ebcOnly = ShelfEbc.active && ShelfEbc.wantEbcOnly()
-    // Locked path: Surface present (SPEED+A2). Skip only for ebc_only smoke.
-    if (!ebcOnly) {
-      host.present(postRectScratch)
-    }
     if (ShelfEbc.active) {
+      // Dual Surface+DISPAREA showed a dashed trail that "filled in" when
+      // Surface caught up. Ebc owns mid-stroke; re-stamp the whole stroke
+      // dirty so prior segments stay continuous on the panel FB.
       val bmp = host.hostBitmap() ?: return
       val loc = IntArray(2)
       host.getLocationOnScreen(loc)
+      val full = strokeDirtyUnion
       ShelfEbc.postBitmap(
         bmp,
-        postRectScratch.left,
-        postRectScratch.top,
-        postRectScratch.right,
-        postRectScratch.bottom,
+        full.left,
+        full.top,
+        full.right,
+        full.bottom,
         loc[0],
         loc[1],
       )
+      return
     }
+    // Locked path: Surface present (SPEED+A2).
+    host.present(postRectScratch)
   }
 
   private fun appendPoint(

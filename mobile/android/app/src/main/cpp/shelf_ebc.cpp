@@ -210,13 +210,14 @@ Java_app_shelf_shelf_1mobile_ShelfEbc_nativePostRgba(
   int outR = 0;
   int outB = 0;
 
-  // ARGB_8888 ints → gray8 panel FB (with screen→panel rotation).
+  // ARGB_8888 → gray8 panel FB. Any coverage (incl. AA fringe) stamps ink so
+  // re-posted stroke rects stay continuous under A2-ish waveforms.
   for (int y = t; y < b; ++y) {
     const int srcRow = y * bmpW;
     for (int x = l; x < r; ++x) {
       const uint32_t c = static_cast<uint32_t>(pixels[srcRow + x]);
       const uint32_t a = (c >> 24) & 0xffu;
-      if (a < 32u) continue;
+      if (a == 0u) continue;
       const int sx = screenOriginX + x;
       const int sy = screenOriginY + y;
       int px = 0;
@@ -227,7 +228,14 @@ Java_app_shelf_shelf_1mobile_ShelfEbc_nativePostRgba(
       const uint32_t R = (c >> 16) & 0xffu;
       const uint32_t G = (c >> 8) & 0xffu;
       const uint32_t B = c & 0xffu;
-      *dst = (R > 200u && G > 200u && B > 200u) ? 0xff : 0x00;
+      const uint32_t lum = (R + G + B) / 3u;
+      if (lum > 200u && a > 200u) {
+        *dst = 0xff;  // eraser / white
+      } else if (a >= 24u) {
+        *dst = 0x00;  // ink (incl. light AA fringe)
+      } else {
+        continue;
+      }
       if (px < outL) outL = px;
       if (py < outT) outT = py;
       if (px + 1 > outR) outR = px + 1;

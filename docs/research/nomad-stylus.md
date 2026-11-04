@@ -183,6 +183,11 @@ Disable: `setprop … 0`. Locked SPEED+A2 path stays default.
 | `adb shell sendevent` EMR for smoke | SELinux denies untrusted/shell write to input |
 | Trust ioctl out-params for logging DISPAREA rect | Driver may clobber the arg struct; log before ioctl |
 
-**Risks still open:** shared panel FB vs SF; UI-thread `getPixels`+ioctl on large dirty
-rects; tip-lag vs locked path not yet A/B’d with a real stylus. Present worker
-still deferred.
+**2026-11-04 dual-path artifact:** Surface present + DISPAREA together showed a
+**dashed/segmented** trail that “filled in” a beat later when Surface/A2 caught
+up — distracting while writing. Fix: when ebc is active, mid-stroke is
+DISPAREA-only and each flush re-stamps the **whole stroke dirty** from the host
+bmp. Locked Surface+SPEED+A2 remains faster tip feel; ebc is still experimental.
+
+**Risks still open:** shared panel FB vs SF; UI-thread `getPixels`+ioctl grows
+with stroke length; tip-lag still behind locked path. Present worker deferred.
