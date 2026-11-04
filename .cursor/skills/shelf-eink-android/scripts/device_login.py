@@ -205,7 +205,13 @@ def main() -> None:
 
     adb(serial, "shell", "am", "force-stop", PACKAGE)
     adb(serial, "shell", "am", "start", "-n", ACTIVITY)
-    time.sleep(3.5)
+    # Nomad e-ink first frame is slow; 3.5s often dumps 0 EditTexts.
+    time.sleep(6.0)
+    for _ in range(8):
+        xml = dump_ui(serial)
+        if len(centers(xml, "android.widget.EditText")) >= 3:
+            break
+        time.sleep(1.0)
 
     fill_login(serial, server, user, password)
     labels = re.findall(r'(?:text|content-desc)="([^"]+)"', dump_ui(serial))

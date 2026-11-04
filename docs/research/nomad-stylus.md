@@ -123,7 +123,7 @@ Sideloaded debug APK on `SN078F10019410` against host `:8080` via `adb reverse`.
 | `EinkPWCoreController.initForPw` | Callable (hiddenapi allowed) but leaves `bitmap_width=0` on FlutterView |
 | `FlutterView.setEinkUpdateMode(1,0)` | OK |
 | `postRectForPw` | JNI `nativeAddPWRect` errors (`bitmap_width=0`) — silent no-op; **not** used for live ink until O3 |
-| Live path after O1 follow-up | `setEinkUpdateModeWithView` + regional `View.invalidate` (no mid-stroke `screenRefresh` — that flashed the whole panel). `postRectForPw` still needs host bmp (O3). |
+| Live path after O1 follow-up | **Superseded** — Flutter DU + mid-stroke `View.invalidate` caused ~0.5s lag, full GC flashes, and WebView text select. |
 | Stroke feel (REA re-check) | Linear `pressureMapping2Width`; softer tilt; densify sparse MotionEvent gaps (fast circle→box); `calculateSmoothedSpeedFactor` curve for speed thinning |
 | UI | Tooltip `Ink mode (stylus, fast refresh)` ⇒ Dart `isAccelerated` |
 
@@ -133,20 +133,61 @@ Physical pen smoke (2026-11-03): stroke only appeared after lift because `postRe
 
 ## Live-ink latency (2026-11-03 follow-up)
 
-Nomad Notes does **not** wait on Flutter frames. REA on `libeinkpwcoreapi` / `libeinkpwcorejni.so`:
+Nomad Notes does **not** wait on Flutter frames. REA on `libeinkpwcoreapi` / `libeinkpwcorejni.so` + `drawPath` `DrawService.startDraw` (native):
 
 1. `EinkPWCoreController.initForPw`
 2. `setHostBmpOffsetXY(Bitmap, ox, oy)` — without this, `nativeAddPWRect` logs `bitmap_width=0` and no-ops
 3. Draw the stroke into that host bitmap (Notes: OpenCV `drawLineLive`)
 4. `postRectForPw(rect, …)` → `postEinkHostBmpRect` / `postEinkPWRectFastHL`
 
-Shelf mirrors that: PixelCopy + host `Bitmap` + `drawSegment`/`postRectForPw`, plus `MainActivity.dispatchTouchEvent` stylus interception (EMR history samples, no OEM `.so`). Flutter always paints live ink; the overlay uses a **global pointer route** + `IgnorePointer` so finger page-turns still reach Readium. Densify uses Catmull-Rom at `maxGap=0.003`. Stroke math now uses a 5-sample speed deque, `getSpeedMapWidth` EMA, azimuth×brush, and `InkPoint` timestamps.
+Shelf mirrors that and **separates** the pen from the reader:
+
+- **Root cause of “ink only after toggle off”:** Flutter `SurfaceView`/`TextureView` frames are not e-ink partial-refreshed mid-stroke. Streaming points to Dart Canvas only becomes visible after a panel GC (ink exit). HandWrite binder alone does not paint into our surface.
+- **Live path:** translucent `SurfaceView` ink host. Mid-stroke: draw bmp → **immediate** `lockCanvas` present per segment → one `postRectForPw` (A2 `displayMode=1`) per MOVE. **Do not** call `EinkManager.screenRefresh` mid-stroke (queued ~0.5s lag). HandWrite binder armed; WebView user-select hardened.
+- HandWrite still gets `sendWriteInfo` + `setWritable` + `setPen` for panel mode; pixels come from the host bitmap, not the HandWrite overlay.
+- Do **not** PixelCopy Flutter SurfaceView (SIGBUS), `deinitForPw` on exit (Scudo abort), or mid-stroke Flutter Canvas on Nomad.
+- Completed strokes stream on `shelf.eink/strokes` for persistence; Flutter paints committed strokes after ink exit.
+- Noop / LCD still uses the Flutter global pointer route + Canvas.
+
+## EMR overlay path (2026-11-04) — abandoned for product
+
+Notes tip speed is a privileged EMR/HandWrite/SF stack. Sideload experiments
+(`PWCoreCtrl`, `enableFullUiAuto(false)`, HandWrite binder, FastPW `postRect`)
+either plateaued ~0.5s, blanked the page white, or only showed ink after mode
+exit. **Shelf ships its own translucent `InkHostView` Surface overlay** instead
+of chasing Notes RE.
+
+### What Notes actually does for “instant” (REA 2026-11-04)
+
+`librecgnition.so` `ThreadUpdateEpdc` → `HTEINK_IOC_DISPAREA` on `/dev/ebc`
+(world-rw `rga_device`) updates the panel overlay FB directly. Framework helpers
+in `libeinkutils.so` (`postEinkHostBmpRectFast`, `postEinkPWRectFastHL`) are the
+same family. That path is not SurfaceView damage.
+
+### Shelf-owned approximation (no Notes .so)
+
+While inking: `EinkManager.setScreenMode(SPEED=2)`, `View.setEinkUpdateMode(A2)`
+on `InkHostView`, tip-lead paint, no mid-stroke/`UP` soft refresh. Exit restores
+screen mode + one soft DU. True DISPAREA parity would need a Shelf ioctl wrapper
+and careful structs — deferred.
+
+### Portability (what is SuperNote-only)
+
+| Piece | Scope |
+| --- | --- |
+| `InkHostView` Surface + software stroke + tip lead | Any Android; mid-stroke visibility depends on the panel |
+| Stylus consume in `MainActivity` | Portable |
+| Probe `android.software.eink` / `hteink` / `getSystemService("eink")` | Ratta/SuperNote feature + service names |
+| `ShelfEink.setScreenMode(SPEED)` | `android.os.EinkManager` — SuperNote framework |
+| `View.setEinkUpdateMode(A2)` | Ratta-patched `View` — SuperNote framework |
+| Exit `screenRefresh` soft DU | Same EinkManager |
+
+On non-SuperNote e-ink (Onyx, etc.) the overlay still attaches if probe finds an eink signal, but SPEED/A2 calls no-op and tip lag falls back toward plain Surface damage. A future Onyx backend would map the same contract to `EpdController`, not these APIs.
 
 ## Unknowns (still open after O1)
 
-- Whether PW over Flutter’s surface matches Notes latency, or a Ratta View/Surface host is required for “live” feel (O3).
+- Whether sideloaded PWCoreCtrl / HandWrite EMR matches Notes tip latency on Nomad (physical smoke).
 - Exact waveform ints for Nomad (defaults 0/1; revisit if partial refresh looks wrong — O2).
-- MotionEvent stylus vs Notes latency on Nomad (needs physical pen drawing).
 
 ## Deferred optimizations (log — do not implement unless needed)
 

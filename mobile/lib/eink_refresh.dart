@@ -1,18 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// Portable e-ink partial-refresh contract (M8).
+import 'ink_stroke.dart';
+
+/// Portable e-ink ink / refresh contract (M8).
 ///
-/// Backends: `noop` (default / iOS / LCD), `ratta_pw` (SuperNote framework
-/// reflection), `onyx_epd` when Onyx classes resolve. OEM ioctls are not used.
-///
-/// On Nomad, live ink uses a host [Bitmap] + `postRectForPw` (Notes path).
-/// Call [captureHost] after [beginInk], then [drawSegment] per stylus move.
+/// On Nomad (`ratta_pw`): Shelf's native translucent [InkHostView] draws live
+/// ink. Dart receives completed strokes for persistence / post-exit paint.
+/// Not the Notes HandWrite/PW EMR stack.
 class EinkRefresh {
-  EinkRefresh({MethodChannel? channel})
-    : _channel = channel ?? const MethodChannel('shelf.eink/refresh');
+  EinkRefresh({MethodChannel? channel, EventChannel? strokes})
+    : _channel = channel ?? const MethodChannel('shelf.eink/refresh'),
+      _strokesChannel = strokes ?? const EventChannel('shelf.eink/strokes');
 
   final MethodChannel _channel;
+  final EventChannel _strokesChannel;
+  final _strokeController = StreamController<InkStroke>.broadcast();
+  StreamSubscription<dynamic>? _strokeSub;
   var _backend = 'noop';
   var _ready = false;
   var hostLive = false;
@@ -21,10 +27,11 @@ class EinkRefresh {
 
   bool get isAccelerated => _backend != 'noop';
 
-  /// Last native diagnose map from [diagnose] (Nomad O1 smoke).
+  /// Native-completed strokes (accelerated path).
+  Stream<InkStroke> get nativeStrokes => _strokeController.stream;
+
   Map<String, Object?> lastDiagnose = const {};
 
-  /// Probe once; safe on every platform (returns `noop` when unavailable).
   Future<String> ensureReady() async {
     if (_ready) return _backend;
     _ready = true;
@@ -38,10 +45,20 @@ class EinkRefresh {
     } catch (_) {
       _backend = 'noop';
     }
+    _ensureStrokeListen();
     return _backend;
   }
 
-  /// Run native capability checks (logs to logcat tag `ShelfEink`).
+  void _ensureStrokeListen() {
+    if (_strokeSub != null) return;
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    _strokeSub = _strokesChannel.receiveBroadcastStream().listen((raw) {
+      if (raw is! Map) return;
+      final stroke = InkStroke.fromJson(raw);
+      if (stroke != null) _strokeController.add(stroke);
+    }, onError: (_) {});
+  }
+
   Future<Map<String, Object?>> diagnose() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       lastDiagnose = const {'backend': 'noop'};
@@ -60,22 +77,30 @@ class EinkRefresh {
     return lastDiagnose;
   }
 
-  Future<void> beginInk() async {
+  /// [content] is the ink overlay in **physical** screen pixels
+  /// (`left`, `top`, `width`, `height`) so the native host matches Flutter.
+  Future<void> beginInk({Map<String, double>? content}) async {
     await ensureReady();
     hostLive = false;
     if (_backend == 'noop') return;
+    _ensureStrokeListen();
     try {
-      await _channel.invokeMethod<void>('beginInk');
-      // PixelCopy the page into the PW host bmp (Nomad Notes path).
-      final ok = await _channel.invokeMethod<bool>('captureHost');
-      hostLive = ok == true;
+      await _channel.invokeMethod<void>('beginInk', content);
+      hostLive = true;
     } catch (_) {
-      // shortcut: OEM APIs are best-effort; keep drawing on Canvas failure.
       hostLive = false;
     }
   }
 
-  /// Draw one segment into the host bitmap and post a PW rect (physical px).
+  Future<bool> recaptureHost() async => hostLive;
+
+  Future<void> clearInkLayer() async {
+    if (_backend == 'noop') return;
+    try {
+      await _channel.invokeMethod<void>('clearInk');
+    } catch (_) {}
+  }
+
   Future<bool> drawSegment({
     required double x0,
     required double y0,
@@ -94,19 +119,12 @@ class EinkRefresh {
         'width': width,
         'eraser': eraser,
       });
-      if (ok == true) hostLive = true;
       return ok == true;
     } catch (_) {
       return false;
     }
   }
 
-  DateTime? _lastInvalidate;
-
-  /// Ask the panel to refresh the Flutter surface for [rect] (physical px).
-  ///
-  /// Always runs — host-bitmap `drawSegment` alone does not replace the
-  /// Flutter framebuffer the user sees mid-stroke on Nomad.
   Future<void> invalidate({
     required double left,
     required double top,
@@ -114,19 +132,8 @@ class EinkRefresh {
     required double bottom,
     Duration minInterval = const Duration(milliseconds: 16),
   }) async {
+    // Accelerated: native InkHostView owns mid-stroke refresh.
     if (_backend == 'noop') return;
-    final now = DateTime.now();
-    final last = _lastInvalidate;
-    if (last != null && now.difference(last) < minInterval) return;
-    _lastInvalidate = now;
-    try {
-      await _channel.invokeMethod<void>('invalidate', {
-        'left': left.round(),
-        'top': top.round(),
-        'right': right.round(),
-        'bottom': bottom.round(),
-      });
-    } catch (_) {}
   }
 
   Future<void> endInk() async {
@@ -143,5 +150,11 @@ class EinkRefresh {
     try {
       await _channel.invokeMethod<void>('fullRefresh');
     } catch (_) {}
+  }
+
+  Future<void> dispose() async {
+    await _strokeSub?.cancel();
+    _strokeSub = null;
+    await _strokeController.close();
   }
 }

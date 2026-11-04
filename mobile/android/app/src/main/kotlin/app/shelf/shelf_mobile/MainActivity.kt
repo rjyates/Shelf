@@ -24,12 +24,13 @@ class MainActivity : FlutterFragmentActivity() {
   }
 
   /**
-   * Feed stylus MotionEvents to the PW host-bitmap path at EMR sample rate
-   * (Notes-style live ink without shipping librecgnition/OpenCV). Finger
-   * events are ignored by the plugin so Readium page turns keep working.
+   * REA (drawPath / Notes): live ink is sampled and painted outside the app
+   * WebView. When ink mode is on we **consume** stylus here so Readium never
+   * sees it (no text selection / highlight). Fingers still fall through to
+   * Flutter for page turns.
    */
   override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-    einkRefresh.onMotionEvent(ev)
+    if (einkRefresh.onMotionEvent(ev)) return true
     return super.dispatchTouchEvent(ev)
   }
 }

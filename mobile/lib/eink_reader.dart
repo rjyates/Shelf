@@ -44,10 +44,15 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   var _inkMode = false;
   DateTime? _openedAt;
   StreamSubscription<Locator>? _locatorSub;
+  StreamSubscription<InkStroke>? _nativeStrokeSub;
+  final _inkLayerKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
+    _nativeStrokeSub = _einkRefresh.nativeStrokes.listen((stroke) {
+      unawaited(_saveInkStroke(stroke, rebuild: false));
+    });
     _open();
   }
 
@@ -78,6 +83,10 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         if (!mounted) return;
         setState(() => _currentLocator = locator);
         unawaited(_persist(locator));
+        // Clear the native ink overlay on page turns (no PixelCopy — unsafe).
+        if (_inkMode && _einkRefresh.isAccelerated) {
+          unawaited(_einkRefresh.clearInkLayer());
+        }
       });
       final bookmarks = await _safeListBookmarks();
       final annotations = await _safeListAnnotations();
@@ -220,7 +229,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     }
   }
 
-  Future<void> _saveInkStroke(InkStroke stroke) async {
+  Future<void> _saveInkStroke(InkStroke stroke, {bool rebuild = true}) async {
     final locator = _currentLocator;
     final anchored = InkStroke(
       points: stroke.points,
@@ -232,9 +241,13 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
           ? widget.book.percentage
           : shelfPercentageFromLocator(locator),
     );
-    // Keep the as-drawn geometry on screen; do not reload/replace from the
-    // server (that was morphing strokes after a late e-ink refresh).
-    setState(() => _inkStrokes = [..._inkStrokes, anchored]);
+    // Accelerated ink: host bmp already shows the stroke. Skip setState so
+    // Flutter does not invalidate the surface mid-session (full GC flashes).
+    if (rebuild) {
+      setState(() => _inkStrokes = [..._inkStrokes, anchored]);
+    } else {
+      _inkStrokes = [..._inkStrokes, anchored];
+    }
     try {
       await widget.api.createAnnotation(
         widget.book.id,
@@ -249,7 +262,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       final annotations = await widget.api.listAnnotations(widget.book.id);
       if (!mounted) return;
       // Refresh mark metadata only; preserve local stroke geometry.
-      setState(() => _annotations = annotations);
+      if (rebuild) {
+        setState(() => _annotations = annotations);
+      } else {
+        _annotations = annotations;
+      }
     } catch (error) {
       if (ShelfApi.isQueueFailure(error) && widget.outbox != null) {
         await widget.outbox!.enqueue(
@@ -437,7 +454,9 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   @override
   void dispose() {
     _locatorSub?.cancel();
+    _nativeStrokeSub?.cancel();
     if (_inkMode) unawaited(_einkRefresh.endInk());
+    unawaited(_einkRefresh.dispose());
     final locator = _currentLocator;
     if (locator != null) unawaited(_persist(locator));
     unawaited(_readium.closePublication());
@@ -479,29 +498,6 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
             icon: const Icon(Icons.bookmark_add_outlined),
           ),
         ],
-        bottom: _inkMode
-            ? const PreferredSize(
-                preferredSize: Size.fromHeight(28),
-                child: ColoredBox(
-                  color: paper,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: Padding(
-                      padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: Text(
-                        'Ink · stylus only · finger still turns pages',
-                        style: TextStyle(
-                          color: ink,
-                          fontSize: 13,
-                          fontFamily: 'Plex',
-                          height: 1.2,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              )
-            : null,
       ),
       body: _error != null
           ? Center(
@@ -554,6 +550,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                   ),
                 ),
                 InkOverlay(
+                  key: _inkLayerKey,
                   enabled: _inkMode,
                   refresh: _einkRefresh,
                   strokes: inkStrokesForPage(
@@ -582,12 +579,30 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   Future<void> _toggleInkMode() async {
     final next = !_inkMode;
     if (next) {
-      await _einkRefresh.beginInk();
-    } else {
-      await _einkRefresh.endInk();
+      // Physical screen rect of the ink layer — native host must match this or
+      // strokes jump down by the AppBar on exit.
+      Map<String, double>? content;
+      final box = _inkLayerKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null && box.hasSize) {
+        final origin = box.localToGlobal(Offset.zero);
+        final dpr = MediaQuery.devicePixelRatioOf(context);
+        content = {
+          'left': origin.dx * dpr,
+          'top': origin.dy * dpr,
+          'width': box.size.width * dpr,
+          'height': box.size.height * dpr,
+        };
+      }
+      await _einkRefresh.beginInk(content: content);
+      if (!mounted) return;
+      setState(() => _inkMode = true);
+      return;
     }
+    // Paint committed strokes onto Flutter first, then tear down the host.
+    setState(() => _inkMode = false);
+    await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
-    setState(() => _inkMode = next);
+    await _einkRefresh.endInk();
   }
 }
 

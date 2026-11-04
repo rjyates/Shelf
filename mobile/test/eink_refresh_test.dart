@@ -44,8 +44,6 @@ void main() {
         'probe',
         'diagnose',
         'beginInk',
-        'captureHost',
-        'invalidate',
         'drawSegment',
         'endInk',
       ]);

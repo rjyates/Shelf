@@ -1,18 +1,15 @@
-import 'dart:async';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 import 'eink_refresh.dart';
 import 'ink_pipeline.dart';
 import 'ink_stroke.dart';
 
-/// Transparent stylus capture layer over the e-ink Readium view.
+/// Stylus capture / paint over the e-ink Readium view.
 ///
-/// Stylus is captured via a **global pointer route** so this overlay is never
-/// in the hit-test path — finger swipes still reach Readium for page turns.
-/// Live ink always paints on the Flutter canvas and also posts PW segments.
+/// On accelerated Nomad: native [InkHostView] owns the live trail; this overlay
+/// only paints **committed** strokes (and skips the global stylus route).
+/// On noop / LCD: stylus is captured here via a global pointer route.
 class InkOverlay extends StatefulWidget {
   const InkOverlay({
     super.key,
@@ -27,8 +24,6 @@ class InkOverlay extends StatefulWidget {
   final List<InkStroke> strokes;
   final ValueChanged<InkStroke> onStrokeComplete;
   final EinkRefresh? refresh;
-
-  /// When true, also claim touch pointers (blocks Readium paging under the overlay).
   final bool absorbTouch;
 
   @override
@@ -42,8 +37,9 @@ class _InkOverlayState extends State<InkOverlay> {
   int? _pointer;
   int? _strokeOriginMs;
   double? _prevWidth;
-  Offset? _prevLocal;
-  Size _size = Size.zero;
+
+  bool get _nativeOwnsPen =>
+      widget.refresh != null && widget.refresh!.isAccelerated;
 
   bool _isStylus(PointerEvent event) =>
       event.kind == PointerDeviceKind.stylus ||
@@ -58,9 +54,18 @@ class _InkOverlayState extends State<InkOverlay> {
   @override
   void initState() {
     super.initState();
-    // Global route receives stylus without winning the Stack hit test, so
-    // finger page-turns still reach the Readium WebView underneath.
     GestureBinding.instance.pointerRouter.addGlobalRoute(_onGlobalPointer);
+  }
+
+  @override
+  void didUpdateWidget(covariant InkOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.strokes.length > oldWidget.strokes.length && _live.isNotEmpty) {
+      _live.clear();
+    }
+    if (!widget.enabled && _live.isNotEmpty) {
+      _live.clear();
+    }
   }
 
   @override
@@ -71,7 +76,8 @@ class _InkOverlayState extends State<InkOverlay> {
 
   void _onGlobalPointer(PointerEvent event) {
     if (!widget.enabled || !mounted) return;
-    // Default: stylus only. Fingers must reach Readium for page turns.
+    // Accelerated: native consumes + paints live; do not double-handle.
+    if (_nativeOwnsPen) return;
     if (!_isStylus(event)) {
       if (!(widget.absorbTouch && _pointer == event.pointer)) return;
     }
@@ -79,7 +85,6 @@ class _InkOverlayState extends State<InkOverlay> {
     if (box == null || !box.hasSize) return;
     final local = box.globalToLocal(event.position);
     final size = box.size;
-    _size = size;
 
     if (event is PointerDownEvent) {
       if (!_isStylus(event)) return;
@@ -102,7 +107,6 @@ class _InkOverlayState extends State<InkOverlay> {
     _speed.reset();
     _prevWidth = null;
     _strokeOriginMs = _nowMs(event);
-    _prevLocal = local;
     _live
       ..clear()
       ..add(
@@ -145,35 +149,14 @@ class _InkOverlayState extends State<InkOverlay> {
         previousWidth: _prevWidth,
       );
       _prevWidth = w;
-      final refresh = widget.refresh;
-      final dpr = MediaQuery.devicePixelRatioOf(context);
-      if (refresh != null && refresh.isAccelerated) {
-        final a = _prevLocal ?? local;
-        unawaited(
-          refresh.drawSegment(
-            x0: a.dx * dpr,
-            y0: a.dy * dpr,
-            x1: local.dx * dpr,
-            y1: local.dy * dpr,
-            width: w * dpr,
-            eraser: _tool == 'eraser',
-          ),
-        );
-      }
     }
-    _prevLocal = local;
-    // Always paint live on Flutter — host PW alone was invisible mid-stroke
-    // (panel shows the Flutter surface; host bmp posts did not replace it).
     setState(() {});
-    _requestPartialRefresh(size);
   }
 
   void _end(PointerEvent event) {
     if (_pointer != event.pointer) return;
-    final size = _size == Size.zero ? (context.size ?? Size.zero) : _size;
     final points = finalizeInkPoints(_live);
     _pointer = null;
-    _prevLocal = null;
     _speed.reset();
     _prevWidth = null;
     if (points.length < 2) {
@@ -185,62 +168,17 @@ class _InkOverlayState extends State<InkOverlay> {
       ..clear()
       ..addAll(points);
     setState(() {});
-    _requestPartialRefresh(size, points: points, force: true);
     widget.onStrokeComplete(InkStroke(points: points, tool: _tool));
   }
 
   @override
-  void didUpdateWidget(covariant InkOverlay oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.strokes.length > oldWidget.strokes.length && _live.isNotEmpty) {
-      _live.clear();
-    }
-  }
-
-  void _requestPartialRefresh(
-    Size size, {
-    List<InkPoint>? points,
-    bool force = false,
-  }) {
-    final refresh = widget.refresh;
-    if (refresh == null || !refresh.isAccelerated || size.isEmpty) return;
-    final pts = points ?? _live;
-    if (pts.isEmpty) return;
-    var minX = pts.first.x;
-    var maxX = pts.first.x;
-    var minY = pts.first.y;
-    var maxY = pts.first.y;
-    for (final p in pts) {
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
-    }
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    const pad = 16.0;
-    // Schedule after the frame so View.invalidate sees the new Flutter pixels.
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      unawaited(
-        refresh.invalidate(
-          left: (minX * size.width - pad) * dpr,
-          top: (minY * size.height - pad) * dpr,
-          right: (maxX * size.width + pad) * dpr,
-          bottom: (maxY * size.height + pad) * dpr,
-          minInterval: force ? Duration.zero : const Duration(milliseconds: 16),
-        ),
-      );
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    // IgnorePointer: never win the Stack hit test (finger paging works).
-    // Stylus arrives through the global pointer route above.
     return IgnorePointer(
       child: CustomPaint(
         painter: _InkPainter(
           strokes: widget.strokes,
-          live: _live,
+          // Native path owns the live trail on InkHostView.
+          live: _nativeOwnsPen ? const [] : List<InkPoint>.of(_live),
           liveTool: _tool,
         ),
         size: Size.infinite,
@@ -268,15 +206,16 @@ class _InkPainter extends CustomPainter {
       _paintStroke(
         canvas,
         size,
-        densifyInkPoints(stroke.points),
+        // Match native live host: linear pressure width, no densify fattening.
+        stroke.points,
         stroke.tool,
         stroke.width,
         speed,
+        matchNativeLive: true,
       );
     }
     if (live.length >= 2) {
       speed.reset();
-      // Tighter densify for live trail so fast curves stay round mid-stroke.
       _paintStroke(
         canvas,
         size,
@@ -284,6 +223,7 @@ class _InkPainter extends CustomPainter {
         liveTool,
         2,
         speed,
+        matchNativeLive: false,
       );
     }
   }
@@ -294,8 +234,9 @@ class _InkPainter extends CustomPainter {
     List<InkPoint> points,
     String tool,
     double width,
-    InkSpeedTracker speed,
-  ) {
+    InkSpeedTracker speed, {
+    required bool matchNativeLive,
+  }) {
     final color = tool == 'eraser'
         ? const Color(0xffffffff)
         : const Color(0xff111111);
@@ -309,14 +250,18 @@ class _InkPainter extends CustomPainter {
     for (var i = 1; i < points.length; i++) {
       final a = points[i - 1];
       final b = points[i];
-      final w = segmentWidth(
-        a,
-        b,
-        minWidth: width * 0.6,
-        maxWidth: width * 2.5,
-        speed: speed,
-        previousWidth: prevW,
-      );
+      final w = matchNativeLive
+          // Same formula as EinkRefreshPlugin: 1.2 + p·3.8
+          ? (1.2 + ((a.pressure + b.pressure) * 0.5).clamp(0.0, 1.0) * 3.8)
+                .clamp(1.2, 5.0)
+          : segmentWidth(
+              a,
+              b,
+              minWidth: width * 0.6,
+              maxWidth: width * 2.5,
+              speed: speed,
+              previousWidth: prevW,
+            );
       prevW = w;
       paint.strokeWidth = w;
       canvas.drawLine(
@@ -328,5 +273,8 @@ class _InkPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _InkPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _InkPainter oldDelegate) =>
+      !identical(strokes, oldDelegate.strokes) ||
+      !identical(live, oldDelegate.live) ||
+      liveTool != oldDelegate.liveTool;
 }
