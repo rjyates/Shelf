@@ -461,27 +461,30 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
     postRectScratch.set(dirtyUnion)
     dirtyUnion.setEmpty()
     val host = inkHost ?: return
+    // Surface+SPEED+A2 is what the user actually sees mid-stroke. Raw
+    // DISPAREA alone does not show until ink mode exits (soft DU). Keep
+    // Surface unless explicitly ebc_only (experiment; currently invisible).
+    val skipSurface = ShelfEbc.active && ShelfEbc.wantEbcOnly()
+    if (!skipSurface) {
+      host.present(postRectScratch)
+    }
     if (ShelfEbc.active) {
-      // Dual Surface+DISPAREA showed a dashed trail that "filled in" when
-      // Surface caught up. Ebc owns mid-stroke; re-stamp the whole stroke
-      // dirty so prior segments stay continuous on the panel FB.
       val bmp = host.hostBitmap() ?: return
       val loc = IntArray(2)
       host.getLocationOnScreen(loc)
-      val full = strokeDirtyUnion
+      // Re-stamp whole stroke when ebc_only; otherwise just the new dirty
+      // (additive DISPAREA on top of Surface — may look dashed; experimental).
+      val rect = if (skipSurface) strokeDirtyUnion else postRectScratch
       ShelfEbc.postBitmap(
         bmp,
-        full.left,
-        full.top,
-        full.right,
-        full.bottom,
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.bottom,
         loc[0],
         loc[1],
       )
-      return
     }
-    // Locked path: Surface present (SPEED+A2).
-    host.present(postRectScratch)
   }
 
   private fun appendPoint(
