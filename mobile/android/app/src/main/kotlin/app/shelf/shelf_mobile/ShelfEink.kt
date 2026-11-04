@@ -24,8 +24,9 @@ object ShelfEink {
   const val SHOW_DU = 1
   const val SHOW_A2 = 4
 
-  /** android.view.View.EINK_DATA_MODE_A2 */
+  /** android.view.View.EINK_DATA_MODE_* */
   const val DATA_A2 = 1
+  const val DATA_DEFAULT = 3
 
   fun setScreenMode(
     context: Context,
@@ -50,7 +51,7 @@ object ShelfEink {
 
   /**
    * Mark [host] damage as fast partial refresh (A2 scribble). Call after the
-   * Surface is attached; reset is best-effort (DEFAULT show mode).
+   * Surface is attached; reset is best-effort (DU / DEFAULT).
    */
   fun setHostInkMode(
     host: View,
@@ -58,30 +59,40 @@ object ShelfEink {
   ): Boolean {
     return try {
       if (enable) {
-        try {
-          host.javaClass
-            .getMethod(
-              "setEinkUpdateMode",
-              Int::class.javaPrimitiveType,
-              Int::class.javaPrimitiveType,
-            ).invoke(host, SHOW_A2, DATA_A2)
-        } catch (_: NoSuchMethodException) {
-          host.javaClass
-            .getMethod("setEinkUpdateMode", Int::class.javaPrimitiveType)
-            .invoke(host, SHOW_A2)
-        }
+        setHostUpdateMode(host, SHOW_A2, DATA_A2)
       } else {
-        try {
-          host.javaClass
-            .getMethod("setEinkUpdateMode", Int::class.javaPrimitiveType)
-            .invoke(host, SHOW_DU)
-        } catch (_: Throwable) {
-        }
+        setHostUpdateMode(host, SHOW_DU, DATA_DEFAULT)
       }
       Log.i(TAG, "setHostInkMode enable=$enable")
       true
     } catch (t: Throwable) {
       Log.w(TAG, "setHostInkMode failed", t)
+      false
+    }
+  }
+
+  /** Switch waveform on [host] without toggling ink session. */
+  fun setHostUpdateMode(
+    host: View,
+    showMode: Int,
+    dataMode: Int = DATA_DEFAULT,
+  ): Boolean {
+    return try {
+      try {
+        host.javaClass
+          .getMethod(
+            "setEinkUpdateMode",
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+          ).invoke(host, showMode, dataMode)
+      } catch (_: NoSuchMethodException) {
+        host.javaClass
+          .getMethod("setEinkUpdateMode", Int::class.javaPrimitiveType)
+          .invoke(host, showMode)
+      }
+      true
+    } catch (t: Throwable) {
+      Log.w(TAG, "setHostUpdateMode failed", t)
       false
     }
   }

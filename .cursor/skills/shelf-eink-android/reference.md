@@ -66,7 +66,14 @@ Shipped Nomad feel (~0.15–0.2s tip lag): translucent `InkHostView` +
 Logcat tag `ShelfEink`. Ink mode AppBar control:
 `content-desc="Ink mode (stylus, fast refresh)"`.
 
+Do not chase mid-stroke “fill-in” with DU polish / dropping SPEED — smoke showed
+no win or worse tip feel; ledger in `nomad-stylus.md`.
+
 Java for Flutter builds: prefer JDK 21 when the host default is 25+.
+
+Device login: `uiautomator dump` can return null on first frames — retry; dismiss
+IME with `KEYCODE_BACK` between fields (not while dump is stale); `pm clear` if
+fields are corrupted from a bad automation pass.
 
 ### Experimental DISPAREA (`debug.shelf.ink.ebc`)
 

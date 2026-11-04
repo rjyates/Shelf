@@ -405,7 +405,6 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventC
           drawIntoHost(lastStylusX, lastStylusY, x, y, width, eraser)
         }
         flushLive()
-        // No softRefresh on UP — it added lag; SPEED+A2 owns live refresh.
         emitStroke()
         lastStylusX = Float.NaN
         lastStylusY = Float.NaN

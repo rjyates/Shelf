@@ -12,6 +12,7 @@ via `noop` / `InkOverlay` — usable strokes, not Nomad tip feel.
 `InkHostView` + `ShelfEink` SPEED screen mode + A2 host update mode + tip lead.
 Code: `EinkRefreshPlugin.kt`, `InkHostView.kt`, `ShelfEink.kt`, `eink_refresh.dart`.
 Commit family: `feat/nomad-ink-latency` / “lock Shelf Nomad ink overlay…”.
+Mid-stroke “fill-in while drawing” experiments abandoned (see Do not retread).
 
 Read **Do not retread** before changing ink. Older sections are historical.
 
@@ -40,7 +41,7 @@ Read **Do not retread** before changing ink. Older sections are historical.
    `lockCanvas`/`present` per MotionEvent; tip lead (~28 ms velocity, max 14 px).
 4. Pen-up: emit stroke on `shelf.eink/strokes` for persistence; **no** soft refresh.
 5. Ink mode off: restore screen mode, soft DU once, remove host; Flutter paints
-   committed strokes.
+   committed strokes. Live A2 looks thinner until this exit — accepted.
 
 LCD / `noop`: Flutter `InkOverlay` global pointer route + Canvas (no native host).
 
@@ -71,7 +72,8 @@ on **our** Surface. Raw DISPAREA / shipping Notes `.so` is out of product scope.
 | Do not | Why | Symptom we saw |
 | --- | --- | --- |
 | Mid-stroke `EinkManager.screenRefresh` | Queues panel GC | ~0.5s+ tip lag |
-| Soft refresh on every pen-up | Fights SPEED/A2 | Sticky tip, worse feel |
+| Soft refresh on every pen-up (sync) | Fights SPEED/A2 | Sticky tip, worse feel |
+| Mid-stroke fill-in (DU host, no SPEED, polish-after-lift, view-mode flip) | Fought tip feel or looked unchanged / worse | Abandoned 2026-11-04; keep SPEED+A2 |
 | `enableFullUiAuto(false)` without working EMR | Freezes UI partials | Ink invisible until mode exit |
 | Notes HandWrite binder as live paint | Reply `realTimeHandWriting` ≠ our pixels | No mid-stroke ink |
 | `PWCoreCtrl` / SF Communicate from sideload | SecurityException / no paint | Dead end |
@@ -150,6 +152,44 @@ FastPW/SYNC_PW/`enableFullUiAuto` caused white page or no gain past ~0.5s.
 **2026-11-04 EMR-only (no Surface):** Ink only after mode exit; abandoned.
 
 **2026-11-04 locked path:** Surface + SPEED + A2 + tip lead → ~0.15–0.2s tip lag.
+
+### Latency wins (keep)
+
+What actually moved tip feel from ~0.5s toward Notes-like (~0.15–0.2s) on Nomad:
+
+| Lever | Role |
+| --- | --- |
+| Translucent `InkHostView` Surface + host software bitmap | Visible mid-stroke plane (Flutter Canvas damage is ignored while accelerated) |
+| One coalesced `present` per `MotionEvent` | Avoids ANR from per-history-sample presents |
+| `EinkManager.setScreenMode(SPEED=2)` | System scribble-class refresh while inking |
+| `View.setEinkUpdateMode(A2)` on the host | Fast partial waveform for overlay damage |
+| Tip lead (~28 ms velocity, capped ~14 px) | Paints slightly ahead so lag *feels* smaller |
+| No soft refresh / `screenRefresh` mid-stroke or on every UP | Those queue GC / sticky tip |
+| Fingers not consumed | Page-turn still works; stylus-only capture |
+
+Ink-off still does restore screen mode + one soft DU; live A2 ink looks thinner /
+scratchier than the post-exit Flutter+softDu view. **Accepted** for M8 tip speed.
+
+### Quality / “fill-in while drawing” (abandoned 2026-11-04)
+
+User-visible problem: live ink thin/jagged; toggling drawing off “fills in” blacks.
+Hypothesis was A2 vs DU. Device smoke showed otherwise:
+
+| Attempt | Result |
+| --- | --- |
+| Soft DU on every pen-up | Sticky tip; fights SPEED/A2 |
+| Delayed local DU `present` after UP (~90 ms) | No visible change under SPEED |
+| Idle-coalesced polish (~28 ms, pressure-early arm, union across lifts) | Still no visible fill-in; speed unchanged |
+| Live host DU instead of A2 (still under SPEED) | **Identical** to A2 — `setEinkUpdateMode` does not override SPEED’s look |
+| Drop SPEED, keep host DU | Fill-in / solidity better for some strokes but tip feel worse — rejected |
+| Surface + `/dev/ebc` DISPAREA dual-path | Dashed trail then fill-in; slower; not product |
+| DISPAREA-only (`ebc_only`) | Invisible mid-stroke until ink-off soft DU |
+
+**Conclusion:** The jump on ink-off is leave-SPEED + softDu + Flutter committed
+strokes becoming the visible plane — not a missing mid-stroke polish timer.
+Notes-quality mid-stroke needs a true panel overlay lane (privileged), not
+view-mode flips on our Surface. Do not reopen fill-in on this stack without new
+evidence; keep SPEED+A2.
 
 **2026-11-04 O5 ebc DISPAREA experiment:** Shelf-owned `/dev/ebc` path (not Notes
 `.so`). Recovered from `libeinkutils.so` + live Nomad probe + app smoke:
