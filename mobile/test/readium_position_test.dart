@@ -34,8 +34,11 @@ void main() {
       type: 'application/pdf',
       locations: Locations(position: 3, totalProgression: 0.5),
     );
-    expect(shelfPositionFromLocator(locator, pdf: true), 'pdfpage(3)');
-    expect(pdfPageFromShelfPosition('pdfpage(3)'), 3);
+    expect(
+      shelfPositionFromLocator(locator, paged: ShelfPagedFormat.pdf),
+      'pdfpage(3)',
+    );
+    expect(pageFromShelfPosition('pdfpage(3)', ShelfPagedFormat.pdf), 3);
     final pub = Publication(
       metadata: Metadata(
         localizedTitle: LocalizedString.fromString('t'),
@@ -59,17 +62,55 @@ void main() {
           type: 'application/pdf',
           locations: Locations(position: 6),
         ),
-        pdf: true,
+        paged: ShelfPagedFormat.pdf,
         pageCount: 12,
       ),
       0.5,
     );
   });
 
+  test('CBZ locators persist as cbzpage(N) via reading-order index', () {
+    final pub = Publication(
+      metadata: Metadata(localizedTitle: LocalizedString.fromString('t')),
+      readingOrder: [
+        for (var i = 1; i <= 4; i++)
+          Link(href: '/page$i.png', type: 'image/png'),
+      ],
+    );
+    final locator = Locator(
+      href: '/page3.png',
+      type: 'image/png',
+      locations: Locations(),
+    );
+    expect(
+      shelfPositionFromLocator(
+        locator,
+        paged: ShelfPagedFormat.cbz,
+        publication: pub,
+      ),
+      'cbzpage(3)',
+    );
+    final restored = restoreReadiumLocator(
+      publication: pub,
+      position: 'cbzpage(3)',
+      percentage: 0.75,
+    );
+    expect(restored?.href, '/page3.png');
+    expect(restored?.locations?.position, 3);
+    expect(
+      shelfPercentageFromLocator(
+        restored!,
+        paged: ShelfPagedFormat.cbz,
+        publication: pub,
+      ),
+      0.75,
+    );
+  });
+
   test('reader progress label matches web page · percent style', () {
     expect(
       readerProgressLabel(
-        pdf: true,
+        paged: ShelfPagedFormat.pdf,
         locator: Locator(
           href: '/doc.pdf',
           type: 'application/pdf',
@@ -82,7 +123,7 @@ void main() {
     );
     expect(
       readerProgressLabel(
-        pdf: false,
+        paged: null,
         locator: Locator(
           href: '/a.xhtml',
           type: 'application/xhtml+xml',
@@ -100,8 +141,11 @@ void main() {
       type: 'application/pdf',
       locations: Locations(fragments: ['page=6']),
     );
-    expect(shelfPositionFromLocator(locator, pdf: true), 'pdfpage(6)');
-    expect(pdfPageFromLocator(locator), 6);
+    expect(
+      shelfPositionFromLocator(locator, paged: ShelfPagedFormat.pdf),
+      'pdfpage(6)',
+    );
+    expect(pageFromLocator(locator), 6);
   });
 
   test('prefers an existing epubcfi fragment', () {

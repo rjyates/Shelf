@@ -1,13 +1,17 @@
 import 'dart:io';
 
-/// Local imported-file bytes keyed by catalogue id (EPUB or PDF).
+/// Local imported-file bytes keyed by catalogue id (EPUB, PDF, or CBZ).
 class EpubStore {
   EpubStore(this.root);
   final Directory root;
 
   Directory get _dir => Directory('${root.path}/epubs');
 
-  static String extensionFor({required bool isPdf}) => isPdf ? 'pdf' : 'epub';
+  static String extensionFor({bool isPdf = false, bool isCbz = false}) {
+    if (isCbz) return 'cbz';
+    if (isPdf) return 'pdf';
+    return 'epub';
+  }
 
   File fileFor(int bookId, {String extension = 'epub'}) =>
       File('${_dir.path}/$bookId.$extension');

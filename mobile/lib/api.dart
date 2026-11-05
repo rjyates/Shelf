@@ -100,6 +100,9 @@ class Book {
 
   bool get isImported => isEpub || isPdf || isCbz;
 
+  /// Formats opened in the Readium reader (not manual page progress).
+  bool get opensInReader => isEpub || isPdf || isCbz;
+
   /// Fraction complete for catalogue math (imported % or manual pages).
   double get progressFraction =>
       isImported ? percentage : pagesRead / totalPages!;
@@ -417,7 +420,7 @@ class ShelfApi {
     await request('books/$bookId/annotations/$annotationId', method: 'DELETE');
   }
 
-  /// Authenticated EPUB/PDF bytes for offline storage / Readium open.
+  /// Authenticated EPUB/PDF/CBZ bytes for offline storage / Readium open.
   Future<List<int>> downloadEpub(int bookId) async {
     try {
       final request = await _client.getUrl(

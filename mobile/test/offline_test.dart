@@ -36,6 +36,14 @@ void main() {
     expect(store.fileFor(9, extension: 'pdf').path.endsWith('9.pdf'), isTrue);
   });
 
+  test('cbz store uses a .cbz extension', () async {
+    final store = EpubStore(temp);
+    expect(EpubStore.extensionFor(isCbz: true), 'cbz');
+    await store.save(3, [80, 75, 3, 4], extension: 'cbz');
+    expect(await store.has(3, extension: 'cbz'), isTrue);
+    expect(store.fileFor(3, extension: 'cbz').path.endsWith('3.cbz'), isTrue);
+  });
+
   test('outbox enqueues and flushes in order, keeping failures', () async {
     final outbox = SyncOutbox(temp);
     await outbox.enqueue(

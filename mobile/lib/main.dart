@@ -625,8 +625,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (store == null) return {};
     final saved = <int>{};
     for (final book in books) {
-      if (!book.isEpub && !book.isPdf) continue;
-      final ext = EpubStore.extensionFor(isPdf: book.isPdf);
+      if (!book.opensInReader) continue;
+      final ext = EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
       if (await store.has(book.id, extension: ext)) saved.add(book.id);
     }
     return saved;
@@ -670,9 +670,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   String? _localExtension(Book book) {
-    if (book.isPdf) return EpubStore.extensionFor(isPdf: true);
-    if (book.isEpub) return EpubStore.extensionFor(isPdf: false);
-    return null;
+    if (!book.opensInReader) return null;
+    return EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
   }
 
   Future<void> _removeLocalCopy(Book book) async {
@@ -874,7 +873,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _read(Book book) async {
     final epubs = widget.epubs;
-    if (epubs == null || (!book.isEpub && !book.isPdf)) return;
+    if (epubs == null || !book.opensInReader) return;
     if (_openingBookId != null) return;
     // Paint tap feedback before any await — e-ink refresh is slow enough that
     // a delayed spinner looks like a missed tap.
@@ -911,7 +910,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final online = connectivityLooksOnline(
         await Connectivity().checkConnectivity(),
       );
-      final ext = EpubStore.extensionFor(isPdf: book.isPdf);
+      final ext = EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
       var cached = await epubs.has(book.id, extension: ext);
       if (!cached) {
         if (!online) {
@@ -1127,9 +1126,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       opening: _openingBookId == book.id,
                       openBusy: _openingBookId != null,
                       onOpen: () {
-                        if (book.isEpub || book.isPdf) {
+                        if (book.opensInReader) {
                           _read(book);
-                        } else if (!book.isCbz) {
+                        } else {
                           _record(book);
                         }
                       },
@@ -1179,12 +1178,10 @@ class _BookTile extends StatelessWidget {
         : '${book.pagesRead} / ${book.totalPages} pages';
     final action = opening
         ? 'Opening…'
-        : book.isEpub || book.isPdf
+        : book.opensInReader
         ? 'Read book'
-        : book.isCbz
-        ? 'CBZ on web'
         : 'Record progress';
-    final showLocalIcon = book.isEpub || book.isPdf;
+    final showLocalIcon = book.opensInReader;
     final cover = book.hasCover
         ? Image.network(
             api.base.resolve('/api/v1/books/${book.id}/cover').toString(),

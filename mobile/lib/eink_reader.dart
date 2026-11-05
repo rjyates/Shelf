@@ -49,6 +49,23 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   StreamSubscription<InkStroke>? _nativeStrokeSub;
   final _inkLayerKey = GlobalKey();
 
+  ShelfPagedFormat? get _pagedFormat {
+    if (widget.book.isPdf) return ShelfPagedFormat.pdf;
+    if (widget.book.isCbz) return ShelfPagedFormat.cbz;
+    return null;
+  }
+
+  int? get _pageCount {
+    final publication = _publication;
+    if (publication == null) return null;
+    if (widget.book.isPdf) return publication.metadata.numberOfPages;
+    if (widget.book.isCbz) {
+      final n = publication.readingOrder.length;
+      return n > 0 ? n : null;
+    }
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -91,7 +108,10 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       final path = widget.epubs
           .fileFor(
             widget.book.id,
-            extension: EpubStore.extensionFor(isPdf: widget.book.isPdf),
+            extension: EpubStore.extensionFor(
+              isPdf: widget.book.isPdf,
+              isCbz: widget.book.isCbz,
+            ),
           )
           .absolute
           .path;
@@ -159,13 +179,17 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
 
   Future<void> _persist(Locator locator) async {
     if (_saving) return;
-    // PDFs without a page number must not overwrite a real pdfpage(N) with a
-    // packed locator (restore would then lose the page).
-    if (widget.book.isPdf && pdfPageFromLocator(locator) == null) return;
+    // Paged formats without a page number must not overwrite a real *page(N).
+    final paged = _pagedFormat;
+    if (paged != null &&
+        pageFromLocator(locator, publication: _publication) == null) {
+      return;
+    }
     final percentage = shelfPercentageFromLocator(
       locator,
-      pdf: widget.book.isPdf,
-      pageCount: _publication?.metadata.numberOfPages,
+      paged: _pagedFormat,
+      pageCount: _pageCount,
+      publication: _publication,
     );
     // While opening, ignore title-page / start locators that would clobber the
     // percentage we are restoring to (and that Foliate previously saved).
@@ -178,7 +202,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       return;
     }
     _saving = true;
-    final position = shelfPositionFromLocator(locator, pdf: widget.book.isPdf);
+    final position = shelfPositionFromLocator(
+      locator,
+      paged: _pagedFormat,
+      publication: _publication,
+    );
     try {
       await widget.api.saveLocation(widget.book.id, position, percentage);
     } catch (error) {
@@ -227,7 +255,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     try {
       await widget.api.createBookmark(
         widget.book.id,
-        cfi: shelfPositionFromLocator(locator, pdf: widget.book.isPdf),
+        cfi: shelfPositionFromLocator(
+          locator,
+          paged: _pagedFormat,
+          publication: _publication,
+        ),
         title: locator.title ?? widget.book.title,
       );
       final bookmarks = await widget.api.listBookmarks(widget.book.id);
@@ -242,7 +274,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
           method: 'POST',
           path: 'books/${widget.book.id}/bookmarks',
           body: {
-            'cfi': shelfPositionFromLocator(locator, pdf: widget.book.isPdf),
+            'cfi': shelfPositionFromLocator(
+              locator,
+              paged: _pagedFormat,
+              publication: _publication,
+            ),
             'title': locator.title ?? widget.book.title,
           },
         );
@@ -269,13 +305,18 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       tool: stroke.tool,
       cfi: locator == null
           ? null
-          : shelfPositionFromLocator(locator, pdf: widget.book.isPdf),
+          : shelfPositionFromLocator(
+              locator,
+              paged: _pagedFormat,
+              publication: _publication,
+            ),
       percentage: locator == null
           ? widget.book.percentage
           : shelfPercentageFromLocator(
               locator,
-              pdf: widget.book.isPdf,
-              pageCount: _publication?.metadata.numberOfPages,
+              paged: _pagedFormat,
+              pageCount: _pageCount,
+              publication: _publication,
             ),
     );
     // Accelerated ink: host bmp already shows the stroke. Skip setState so
@@ -331,7 +372,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     try {
       await widget.api.createAnnotation(
         widget.book.id,
-        cfi: shelfPositionFromLocator(event.locator, pdf: widget.book.isPdf),
+        cfi: shelfPositionFromLocator(
+          event.locator,
+          paged: _pagedFormat,
+          publication: _publication,
+        ),
         text: event.selectedText ?? '',
         color: '#FACC15',
         style: 'highlight',
@@ -357,7 +402,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
           body: {
             'cfi': shelfPositionFromLocator(
               event.locator,
-              pdf: widget.book.isPdf,
+              paged: _pagedFormat,
+              publication: _publication,
             ),
             'text': event.selectedText ?? '',
             'color': '#FACC15',
@@ -506,10 +552,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   }
 
   String get _progressLabel => readerProgressLabel(
-    pdf: widget.book.isPdf,
+    paged: _pagedFormat,
     locator: _currentLocator,
     bookPercentage: widget.book.percentage,
-    pageCount: _publication?.metadata.numberOfPages,
+    pageCount: _pageCount,
+    publication: _publication,
   );
 
   @override
@@ -583,7 +630,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                         ? null
                         : shelfPositionFromLocator(
                             _currentLocator!,
-                            pdf: widget.book.isPdf,
+                            paged: _pagedFormat,
+                            publication: _publication,
                           ),
                   ),
                   onStrokeComplete: (stroke) =>
