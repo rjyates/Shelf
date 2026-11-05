@@ -41,7 +41,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | OPDS and Send-to-Kindle | Planned |
 | Metadata providers and cover enrichment | Planned |
 | Authors, series, smart scopes, collections | Planned |
-| Session-based statistics, heatmaps, streaks, Reading DNA | Planned; overview already exposes average progress across started books |
+| Session-based statistics, heatmaps, streaks, Reading DNA | Planned; overview average progress; catalogue `reading_status` (`open`/`finished`/`unfinished`/`rereading`) stored for later reopen metrics |
 | Annual goals, monthly challenges, achievements | Planned |
 | Hardcover, Readwise, StoryGraph | Planned; external accounts remain unconfigured |
 | Multiple users, roles, OIDC/SSO | Planned; initial foundation is one account |

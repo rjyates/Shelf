@@ -608,6 +608,131 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  Future<void> _manage(Book book) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Manage book'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(book.title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            Text(switch (book.readingStatus) {
+              'finished' => 'This book is marked finished.',
+              'unfinished' => 'Marked unfinished — not counting as a re-read.',
+              'rereading' => 'Marked as re-reading.',
+              _ => 'Catalogue tools for this book.',
+            }, style: Theme.of(context).textTheme.bodyMedium),
+            if (!book.isFinished) ...[
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Mark as finished'),
+                subtitle: const Text('Sets progress to 100%'),
+                onTap: () => Navigator.pop(context, 'finish'),
+              ),
+            ] else ...[
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Mark as unfinished'),
+                subtitle: const Text('Closed without a re-read'),
+                onTap: () => Navigator.pop(context, 'unfinished'),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Mark as re-reading'),
+                subtitle: const Text('Reopens for another pass'),
+                onTap: () => Navigator.pop(context, 'rereading'),
+              ),
+            ],
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Remove from library'),
+              subtitle: const Text('Deletes the stored file'),
+              onTap: () => Navigator.pop(context, 'remove'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'finish' || action == 'unfinished' || action == 'rereading') {
+      try {
+        switch (action) {
+          case 'finish':
+            await widget.api.markFinished(book.id);
+          case 'unfinished':
+            await widget.api.markUnfinished(book.id);
+          case 'rereading':
+            await widget.api.markRereading(book.id);
+        }
+        await _refresh();
+        if (mounted) {
+          final label = switch (action) {
+            'finish' => 'Marked as finished.',
+            'unfinished' => 'Marked as unfinished.',
+            _ => 'Marked as re-reading.',
+          };
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(label)));
+        }
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+        }
+      }
+      return;
+    }
+    if (action != 'remove') return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove this book?'),
+        content: Text(
+          '${book.title} will be deleted from your library, including the '
+          'stored file, reading position, bookmarks, and annotations. '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove permanently'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.api.deleteBook(book.id);
+      await widget.epubs?.remove(book.id);
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Book removed.')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
   Future<void> _import() async {
     try {
       final file = await openFile(
@@ -620,7 +745,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       );
       if (file == null) return;
-      final duplicate = await widget.api.importEpub(await file.readAsBytes());
+      final duplicate = await widget.api.importEpub(
+        await file.readAsBytes(),
+        filename: file.name,
+      );
       await _refresh();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -839,6 +967,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       onSaveOffline: book.isEpub && widget.epubs != null
                           ? () => _saveOffline(book)
                           : null,
+                      onManage: () => _manage(book),
                     ),
                 ],
               ),
@@ -857,6 +986,7 @@ class _BookTile extends StatelessWidget {
     required this.wide,
     required this.savedOffline,
     required this.onOpen,
+    required this.onManage,
     this.onSaveOffline,
   });
   final ShelfApi api;
@@ -864,6 +994,7 @@ class _BookTile extends StatelessWidget {
   final bool wide;
   final bool savedOffline;
   final VoidCallback onOpen;
+  final VoidCallback onManage;
   final VoidCallback? onSaveOffline;
 
   @override
@@ -950,6 +1081,14 @@ class _BookTile extends StatelessWidget {
             ),
           ),
         ],
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: onManage,
+            child: const Text('Manage book'),
+          ),
+        ),
       ],
     );
 

@@ -168,6 +168,87 @@
         }
       }
     },
+    "/books/{id}/finished": {
+      "post": {
+        "description": "Mark finished: reading_status=finished; imported percentage=1; manual pages_read=total_pages.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Marked finished"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        }
+      }
+    },
+    "/books/{id}/unfinished": {
+      "post": {
+        "description": "Mark unfinished (not re-reading): reading_status=unfinished; clears completion progress; keeps imported position.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Marked unfinished"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        }
+      }
+    },
+    "/books/{id}/rereading": {
+      "post": {
+        "description": "Mark re-reading: reading_status=rereading; clears completion progress; keeps imported position for later metrics.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Marked re-reading"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        }
+      }
+    },
     "/books/{id}/progress": {
       "post": {
         "parameters": [
@@ -230,11 +311,29 @@
     },
     "/books/import": {
       "post": {
-        "description": "Import raw unencrypted EPUB bytes without a fixed application upload-size limit. Exact-byte duplicates are account-scoped. Archive path, entry-count, and extreme-compression checks apply. Available memory, SQLite blob capacity, and deployment proxies may limit very large requests.",
+        "description": "Import raw unencrypted EPUB or PDF bytes without a fixed application upload-size limit. Exact-byte duplicates are account-scoped. For PDFs without embedded /Title, optional X-Shelf-Filename supplies the catalogue title (filename stem). EPUB archive path, entry-count, and extreme-compression checks apply. Available memory, SQLite blob capacity, and deployment proxies may limit very large requests.",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Shelf-Filename",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "description": "Original upload filename; used as PDF title fallback when metadata has no /Title"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/epub+zip": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/pdf": {
               "schema": {
                 "type": "string",
                 "format": "binary"
@@ -257,6 +356,33 @@
           },
           "429": {
             "description": "Import concurrency limit reached"
+          }
+        }
+      }
+    },
+    "/books/{id}": {
+      "delete": {
+        "description": "Permanently delete a catalogue book and its stored file, position, bookmarks, annotations, and reader preferences.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
           }
         }
       }
@@ -510,6 +636,7 @@
         }
       },
       "post": {
+        "description": "Create an annotation. EPUB rows use cfi; PDF reader highlights send pdf {page,rect,rects} (EmbedPDF page coordinates) which Shelf stores and returns for sync.",
         "parameters": [
           {
             "in": "path",
@@ -758,7 +885,8 @@
           "title",
           "author",
           "total_pages",
-          "pages_read"
+          "pages_read",
+          "reading_status"
         ],
         "properties": {
           "id": {
@@ -782,9 +910,22 @@
             "type": "integer",
             "minimum": 0
           },
+          "reading_status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "finished",
+              "unfinished",
+              "rereading"
+            ],
+            "description": "Catalogue lifecycle for stats; unfinished vs rereading are distinct reopen paths."
+          },
           "format": {
             "type": "string",
-            "const": "epub"
+            "enum": [
+              "epub",
+              "pdf"
+            ]
           },
           "percentage": {
             "type": "number",
@@ -797,7 +938,7 @@
               "null"
             ],
             "maxLength": 4096,
-            "description": "EPUB CFI; null before reading."
+            "description": "EPUB CFI or pdfpage(N); null before reading."
           },
           "has_cover": {
             "type": "boolean"

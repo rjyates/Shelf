@@ -18,4 +18,11 @@ class EpubStore {
     await _dir.create(recursive: true);
     await fileFor(bookId).writeAsBytes(bytes, flush: true);
   }
+
+  Future<void> remove(int bookId) async {
+    final file = fileFor(bookId);
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
 }

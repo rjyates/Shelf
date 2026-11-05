@@ -5,12 +5,46 @@ let catalogue = [];
 let setupRequired = false;
 let signedIn = false;
 let progressBook = null;
+let removeBook = null;
 async function api(path, options = {}) {
   try {
     return await request(path, options);
   } catch (error) {
     if (error.status === 401 && signedIn) showAuth(false);
     throw error;
+  }
+}
+/** Filename stems often use underscores; show them as spaces in the catalogue. */
+function displayTitle(title) {
+  return String(title || "")
+    .replace(/_+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function isImported(book) {
+  return book.format === "epub" || book.format === "pdf";
+}
+function isFinished(book) {
+  if (book.reading_status === "finished") return true;
+  if (
+    book.reading_status === "unfinished" ||
+    book.reading_status === "rereading"
+  )
+    return false;
+  return isImported(book)
+    ? book.percentage >= 1
+    : book.pages_read >= book.total_pages;
+}
+function manageHelp(book) {
+  switch (book.reading_status) {
+    case "finished":
+      return "This book is marked finished.";
+    case "unfinished":
+      return "Marked unfinished — not counting as a re-read.";
+    case "rereading":
+      return "Marked as re-reading.";
+    default:
+      return "Catalogue tools for this book.";
   }
 }
 function message(text) {
@@ -24,7 +58,8 @@ function showAuth(setup) {
   $("content").hidden = true;
   $("open-add").hidden = true;
   $("signout").hidden = true;
-  for (const id of ["progress-dialog"]) if ($(id).open) $(id).close();
+  for (const id of ["progress-dialog", "manage-dialog", "remove-dialog"])
+    if ($(id).open) $(id).close();
   $("auth-heading").textContent = setup
     ? "Make yourself at home."
     : "Open your reading room.";
@@ -92,7 +127,6 @@ function render() {
   $("library-panel").hidden = insights;
   $("insights-panel").hidden = !insights;
   const query = $("search").value.toLowerCase();
-  const isImported = (book) => book.format === "epub" || book.format === "pdf";
   const fraction = (book) =>
     isImported(book) ? book.percentage : book.pages_read / book.total_pages;
   const visible = catalogue.filter((book) =>
@@ -115,11 +149,12 @@ function render() {
       : "Open Library to record your progress on a book."
     : "Add a book to begin building your library.";
   for (const book of visible) {
+    const title = displayTitle(book.title);
     const article = element("article", undefined, "book");
     const cover = element("div", undefined, "cover");
     cover.setAttribute("aria-hidden", "true");
     cover.append(
-      element("span", book.title),
+      element("span", title),
       element("small", "SHELF / CATALOGUE"),
     );
     if (book.has_cover) {
@@ -132,7 +167,7 @@ function render() {
     }
     const info = element("div");
     info.append(
-      element("h3", book.title),
+      element("h3", title),
       element("p", book.author || "Author not recorded", "author"),
     );
     const progress = element("progress");
@@ -140,18 +175,68 @@ function render() {
     progress.value = fraction(book);
     progress.setAttribute(
       "aria-label",
-      `${book.title}: ${Math.round(fraction(book) * 100)}%`,
+      `${title}: ${Math.round(fraction(book) * 100)}%`,
     );
     const update = element("button", "Record progress", "quiet");
     update.addEventListener("click", () => {
       progressBook = book;
       $("progress-book").textContent =
-        `${book.title} · ${book.total_pages} pages`;
+        `${title} · ${book.total_pages} pages`;
       $("progress-pages").max = book.total_pages;
       $("progress-pages").value = book.pages_read;
       $("progress-error").hidden = true;
       $("progress-dialog").showModal();
     });
+    const actions = element("div", undefined, "book-actions");
+    if (isImported(book)) {
+      actions.append(
+        Object.assign(
+          element(
+            "a",
+            book.position ? "Continue reading →" : "Read book →",
+            "quiet",
+          ),
+          {
+            href: `/reader?id=${book.id}${book.format === "pdf" ? "&format=pdf" : ""}`,
+          },
+        ),
+      );
+    } else {
+      actions.append(update);
+    }
+    const manage = element("button", undefined, "icon-button");
+    manage.type = "button";
+    manage.setAttribute("aria-label", `Manage ${title}`);
+    manage.title = "Manage book";
+    const manageIcon = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg",
+    );
+    manageIcon.setAttribute("class", "icon-button-glyph");
+    manageIcon.setAttribute("viewBox", "0 0 24 24");
+    manageIcon.setAttribute("aria-hidden", "true");
+    const manageUse = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "use",
+    );
+    manageUse.setAttribute("href", "/icons.svg#edit");
+    manageIcon.append(manageUse);
+    manage.append(manageIcon);
+    manage.addEventListener("click", () => {
+      removeBook = book;
+      $("manage-title").textContent = title;
+      $("manage-error").hidden = true;
+      const finished = isFinished(book);
+      $("manage-finish").hidden = finished;
+      $("manage-finish").disabled = finished;
+      $("manage-unfinished").hidden = !finished;
+      $("manage-unfinished").disabled = !finished;
+      $("manage-rereading").hidden = !finished;
+      $("manage-rereading").disabled = !finished;
+      $("manage-help").textContent = manageHelp(book);
+      $("manage-dialog").showModal();
+    });
+    actions.append(manage);
     info.append(
       progress,
       element(
@@ -161,18 +246,7 @@ function render() {
           : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`,
         "fine",
       ),
-      isImported(book)
-        ? Object.assign(
-            element(
-              "a",
-              book.position ? "Continue reading →" : "Read book →",
-              "quiet",
-            ),
-            {
-              href: `/reader?id=${book.id}${book.format === "pdf" ? "&format=pdf" : ""}`,
-            },
-          )
-        : update,
+      actions,
     );
     article.append(cover, info);
     $("books").append(article);
@@ -188,7 +262,7 @@ function render() {
       `${book.title}: ${Math.round(fraction(book) * 100)}%`,
     );
     row.append(
-      element("span", book.title),
+      element("span", displayTitle(book.title)),
       bar,
       element("span", `${Math.round(fraction(book) * 100)}%`, "fine"),
     );
@@ -236,6 +310,63 @@ $("signout").addEventListener("click", async () => {
 $("close-progress").addEventListener("click", () =>
   $("progress-dialog").close(),
 );
+$("close-manage").addEventListener("click", () => $("manage-dialog").close());
+async function setReadingStatus(path, okMessage, buttonId) {
+  if (!removeBook) return;
+  const button = $(buttonId);
+  button.disabled = true;
+  $("manage-error").hidden = true;
+  try {
+    await api(`books/${removeBook.id}/${path}`, { method: "POST" });
+    $("manage-dialog").close();
+    removeBook = null;
+    await refresh();
+    message(okMessage);
+  } catch (error) {
+    $("manage-error").textContent = error.message;
+    $("manage-error").hidden = false;
+    button.disabled = false;
+  }
+}
+$("manage-finish").addEventListener("click", () => {
+  if (!removeBook || isFinished(removeBook)) return;
+  setReadingStatus("finished", "Marked as finished.", "manage-finish");
+});
+$("manage-unfinished").addEventListener("click", () => {
+  if (!removeBook || !isFinished(removeBook)) return;
+  setReadingStatus("unfinished", "Marked as unfinished.", "manage-unfinished");
+});
+$("manage-rereading").addEventListener("click", () => {
+  if (!removeBook || !isFinished(removeBook)) return;
+  setReadingStatus("rereading", "Marked as re-reading.", "manage-rereading");
+});
+$("manage-remove").addEventListener("click", () => {
+  if (!removeBook) return;
+  $("manage-dialog").close();
+  $("remove-title").textContent = displayTitle(removeBook.title);
+  $("remove-error").hidden = true;
+  $("remove-dialog").showModal();
+});
+$("close-remove").addEventListener("click", () => $("remove-dialog").close());
+$("cancel-remove").addEventListener("click", () => $("remove-dialog").close());
+$("confirm-remove").addEventListener("click", async () => {
+  if (!removeBook) return;
+  const button = $("confirm-remove");
+  button.disabled = true;
+  $("remove-error").hidden = true;
+  try {
+    await api(`books/${removeBook.id}`, { method: "DELETE" });
+    $("remove-dialog").close();
+    removeBook = null;
+    await refresh();
+    message("Book removed.");
+  } catch (error) {
+    $("remove-error").textContent = error.message;
+    $("remove-error").hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
 $("progress-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector(".primary");
@@ -291,6 +422,7 @@ $("epub-files").addEventListener("change", async () => {
         method: "POST",
         headers: {
           "Content-Type": isPdf ? "application/pdf" : "application/epub+zip",
+          "X-Shelf-Filename": file.name,
         },
         body: file,
       });

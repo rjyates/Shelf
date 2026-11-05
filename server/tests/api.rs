@@ -39,7 +39,27 @@ trailer<< /Root 1 0 R /Info 4 0 R >>
     .to_vec()
 }
 
+fn sample_pdf_without_title() -> Vec<u8> {
+    br#"%PDF-1.1
+1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj
+2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj
+3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>endobj
+trailer<< /Root 1 0 R >>
+%%EOF
+"#
+    .to_vec()
+}
+
 async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCode, Value) {
+    upload_named(app, bytes, token, None).await
+}
+
+async fn upload_named(
+    app: &Router,
+    bytes: Vec<u8>,
+    token: Option<&str>,
+    filename: Option<&str>,
+) -> (StatusCode, Value) {
     let content_type = if bytes.starts_with(b"%PDF") {
         "application/pdf"
     } else {
@@ -51,6 +71,9 @@ async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCod
         .header("content-type", content_type);
     if let Some(token) = token {
         request = request.header("authorization", format!("Bearer {token}"));
+    }
+    if let Some(filename) = filename {
+        request = request.header("x-shelf-filename", filename);
     }
     let response = app
         .clone()
@@ -331,6 +354,125 @@ async fn pdf_import_serve_and_page_location() {
     let duplicate = upload(&app, sample_pdf(), Some(&token)).await;
     assert_eq!(duplicate.0, StatusCode::OK);
     assert_eq!(duplicate.1["duplicate"], true);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/finished"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["percentage"], 1.0);
+    assert_eq!(catalogue[0]["reading_status"], "finished");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/unfinished"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["percentage"], 0.0);
+    assert_eq!(catalogue[0]["reading_status"], "unfinished");
+    assert_eq!(catalogue[0]["position"], "pdfpage(3)");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/finished"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/rereading"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["reading_status"], "rereading");
+    assert_eq!(catalogue[0]["percentage"], 0.0);
+    let (status, named) = upload_named(
+        &app,
+        sample_pdf_without_title(),
+        Some(&token),
+        Some("path/My Summer Notes.pdf"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{named}");
+    let named_id = named["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let named_book = catalogue
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|book| book["id"] == named_id)
+        .unwrap();
+    assert_eq!(named_book["title"], "My Summer Notes");
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/books/{named_id}"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("/api/v1/books/{named_id}/file"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/books/{named_id}"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
 }
 
 async fn call(
@@ -613,6 +755,33 @@ async fn bookmarks_annotations_and_reader_prefs_persist() {
     assert_eq!(status, StatusCode::CREATED, "{note}");
     let annotation_id = note["id"].as_i64().unwrap();
     assert_eq!(note["jumpFileId"], book_id);
+    assert_eq!(note["pdf"], Value::Null);
+    let (status, pdf_note) = call(
+        &app,
+        "POST",
+        &annotations,
+        json!({
+            "bookFileId": book_id,
+            "text":"pdf highlight",
+            "color":"#4ADE80",
+            "style":"highlight",
+            "note":null,
+            "pdf":{
+                "page":2,
+                "rect":{"x":10.0,"y":20.0,"width":100.0,"height":12.0},
+                "rects":[
+                    {"x":10.0,"y":20.0,"width":100.0,"height":12.0},
+                    {"x":10.0,"y":34.0,"width":40.0,"height":12.0}
+                ]
+            }
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{pdf_note}");
+    assert_eq!(pdf_note["pdf"]["page"], 2);
+    assert_eq!(pdf_note["pageno"], 2);
+    assert_eq!(pdf_note["pdf"]["rects"].as_array().unwrap().len(), 2);
     assert_eq!(
         call(
             &app,
@@ -623,7 +792,40 @@ async fn bookmarks_annotations_and_reader_prefs_persist() {
         )
         .await
         .1["total"],
-        1
+        2
+    );
+    let listed = call(
+        &app,
+        "GET",
+        &format!("{annotations}?page=1"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    let pdf_listed = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == pdf_note["id"])
+        .unwrap();
+    assert_eq!(pdf_listed["pdf"]["page"], 2);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &annotations,
+            json!({
+                "text":"bad",
+                "color":"#4ADE80",
+                "style":"highlight",
+                "pdf":{"page":-1,"rect":{"x":0,"y":0,"width":1,"height":1},"rects":[{"x":0,"y":0,"width":1,"height":1}]}
+            }),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
     );
 
     assert_eq!(

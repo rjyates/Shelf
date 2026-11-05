@@ -18,6 +18,7 @@ class Book {
     required this.author,
     required this.totalPages,
     required this.pagesRead,
+    this.readingStatus = 'open',
     this.hasCover = false,
     this.isEpub = false,
     this.isPdf = false,
@@ -36,6 +37,7 @@ class Book {
     final imported = epub || format == 'pdf';
     final percentage = json['percentage'];
     final position = json['position'];
+    final status = json['reading_status'] ?? 'open';
     if (id is! int ||
         id < 1 ||
         title is! String ||
@@ -55,7 +57,14 @@ class Book {
         read is! int ||
         read < 0 ||
         (!imported && read > (total as int)) ||
-        (imported && read != 0)) {
+        (imported && read != 0) ||
+        status is! String ||
+        !const {
+          'open',
+          'finished',
+          'unfinished',
+          'rereading',
+        }.contains(status)) {
       throw ShelfException(
         'Your server returned an invalid book entry. Check the server version.',
       );
@@ -71,6 +80,7 @@ class Book {
       position: imported ? position as String? : null,
       pagesRead: read,
       isPdf: format == 'pdf',
+      readingStatus: status,
     );
   }
   final int id;
@@ -83,18 +93,29 @@ class Book {
   final double percentage;
   final String? position;
   final int pagesRead;
+  final String readingStatus;
 
   bool get isImported => isEpub || isPdf;
 
   /// Fraction complete for catalogue math (imported % or manual pages).
   double get progressFraction =>
       isImported ? percentage : pagesRead / totalPages!;
+
+  bool get isFinished {
+    if (readingStatus == 'finished') return true;
+    if (readingStatus == 'unfinished' || readingStatus == 'rereading') {
+      return false;
+    }
+    return isImported ? percentage >= 1 : pagesRead >= totalPages!;
+  }
 }
 
 /// Library blurb: imported books have no page count (decision 0003), so mean progress replaces "pages turned".
 String libraryReadingBlurb(List<Book> books) {
   final started = books
-      .where((book) => book.isImported ? book.percentage > 0 : book.pagesRead > 0)
+      .where(
+        (book) => book.isImported ? book.percentage > 0 : book.pagesRead > 0,
+      )
       .toList();
   if (started.isEmpty) {
     return '${books.length} books';
@@ -196,7 +217,7 @@ class ShelfApi {
     if (_token != null) HttpHeaders.authorizationHeader: 'Bearer $_token',
   };
 
-  Future<bool> importEpub(List<int> bytes) async {
+  Future<bool> importEpub(List<int> bytes, {String? filename}) async {
     if (bytes.isEmpty) {
       throw ShelfException('Choose a non-empty EPUB file.');
     }
@@ -208,6 +229,9 @@ class ShelfApi {
       request.persistentConnection = false;
       request.headers.contentType = ContentType('application', 'epub+zip');
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      if (filename != null && filename.trim().isNotEmpty) {
+        request.headers.set('x-shelf-filename', filename.trim());
+      }
       request.add(bytes);
       final response = await request.close().timeout(
         const Duration(seconds: 90),
@@ -274,6 +298,22 @@ class ShelfApi {
       method: 'POST',
       body: {'pages_read': pages},
     );
+  }
+
+  Future<void> deleteBook(int id) async {
+    await request('books/$id', method: 'DELETE');
+  }
+
+  Future<void> markFinished(int id) async {
+    await request('books/$id/finished', method: 'POST');
+  }
+
+  Future<void> markUnfinished(int id) async {
+    await request('books/$id/unfinished', method: 'POST');
+  }
+
+  Future<void> markRereading(int id) async {
+    await request('books/$id/rereading', method: 'POST');
   }
 
   Future<void> saveLocation(

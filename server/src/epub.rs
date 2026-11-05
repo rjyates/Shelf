@@ -73,6 +73,32 @@ fn is_pdf(bytes: &[u8]) -> bool {
     bytes.starts_with(b"%PDF")
 }
 
+/// Stem of an upload filename (`Report.pdf` → `Report`). Paths and empty stems are ignored.
+fn title_from_filename(name: Option<&str>) -> Option<String> {
+    let raw = name?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let base = std::path::Path::new(raw)
+        .file_name()
+        .and_then(|s| s.to_str())?
+        .trim();
+    let stem = std::path::Path::new(base)
+        .file_stem()
+        .and_then(|s| s.to_str())?
+        .trim();
+    // Filenames often use underscores where a catalogue title wants spaces.
+    let title = stem
+        .replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if title.is_empty() || title.len() > 500 || title.chars().any(char::is_control) {
+        return None;
+    }
+    Some(title)
+}
+
 /// Best-effort `/Title` from the PDF info dict; empty when absent or binary-encoded.
 fn pdf_title(bytes: &[u8]) -> Option<String> {
     let haystack = &bytes[..bytes.len().min(512 * 1024)];
@@ -220,6 +246,7 @@ fn import_pdf(
     user: i64,
     bytes: &[u8],
     digest: &str,
+    filename: Option<&str>,
 ) -> ApiResult<i64> {
     if bytes.len() < 5 || !is_pdf(bytes) {
         return Err(invalid());
@@ -232,7 +259,9 @@ fn import_pdf(
             "Encrypted PDFs are not supported yet.",
         ));
     }
-    let title = pdf_title(bytes).unwrap_or_else(|| "Untitled PDF".into());
+    let title = pdf_title(bytes)
+        .or_else(|| title_from_filename(filename))
+        .unwrap_or_else(|| "Untitled PDF".into());
     tx.execute(
         "INSERT INTO books(user_id,title,author,total_pages) VALUES (?,?,?,1)",
         params![user, title, ""],
@@ -247,6 +276,10 @@ fn import_pdf(
 
 pub(super) async fn import(State(state): State<AppState>, request: Request) -> ApiResult<Response> {
     let headers = request.headers().clone();
+    let filename = headers
+        .get("x-shelf-filename")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
     let user = state.db(move |db| authenticate(db, &headers)).await?;
     let _permit = IMPORTS.try_acquire().map_err(|_| {
         ApiError(
@@ -278,12 +311,52 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
                 return Ok((StatusCode::OK, Json(serde_json::json!({"id":id,"duplicate":true}))).into_response());
             }
             let id = if is_pdf(&bytes) {
-                import_pdf(&tx, user, &bytes, &digest)?
+                import_pdf(&tx, user, &bytes, &digest, filename.as_deref())?
             } else {
                 import_epub(&tx, user, &bytes, &digest)?
             };
             tx.commit()?;
             Ok((StatusCode::CREATED, Json(serde_json::json!({"id":id,"duplicate":false}))).into_response())
+        })
+        .await
+}
+
+pub(super) async fn delete_book(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> ApiResult<StatusCode> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let owned: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM books WHERE id=? AND user_id=?)",
+                params![id, user],
+                |r| r.get(0),
+            )?;
+            if !owned {
+                return Err(ApiError(StatusCode::NOT_FOUND, "Book not found."));
+            }
+            tx.execute(
+                "DELETE FROM bookmarks WHERE book_id=? AND user_id=?",
+                params![id, user],
+            )?;
+            tx.execute(
+                "DELETE FROM annotations WHERE book_id=? AND user_id=?",
+                params![id, user],
+            )?;
+            tx.execute(
+                "DELETE FROM reader_preferences WHERE book_id=? AND user_id=?",
+                params![id, user],
+            )?;
+            tx.execute("DELETE FROM epub_files WHERE book_id=?", [id])?;
+            tx.execute(
+                "DELETE FROM books WHERE id=? AND user_id=?",
+                params![id, user],
+            )?;
+            tx.commit()?;
+            Ok(StatusCode::NO_CONTENT)
         })
         .await
 }
@@ -364,6 +437,13 @@ pub(super) async fn location(
             )?;
             if changed == 0 {
                 return Err(ApiError(StatusCode::NOT_FOUND, "Book file not found."));
+            }
+            // Natural completion; unfinished/rereading stay until manage marks finished again.
+            if (value.percentage - 1.0).abs() < f64::EPSILON {
+                db.execute(
+                    "UPDATE books SET reading_status='finished' WHERE id=? AND user_id=?",
+                    params![id, user],
+                )?;
             }
             Ok(StatusCode::NO_CONTENT)
         })
