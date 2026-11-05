@@ -83,6 +83,42 @@ impl AppState {
     }
 }
 
+/// SQLite cannot ALTER a CHECK; rebuild epub_files when `cbz` is still rejected.
+fn migrate_epub_files_allow_cbz(db: &Connection) -> rusqlite::Result<()> {
+    let sql: String = db.query_row(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='epub_files'",
+        [],
+        |r| r.get(0),
+    )?;
+    if sql.contains("'cbz'") {
+        return Ok(());
+    }
+    db.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+         BEGIN;
+         CREATE TABLE epub_files_new (
+           book_id INTEGER PRIMARY KEY REFERENCES books(id),
+           digest TEXT NOT NULL,
+           content BLOB NOT NULL,
+           cover BLOB,
+           cover_mime TEXT,
+           position TEXT,
+           percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
+           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz'))
+         );
+         INSERT INTO epub_files_new
+           (book_id,digest,content,cover,cover_mime,position,percentage,format)
+           SELECT book_id,digest,content,cover,cover_mime,position,percentage,format
+           FROM epub_files;
+         DROP TABLE epub_files;
+         ALTER TABLE epub_files_new RENAME TO epub_files;
+         CREATE INDEX IF NOT EXISTS epub_digest ON epub_files(digest);
+         COMMIT;
+         PRAGMA foreign_keys=ON;",
+    )?;
+    Ok(())
+}
+
 pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let db = Connection::open(&database)?;
     db.pragma_update(None, "journal_mode", "WAL")?;
@@ -91,9 +127,8 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ =
         db.execute_batch("ALTER TABLE epub_files ADD COLUMN format TEXT NOT NULL DEFAULT 'epub'");
     let _ = db.execute_batch("ALTER TABLE annotations ADD COLUMN pdf TEXT");
-    let _ = db.execute_batch(
-        "ALTER TABLE books ADD COLUMN reading_status TEXT NOT NULL DEFAULT 'open'",
-    );
+    let _ = db
+        .execute_batch("ALTER TABLE books ADD COLUMN reading_status TEXT NOT NULL DEFAULT 'open'");
     // Backfill finished from progress for libraries that only had % / pages.
     let _ = db.execute_batch(
         "UPDATE books SET reading_status='finished'
@@ -102,6 +137,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
            OR id IN (SELECT book_id FROM epub_files WHERE percentage=1)
          )",
     );
+    migrate_epub_files_allow_cbz(&db)?;
     Ok(Router::new()
         .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
         .route("/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/app.css")) }))
@@ -129,6 +165,8 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/books/import", post(epub::import).layer(DefaultBodyLimit::disable()))
         .route("/api/v1/books/{id}/file", get(epub::file))
         .route("/api/v1/books/{id}/cover", get(epub::cover))
+        .route("/api/v1/books/{id}/pages", get(epub::comic_page_count))
+        .route("/api/v1/books/{id}/pages/{page}", get(epub::comic_page))
         .route("/api/v1/books/{id}/location", post(epub::location))
         .route(
             "/api/v1/books/{id}/bookmarks",
@@ -245,6 +283,12 @@ async fn setup(
         .await
 }
 
+/// Sliding idle window renewed on every authenticated request. Active clients stay
+/// signed in; idle clients must sign in again after this period.
+const SESSION_IDLE_SECS: i64 = 30 * 24 * 60 * 60;
+/// Browser cookie lifetime (Chrome caps ~400d). Server idle sliding is authoritative.
+const SESSION_COOKIE_MAX_AGE: i64 = 400 * 24 * 60 * 60;
+
 fn token_hash(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
 }
@@ -264,16 +308,23 @@ fn authenticate(db: &Connection, headers: &HeaderMap) -> ApiResult<i64> {
     let token = bearer
         .or(cookie)
         .ok_or(ApiError(StatusCode::UNAUTHORIZED, "Please sign in."))?;
-    db.query_row(
-        "SELECT user_id FROM sessions WHERE token_hash=? AND expires_at > unixepoch()",
-        [token_hash(token)],
-        |r| r.get(0),
-    )
-    .optional()?
-    .ok_or(ApiError(
-        StatusCode::UNAUTHORIZED,
-        "Your session has expired. Please sign in.",
-    ))
+    let hash = token_hash(token);
+    let user_id: i64 = db
+        .query_row(
+            "SELECT user_id FROM sessions WHERE token_hash=? AND expires_at > unixepoch()",
+            [&hash],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(ApiError(
+            StatusCode::UNAUTHORIZED,
+            "Your session has expired. Please sign in.",
+        ))?;
+    db.execute(
+        "UPDATE sessions SET expires_at = unixepoch() + ?1 WHERE token_hash = ?2",
+        params![SESSION_IDLE_SECS, hash],
+    )?;
+    Ok(user_id)
 }
 
 async fn login(
@@ -297,9 +348,14 @@ async fn login(
         let mut bytes = [0u8; 32]; OsRng.fill_bytes(&mut bytes);
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         db.execute("DELETE FROM sessions WHERE expires_at <= unixepoch()", [])?;
-        db.execute("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,unixepoch()+604800)", params![token_hash(&token), record.unwrap().0])?;
+        db.execute(
+            "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,unixepoch()+?)",
+            params![token_hash(&token), record.unwrap().0, SESSION_IDLE_SECS],
+        )?;
         let secure = if std::env::var("SHELF_SECURE_COOKIE").as_deref() == Ok("true") { "; Secure" } else { "" };
-        let cookie = format!("shelf_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800{secure}");
+        let cookie = format!(
+            "shelf_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE}{secure}"
+        );
         Ok(([(header::SET_COOKIE, cookie), (header::CACHE_CONTROL, "no-store".into())], Json(serde_json::json!({"token":token}))).into_response())
     }).await
 }
@@ -366,6 +422,7 @@ async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<J
                     Some(EpubInfo {
                         format: match format.as_deref() {
                             Some("pdf") => "pdf",
+                            Some("cbz") => "cbz",
                             _ => "epub",
                         },
                         percentage: r.get(7)?,
@@ -505,10 +562,7 @@ fn set_reading_status(db: &Connection, user: i64, id: i64, status: &str) -> ApiR
             }
         }
         _ => {
-            return Err(ApiError(
-                StatusCode::BAD_REQUEST,
-                "Unknown reading status.",
-            ));
+            return Err(ApiError(StatusCode::BAD_REQUEST, "Unknown reading status."));
         }
     }
     db.execute(

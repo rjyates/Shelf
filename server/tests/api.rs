@@ -50,6 +50,28 @@ trailer<< /Root 1 0 R >>
     .to_vec()
 }
 
+/// Minimal 1×1 PNG used as CBZ page bytes.
+fn tiny_png() -> &'static [u8] {
+    &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8,
+        0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE, 0xD4, 0xEF, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ]
+}
+
+fn sample_cbz() -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for name in ["002.png", "001.png"] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(tiny_png()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
 async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCode, Value) {
     upload_named(app, bytes, token, None).await
 }
@@ -62,6 +84,9 @@ async fn upload_named(
 ) -> (StatusCode, Value) {
     let content_type = if bytes.starts_with(b"%PDF") {
         "application/pdf"
+    } else if bytes.starts_with(b"PK") && !bytes.windows(19).any(|w| w == b"application/epub+zi") {
+        // CBZ (or other ZIP) — EPUB fixtures always embed the mimetype string.
+        "application/vnd.comicbook+zip"
     } else {
         "application/epub+zip"
     };
@@ -475,6 +500,78 @@ async fn pdf_import_serve_and_page_location() {
     );
 }
 
+#[tokio::test]
+async fn cbz_import_page_images_and_location() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("cbz.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, book) = upload_named(
+        &app,
+        sample_cbz(),
+        Some(&token),
+        Some("Night_City_Issue_1.cbz"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["format"], "cbz");
+    assert_eq!(catalogue[0]["title"], "Night City Issue 1");
+    assert_eq!(catalogue[0]["has_cover"], true);
+    let pages = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/pages"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(pages.0, StatusCode::OK);
+    assert_eq!(pages.1["pageCount"], 2);
+    let page0 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/books/{id}/pages/0"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page0.status(), StatusCode::OK);
+    assert_eq!(page0.headers()["content-type"], "image/png");
+    assert_eq!(to_bytes(page0.into_body(), 1024).await.unwrap(), tiny_png());
+    // Lexicographic order: 001.png before 002.png.
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/location"),
+            json!({"position":"cbzpage(2)","percentage":1.0}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["position"], "cbzpage(2)");
+    assert_eq!(catalogue[0]["percentage"], 1.0);
+    assert_eq!(catalogue[0]["reading_status"], "finished");
+}
+
 async fn call(
     app: &Router,
     method: &str,
@@ -621,6 +718,53 @@ async fn account_catalogue_progress_and_restart() {
             .await
             .0,
         StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn authenticated_requests_slide_session_idle_window() {
+    use sha2::{Digest, Sha256};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("slide.db");
+    let app = shelf_server::app(path.clone()).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute(
+        "UPDATE sessions SET expires_at = unixepoch() + 60 WHERE token_hash = ?",
+        [&hash],
+    )
+    .unwrap();
+    let before: i64 = db
+        .query_row(
+            "SELECT expires_at FROM sessions WHERE token_hash = ?",
+            [&hash],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let after: i64 = db
+        .query_row(
+            "SELECT expires_at FROM sessions WHERE token_hash = ?",
+            [&hash],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        after > before + 60,
+        "idle window should renew far past the near-expiry stamp ({after} vs {before})"
     );
 }
 

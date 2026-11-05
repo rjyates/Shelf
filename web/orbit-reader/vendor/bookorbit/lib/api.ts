@@ -228,16 +228,18 @@ type ShelfBookRow = {
 
 /** Resolve imported-file progress/cover from a Shelf book row (flat or nested). */
 export function shelfEpubFields(book: ShelfBookRow): {
-  format: 'epub' | 'pdf'
+  format: 'epub' | 'pdf' | 'cbz'
   percentage: number
   position: string | null
   has_cover: boolean
 } | null {
   const nested = book.epub
-  const format = book.format === 'pdf' || nested?.format === 'pdf' ? 'pdf' : 'epub'
+  const raw = book.format ?? nested?.format
+  const format = raw === 'pdf' ? 'pdf' : raw === 'cbz' ? 'cbz' : 'epub'
   const isImported =
     book.format === 'epub' ||
     book.format === 'pdf' ||
+    book.format === 'cbz' ||
     nested != null ||
     typeof book.percentage === 'number' ||
     typeof book.position === 'string' ||
@@ -251,10 +253,14 @@ export function shelfEpubFields(book: ShelfBookRow): {
   }
 }
 
-function parsePdfPage(position: string | null): number | null {
-  if (!position?.startsWith('pdfpage(') || !position.endsWith(')')) return null
-  const n = Number.parseInt(position.slice('pdfpage('.length, -1), 10)
-  return Number.isFinite(n) && n >= 1 ? n : null
+function parseFixedPage(position: string | null): number | null {
+  if (!position?.endsWith(')')) return null
+  for (const prefix of ['pdfpage(', 'cbzpage('] as const) {
+    if (!position.startsWith(prefix)) continue
+    const n = Number.parseInt(position.slice(prefix.length, -1), 10)
+    if (Number.isFinite(n) && n >= 1) return n
+  }
+  return null
 }
 
 /** Map Shelf catalogue rows into the Book Orbit BookDetail fields the reader reads. */
@@ -323,7 +329,7 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
     if (!imported) return jsonResponse({ items: [] })
     // Book Orbit UI uses 0–100; Shelf stores 0–1.
     const shelfPct = imported.percentage ?? 0
-    const pdfPage = parsePdfPage(imported.position)
+    const fixedPage = parseFixedPage(imported.position)
     return jsonResponse({
       items: [
         {
@@ -331,8 +337,8 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
           percentage: shelfPct <= 1 ? shelfPct * 100 : shelfPct,
           updatedAt: null,
           text: {
-            cfi: pdfPage == null ? imported.position : null,
-            page: pdfPage,
+            cfi: fixedPage == null ? imported.position : null,
+            page: fixedPage,
             updatedAt: null,
           },
           narration: null,
@@ -355,11 +361,20 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
     if (!write?.fileId) return jsonResponse({ error: 'Missing write' }, 400)
     const cfi = write.text?.cfi
     const page = typeof write.text?.page === 'number' && write.text.page >= 1 ? write.text.page : null
+    let pageToken = 'pdfpage'
+    if (page != null) {
+      const list = await fetch('/api/v1/books', { credentials: 'same-origin' })
+      if (list.ok) {
+        const books = (await list.json()) as ShelfBookRow[]
+        const book = books.find((item) => item.id === write.fileId)
+        if (shelfEpubFields(book ?? { id: 0 })?.format === 'cbz') pageToken = 'cbzpage'
+      }
+    }
     const position =
       typeof cfi === 'string' && cfi.startsWith('epubcfi(')
         ? cfi
         : page != null
-          ? `pdfpage(${Math.floor(page)})`
+          ? `${pageToken}(${Math.floor(page)})`
           : null
     const rawPct = typeof write.percentage === 'number' ? write.percentage : 0
     // Book Orbit posts 0–100; Shelf POST /location requires 0..=1.

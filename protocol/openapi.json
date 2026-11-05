@@ -78,7 +78,7 @@
         },
         "responses": {
           "200": {
-            "description": "Object containing token, plus HttpOnly SameSite=Strict session cookie. Both expire after seven days."
+            "description": "Object containing token, plus HttpOnly SameSite=Strict session cookie. Server sessions use a 30-day sliding idle window renewed on each authenticated request; the browser cookie Max-Age is longer so daily use never forces a fresh sign-in."
           },
           "401": {
             "description": "Incorrect credentials"
@@ -311,7 +311,7 @@
     },
     "/books/import": {
       "post": {
-        "description": "Import raw unencrypted EPUB or PDF bytes without a fixed application upload-size limit. Exact-byte duplicates are account-scoped. For PDFs without embedded /Title, optional X-Shelf-Filename supplies the catalogue title (filename stem). EPUB archive path, entry-count, and extreme-compression checks apply. Available memory, SQLite blob capacity, and deployment proxies may limit very large requests.",
+        "description": "Import raw unencrypted EPUB, PDF, or CBZ bytes without a fixed application upload-size limit. Exact-byte duplicates are account-scoped. For PDF/CBZ without a better title, optional X-Shelf-Filename supplies the catalogue title (filename stem). EPUB/CBZ archive path, entry-count, and extreme-compression checks apply. Available memory, SQLite blob capacity, and deployment proxies may limit very large requests.",
         "parameters": [
           {
             "in": "header",
@@ -338,6 +338,18 @@
                 "type": "string",
                 "format": "binary"
               }
+            },
+            "application/vnd.comicbook+zip": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/zip": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
             }
           }
         },
@@ -356,6 +368,101 @@
           },
           "429": {
             "description": "Import concurrency limit reached"
+          }
+        }
+      }
+    },
+    "/books/{id}/pages": {
+      "get": {
+        "description": "CBZ page count as `{ pageCount }` (Book Orbit comic reader).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page count"
+          },
+          "400": {
+            "description": "Book is not a CBZ"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        }
+      }
+    },
+    "/books/{id}/pages/{page}": {
+      "get": {
+        "description": "CBZ page image bytes (0-based page index).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Book is not a CBZ"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book or page not found"
           }
         }
       }
@@ -924,7 +1031,8 @@
             "type": "string",
             "enum": [
               "epub",
-              "pdf"
+              "pdf",
+              "cbz"
             ]
           },
           "percentage": {

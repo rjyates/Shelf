@@ -22,7 +22,7 @@ function displayTitle(title) {
     .trim();
 }
 function isImported(book) {
-  return book.format === "epub" || book.format === "pdf";
+  return book.format === "epub" || book.format === "pdf" || book.format === "cbz";
 }
 function isFinished(book) {
   if (book.reading_status === "finished") return true;
@@ -197,7 +197,11 @@ function render() {
             "quiet",
           ),
           {
-            href: `/reader?id=${book.id}${book.format === "pdf" ? "&format=pdf" : ""}`,
+            href: `/reader?id=${book.id}${
+              book.format === "pdf" || book.format === "cbz"
+                ? `&format=${book.format}`
+                : ""
+            }`,
           },
         ),
       );
@@ -242,7 +246,9 @@ function render() {
       element(
         "p",
         isImported(book)
-          ? `${Math.round(book.percentage * 100)}% read · ${book.format === "pdf" ? "PDF" : "EPUB"}`
+          ? `${Math.round(book.percentage * 100)}% read · ${
+              book.format === "pdf" ? "PDF" : book.format === "cbz" ? "CBZ" : "EPUB"
+            }`
           : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`,
         "fine",
       ),
@@ -415,13 +421,18 @@ $("epub-files").addEventListener("change", async () => {
   for (const file of files) {
     message(`Importing ${file.name}…`);
     try {
-      const isPdf =
-        file.type === "application/pdf" ||
-        file.name.toLowerCase().endsWith(".pdf");
+      const name = file.name.toLowerCase();
+      const contentType =
+        file.type === "application/pdf" || name.endsWith(".pdf")
+          ? "application/pdf"
+          : file.type === "application/vnd.comicbook+zip" ||
+              name.endsWith(".cbz")
+            ? "application/vnd.comicbook+zip"
+            : "application/epub+zip";
       const result = await api("books/import", {
         method: "POST",
         headers: {
-          "Content-Type": isPdf ? "application/pdf" : "application/epub+zip",
+          "Content-Type": contentType,
           "X-Shelf-Filename": file.name,
         },
         body: file,

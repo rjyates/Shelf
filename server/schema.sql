@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS epub_files (
   cover_mime TEXT,
   position TEXT,
   percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
-  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf'))
+  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz'))
 );
 CREATE INDEX IF NOT EXISTS epub_digest ON epub_files(digest);
 CREATE TABLE IF NOT EXISTS bookmarks (

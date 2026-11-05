@@ -22,6 +22,7 @@ class Book {
     this.hasCover = false,
     this.isEpub = false,
     this.isPdf = false,
+    this.isCbz = false,
     this.percentage = 0,
     this.position,
   });
@@ -33,8 +34,8 @@ class Book {
     final read = json['pages_read'];
     final format = json['format'];
     final epub = format == 'epub';
-    // PDF is imported like EPUB (null page count + %) but mobile open is still EPUB-only.
-    final imported = epub || format == 'pdf';
+    // PDF/CBZ are imported like EPUB (null page count + %). Mobile opens EPUB+PDF; CBZ later.
+    final imported = epub || format == 'pdf' || format == 'cbz';
     final percentage = json['percentage'];
     final position = json['position'];
     final status = json['reading_status'] ?? 'open';
@@ -80,6 +81,7 @@ class Book {
       position: imported ? position as String? : null,
       pagesRead: read,
       isPdf: format == 'pdf',
+      isCbz: format == 'cbz',
       readingStatus: status,
     );
   }
@@ -89,13 +91,14 @@ class Book {
   final int? totalPages;
   final bool isEpub;
   final bool isPdf;
+  final bool isCbz;
   final bool hasCover;
   final double percentage;
   final String? position;
   final int pagesRead;
   final String readingStatus;
 
-  bool get isImported => isEpub || isPdf;
+  bool get isImported => isEpub || isPdf || isCbz;
 
   /// Fraction complete for catalogue math (imported % or manual pages).
   double get progressFraction =>
@@ -267,6 +270,14 @@ class ShelfApi {
     _token = (data as Map<String, dynamic>)['token'] as String;
   }
 
+  /// Reattach a previously persisted server session token.
+  void restoreSession(String token) {
+    if (token.isEmpty) {
+      throw ShelfException('Saved session is empty.');
+    }
+    _token = token;
+  }
+
   Future<List<Book>> books() async {
     final data = await request('books');
     if (data is! List) {
@@ -406,7 +417,7 @@ class ShelfApi {
     await request('books/$bookId/annotations/$annotationId', method: 'DELETE');
   }
 
-  /// Authenticated EPUB bytes for offline storage.
+  /// Authenticated EPUB/PDF bytes for offline storage / Readium open.
   Future<List<int>> downloadEpub(int bookId) async {
     try {
       final request = await _client.getUrl(
@@ -434,11 +445,11 @@ class ShelfApi {
         throw ShelfException(
           response.statusCode == 404
               ? 'Book not found.'
-              : 'Could not download this EPUB.',
+              : 'Could not download this book file.',
         );
       }
       if (bytes.isEmpty) {
-        throw ShelfException('Could not download this EPUB.');
+        throw ShelfException('Could not download this book file.');
       }
       return bytes;
     } on ShelfException {

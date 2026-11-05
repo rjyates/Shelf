@@ -11,7 +11,7 @@ import 'ink_stroke.dart';
 import 'readium_position.dart';
 import 'sync_outbox.dart';
 
-/// Readium-backed local EPUB reader (CSS/pagination + Shelf bookmarks/annotations).
+/// Readium-backed local EPUB/PDF reader (Shelf bookmarks/annotations).
 class EinkReaderScreen extends StatefulWidget {
   const EinkReaderScreen({
     super.key,
@@ -38,6 +38,9 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   List<Map<String, dynamic>> _annotations = [];
   List<InkStroke> _inkStrokes = [];
   final _einkRefresh = EinkRefresh();
+
+  /// Readium center-tap toggles this; chrome overlays so fit-to-page keeps full viewport.
+  final ValueNotifier<bool> _showControls = ValueNotifier(true);
   String? _error;
   var _saving = false;
   var _inkMode = false;
@@ -49,27 +52,49 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   @override
   void initState() {
     super.initState();
+    _showControls.addListener(_onChromeChanged);
     _nativeStrokeSub = _einkRefresh.nativeStrokes.listen((stroke) {
       unawaited(_saveInkStroke(stroke, rebuild: false));
     });
     _open();
   }
 
+  void _onChromeChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _open() async {
     try {
       await _einkRefresh.ensureReady();
-      _readium.setDefaultPreferences(
-        const EPUBPreferences(
-          scroll: false,
-          backgroundColor: Color(0xffffffff),
-          textColor: Color(0xff111111),
-          fontSize: 1.15,
-          publisherStyles: false,
-          pageMargins: 1.2,
-          lineHeight: 1.45,
-        ),
-      );
-      final path = widget.epubs.fileFor(widget.book.id).absolute.path;
+      if (widget.book.isPdf) {
+        // Fit whole page in viewport; never two-up. Width-fit was clipping after zoom.
+        _readium.setDefaultPDFPreferences(
+          const PDFPreferences(
+            layout: PDFLayout.paginated,
+            fit: PDFFit.page,
+            spread: PDFSpread.never,
+          ),
+        );
+      } else {
+        _readium.setDefaultPreferences(
+          const EPUBPreferences(
+            scroll: false,
+            backgroundColor: Color(0xffffffff),
+            textColor: Color(0xff111111),
+            fontSize: 1.15,
+            publisherStyles: false,
+            pageMargins: 1.2,
+            lineHeight: 1.45,
+          ),
+        );
+      }
+      final path = widget.epubs
+          .fileFor(
+            widget.book.id,
+            extension: EpubStore.extensionFor(isPdf: widget.book.isPdf),
+          )
+          .absolute
+          .path;
       final url = Uri.file(path).toString();
       final publication = await _readium.openPublication(url);
       final initial = restoreReadiumLocator(
@@ -134,7 +159,14 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
 
   Future<void> _persist(Locator locator) async {
     if (_saving) return;
-    final percentage = shelfPercentageFromLocator(locator);
+    // PDFs without a page number must not overwrite a real pdfpage(N) with a
+    // packed locator (restore would then lose the page).
+    if (widget.book.isPdf && pdfPageFromLocator(locator) == null) return;
+    final percentage = shelfPercentageFromLocator(
+      locator,
+      pdf: widget.book.isPdf,
+      pageCount: _publication?.metadata.numberOfPages,
+    );
     // While opening, ignore title-page / start locators that would clobber the
     // percentage we are restoring to (and that Foliate previously saved).
     if (shouldDeferPersistDuringRestore(
@@ -146,7 +178,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       return;
     }
     _saving = true;
-    final position = shelfPositionFromLocator(locator);
+    final position = shelfPositionFromLocator(locator, pdf: widget.book.isPdf);
     try {
       await widget.api.saveLocation(widget.book.id, position, percentage);
     } catch (error) {
@@ -195,7 +227,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     try {
       await widget.api.createBookmark(
         widget.book.id,
-        cfi: shelfPositionFromLocator(locator),
+        cfi: shelfPositionFromLocator(locator, pdf: widget.book.isPdf),
         title: locator.title ?? widget.book.title,
       );
       final bookmarks = await widget.api.listBookmarks(widget.book.id);
@@ -210,7 +242,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
           method: 'POST',
           path: 'books/${widget.book.id}/bookmarks',
           body: {
-            'cfi': shelfPositionFromLocator(locator),
+            'cfi': shelfPositionFromLocator(locator, pdf: widget.book.isPdf),
             'title': locator.title ?? widget.book.title,
           },
         );
@@ -235,10 +267,16 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       color: stroke.color,
       width: stroke.width,
       tool: stroke.tool,
-      cfi: locator == null ? null : shelfPositionFromLocator(locator),
+      cfi: locator == null
+          ? null
+          : shelfPositionFromLocator(locator, pdf: widget.book.isPdf),
       percentage: locator == null
           ? widget.book.percentage
-          : shelfPercentageFromLocator(locator),
+          : shelfPercentageFromLocator(
+              locator,
+              pdf: widget.book.isPdf,
+              pageCount: _publication?.metadata.numberOfPages,
+            ),
     );
     // Accelerated ink: host bmp already shows the stroke. Skip setState so
     // Flutter does not invalidate the surface mid-session (full GC flashes).
@@ -293,7 +331,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     try {
       await widget.api.createAnnotation(
         widget.book.id,
-        cfi: shelfPositionFromLocator(event.locator),
+        cfi: shelfPositionFromLocator(event.locator, pdf: widget.book.isPdf),
         text: event.selectedText ?? '',
         color: '#FACC15',
         style: 'highlight',
@@ -317,7 +355,10 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
           method: 'POST',
           path: 'books/${widget.book.id}/annotations',
           body: {
-            'cfi': shelfPositionFromLocator(event.locator),
+            'cfi': shelfPositionFromLocator(
+              event.locator,
+              pdf: widget.book.isPdf,
+            ),
             'text': event.selectedText ?? '',
             'color': '#FACC15',
             'style': 'highlight',
@@ -454,6 +495,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   void dispose() {
     _locatorSub?.cancel();
     _nativeStrokeSub?.cancel();
+    _showControls.removeListener(_onChromeChanged);
+    _showControls.dispose();
     if (_inkMode) unawaited(_einkRefresh.endInk());
     unawaited(_einkRefresh.dispose());
     final locator = _currentLocator;
@@ -462,49 +505,30 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     super.dispose();
   }
 
+  String get _progressLabel => readerProgressLabel(
+    pdf: widget.book.isPdf,
+    locator: _currentLocator,
+    bookPercentage: widget.book.percentage,
+    pageCount: _publication?.metadata.numberOfPages,
+  );
+
   @override
   Widget build(BuildContext context) {
     const paper = Color(0xffffffff);
     const ink = Color(0xff111111);
     final publication = _publication;
+    final chrome = _showControls.value;
     return Scaffold(
       backgroundColor: paper,
-      appBar: AppBar(
-        backgroundColor: paper,
-        foregroundColor: ink,
-        elevation: 0,
-        title: Text(
-          widget.book.title,
-          style: const TextStyle(color: ink, fontSize: 18),
-        ),
-        actions: [
-          IconButton(
-            tooltip: _inkModeTooltip,
-            onPressed: publication == null ? null : _toggleInkMode,
-            icon: Icon(
-              _inkMode ? Icons.edit_off : Icons.edit,
-              color: _inkMode ? ink : null,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Bookmarks and highlights',
-            onPressed: publication == null ? null : _showMarksSheet,
-            icon: const Icon(Icons.bookmarks_outlined),
-          ),
-          IconButton(
-            tooltip: 'Add bookmark',
-            onPressed: publication == null ? null : _addBookmark,
-            icon: const Icon(Icons.bookmark_add_outlined),
-          ),
-        ],
-      ),
       body: _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: ink, fontSize: 18),
+          ? SafeArea(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: ink, fontSize: 18),
+                  ),
                 ),
               ),
             )
@@ -522,6 +546,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                 ReadiumReaderWidget(
                   publication: publication,
                   initialLocator: _initialLocator,
+                  shouldShowControls: _showControls,
                   selectionActions: const [
                     SelectionAction(id: 'highlight', title: 'Highlight'),
                     SelectionAction(id: 'bookmark', title: 'Bookmark'),
@@ -556,11 +581,101 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                     _inkStrokes,
                     _currentLocator == null
                         ? null
-                        : shelfPositionFromLocator(_currentLocator!),
+                        : shelfPositionFromLocator(
+                            _currentLocator!,
+                            pdf: widget.book.isPdf,
+                          ),
                   ),
                   onStrokeComplete: (stroke) =>
                       unawaited(_saveInkStroke(stroke)),
                 ),
+                if (chrome)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Material(
+                      color: paper,
+                      child: SafeArea(
+                        bottom: false,
+                        child: SizedBox(
+                          height: kToolbarHeight,
+                          child: Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Back',
+                                onPressed: () =>
+                                    Navigator.of(context).maybePop(),
+                                icon: const Icon(Icons.arrow_back, color: ink),
+                              ),
+                              Expanded(
+                                child: Text(
+                                  widget.book.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: ink,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: _inkModeTooltip,
+                                onPressed: _toggleInkMode,
+                                icon: Icon(
+                                  _inkMode ? Icons.edit_off : Icons.edit,
+                                  color: ink,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Bookmarks and highlights',
+                                onPressed: _showMarksSheet,
+                                icon: const Icon(
+                                  Icons.bookmarks_outlined,
+                                  color: ink,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Add bookmark',
+                                onPressed: _addBookmark,
+                                icon: const Icon(
+                                  Icons.bookmark_add_outlined,
+                                  color: ink,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (chrome)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Material(
+                      color: paper,
+                      child: SafeArea(
+                        top: false,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: Text(
+                            _progressLabel,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: ink,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
     );
@@ -646,7 +761,7 @@ class _MarksList extends StatelessWidget {
   }
 }
 
-/// Whether Read can proceed: local EPUB bytes exist, or the device is online
+/// Whether Read can proceed: local file bytes exist, or the device is online
 /// so the library can download them before opening Readium.
 bool canOpenEpubReader({required bool hasCachedEpub, required bool online}) =>
     hasCachedEpub || online;

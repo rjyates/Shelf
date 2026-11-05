@@ -28,6 +28,14 @@ void main() {
     expect(await store.fileFor(7).readAsBytes(), [80, 75, 3, 4]);
   });
 
+  test('pdf store uses a .pdf extension beside epubs', () async {
+    final store = EpubStore(temp);
+    await store.save(9, [37, 80, 68, 70], extension: 'pdf');
+    expect(await store.has(9, extension: 'pdf'), isTrue);
+    expect(await store.has(9), isFalse);
+    expect(store.fileFor(9, extension: 'pdf').path.endsWith('9.pdf'), isTrue);
+  });
+
   test('outbox enqueues and flushes in order, keeping failures', () async {
     final outbox = SyncOutbox(temp);
     await outbox.enqueue(

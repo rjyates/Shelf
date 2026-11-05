@@ -65,12 +65,91 @@ static IMPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 fn invalid() -> ApiError {
     ApiError(
         StatusCode::BAD_REQUEST,
-        "Not a supported book file. Use an unencrypted EPUB or PDF.",
+        "Not a supported book file. Use an unencrypted EPUB, PDF, or CBZ.",
     )
 }
 
 fn is_pdf(bytes: &[u8]) -> bool {
     bytes.starts_with(b"%PDF")
+}
+
+fn is_zip(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06")
+}
+
+fn image_mime(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        _ => None,
+    }
+}
+
+fn is_comic_image_path(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    if lower.contains("__macosx/") || lower.split('/').any(|p| p.starts_with('.')) {
+        return false;
+    }
+    image_mime(path).is_some()
+}
+
+/// Lexicographic page order (zero-padded names sort correctly).
+fn comic_page_names(bytes: &[u8]) -> ApiResult<Vec<String>> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| invalid())?;
+    if archive.len() > 10_000 {
+        return Err(invalid());
+    }
+    let mut names = Vec::new();
+    for index in 0..archive.len() {
+        let file = archive.by_index(index).map_err(|_| invalid())?;
+        if file.is_dir() || file.is_symlink() || file.enclosed_name().is_none() {
+            continue;
+        }
+        if file.size()
+            > file
+                .compressed_size()
+                .saturating_mul(200)
+                .saturating_add(1024 * 1024)
+        {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "This archive contains an unusually compressed resource.",
+            ));
+        }
+        let name = file.name().replace('\\', "/");
+        if is_comic_image_path(&name) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    if names.is_empty() {
+        return Err(invalid());
+    }
+    Ok(names)
+}
+
+fn is_epub_zip(bytes: &[u8]) -> bool {
+    let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+        return false;
+    };
+    if archive.by_name("META-INF/container.xml").is_ok() {
+        return true;
+    }
+    if let Ok(mut file) = archive.by_name("mimetype") {
+        let mut mime = String::new();
+        if std::io::Read::read_to_string(&mut file, &mut mime).is_ok()
+            && mime.trim() == "application/epub+zip"
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Stem of an upload filename (`Report.pdf` → `Report`). Paths and empty stems are ignored.
@@ -147,16 +226,9 @@ fn pdf_title(bytes: &[u8]) -> Option<String> {
     None
 }
 
-fn valid_position(position: &str) -> bool {
-    if position.len() > 4096 || position.chars().any(char::is_control) {
-        return false;
-    }
-    if position.starts_with("epubcfi(") && position.ends_with(')') {
-        return true;
-    }
-    // pdfpage(N) — 1-based page index the EmbedPDF reader restores.
+fn valid_page_token(position: &str, prefix: &str) -> bool {
     let Some(inner) = position
-        .strip_prefix("pdfpage(")
+        .strip_prefix(prefix)
         .and_then(|s| s.strip_suffix(')'))
     else {
         return false;
@@ -164,6 +236,17 @@ fn valid_position(position: &str) -> bool {
     !inner.is_empty()
         && inner.bytes().all(|b| b.is_ascii_digit())
         && inner.parse::<u32>().is_ok_and(|n| n >= 1)
+}
+
+fn valid_position(position: &str) -> bool {
+    if position.len() > 4096 || position.chars().any(char::is_control) {
+        return false;
+    }
+    if position.starts_with("epubcfi(") && position.ends_with(')') {
+        return true;
+    }
+    // pdfpage(N) / cbzpage(N) — 1-based page indexes for EmbedPDF / comic readers.
+    valid_page_token(position, "pdfpage(") || valid_page_token(position, "cbzpage(")
 }
 
 fn import_epub(
@@ -274,6 +357,37 @@ fn import_pdf(
     Ok(id)
 }
 
+fn import_cbz(
+    tx: &rusqlite::Transaction<'_>,
+    user: i64,
+    bytes: &[u8],
+    digest: &str,
+    filename: Option<&str>,
+) -> ApiResult<i64> {
+    if !is_zip(bytes) || is_epub_zip(bytes) {
+        return Err(invalid());
+    }
+    let pages = comic_page_names(bytes)?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| invalid())?;
+    let cover_name = pages[0].clone();
+    let mut cover_file = archive.by_name(&cover_name).map_err(|_| invalid())?;
+    let mut cover = Vec::new();
+    std::io::Read::read_to_end(&mut cover_file, &mut cover).map_err(|_| invalid())?;
+    let cover_mime = image_mime(&cover_name).ok_or_else(invalid)?;
+    drop(cover_file);
+    let title = title_from_filename(filename).unwrap_or_else(|| "Untitled comic".into());
+    tx.execute(
+        "INSERT INTO books(user_id,title,author,total_pages) VALUES (?,?,?,1)",
+        params![user, title, ""],
+    )?;
+    let id = tx.last_insert_rowid();
+    tx.execute(
+        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format) VALUES (?,?,?,?,?,'cbz')",
+        params![id, digest, bytes, cover, cover_mime],
+    )?;
+    Ok(id)
+}
+
 pub(super) async fn import(State(state): State<AppState>, request: Request) -> ApiResult<Response> {
     let headers = request.headers().clone();
     let filename = headers
@@ -312,6 +426,8 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
             }
             let id = if is_pdf(&bytes) {
                 import_pdf(&tx, user, &bytes, &digest, filename.as_deref())?
+            } else if is_zip(&bytes) && !is_epub_zip(&bytes) {
+                import_cbz(&tx, user, &bytes, &digest, filename.as_deref())?
             } else {
                 import_epub(&tx, user, &bytes, &digest)?
             };
@@ -377,10 +493,13 @@ pub(super) async fn file(
                 )
                 .optional()?
                 .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
-            let (mime, disposition) = if format == "pdf" {
-                ("application/pdf", "attachment; filename=book.pdf")
-            } else {
-                ("application/epub+zip", "attachment; filename=book.epub")
+            let (mime, disposition) = match format.as_str() {
+                "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
+                "cbz" => (
+                    "application/vnd.comicbook+zip",
+                    "attachment; filename=book.cbz",
+                ),
+                _ => ("application/epub+zip", "attachment; filename=book.epub"),
             };
             Ok((
                 [
@@ -404,6 +523,75 @@ pub(super) async fn cover(
         let (content,mime) = db.query_row("SELECT f.cover,f.cover_mime FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=? AND f.cover IS NOT NULL", params![id,user], |r| Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,String>(1)?))).optional()?.ok_or(ApiError(StatusCode::NOT_FOUND,"Cover not found."))?;
         Ok(([(header::CONTENT_TYPE,mime)],content).into_response())
     }).await
+}
+
+/// `GET /books/{id}/pages` → `{ pageCount }` for CBZ (Book Orbit comic reader).
+pub(super) async fn comic_page_count(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            let (content, format): (Vec<u8>, String) = db
+                .query_row(
+                    "SELECT f.content,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
+                    params![id, user],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?
+                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+            if format != "cbz" {
+                return Err(ApiError(
+                    StatusCode::BAD_REQUEST,
+                    "Page images are only available for CBZ comics.",
+                ));
+            }
+            let page_count = comic_page_names(&content)?.len();
+            Ok(Json(serde_json::json!({ "pageCount": page_count })))
+        })
+        .await
+}
+
+/// `GET /books/{id}/pages/{page}` — 0-based page image from a CBZ.
+pub(super) async fn comic_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, page)): Path<(i64, u32)>,
+) -> ApiResult<Response> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            let (content, format): (Vec<u8>, String) = db
+                .query_row(
+                    "SELECT f.content,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
+                    params![id, user],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?
+                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+            if format != "cbz" {
+                return Err(ApiError(
+                    StatusCode::BAD_REQUEST,
+                    "Page images are only available for CBZ comics.",
+                ));
+            }
+            let names = comic_page_names(&content)?;
+            let name = names.get(page as usize).ok_or(ApiError(
+                StatusCode::NOT_FOUND,
+                "Page not found.",
+            ))?;
+            let mime = image_mime(name).ok_or_else(invalid)?;
+            let mut archive = zip::ZipArchive::new(Cursor::new(content)).map_err(|_| invalid())?;
+            let mut file = archive
+                .by_name(name)
+                .map_err(|_| ApiError(StatusCode::NOT_FOUND, "Page not found."))?;
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut file, &mut bytes).map_err(|_| invalid())?;
+            Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
+        })
+        .await
 }
 
 #[derive(Deserialize)]
