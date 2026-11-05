@@ -192,14 +192,26 @@ def main() -> None:
     adb(serial, "reverse", "tcp:8080", "tcp:8080")
     print(adb(serial, "reverse", "--list").stdout.strip() or "reverse ok", flush=True)
 
+    # Asleep Nomad + lock screen makes uiautomator return null / empty forms and
+    # looks like a library outage. Wake and hold the display for the session.
+    adb(serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP", check=False)
+    adb(serial, "shell", "svc", "power", "stayon", "true", check=False)
+    adb(serial, "shell", "settings", "put", "system", "screen_off_timeout", "1800000", check=False)
+
     if args.install:
         if not APK.is_file():
             raise SystemExit(f"Missing {APK}. Run: flutter build apk --debug (in mobile/)")
         adb(serial, "install", "-r", str(APK))
 
     adb(serial, "shell", "am", "force-stop", PACKAGE)
-    adb(serial, "shell", "am", "start", "-W", "-n", ACTIVITY)
-    time.sleep(2.8)
+    adb(serial, "shell", "am", "start", "-n", ACTIVITY)
+    # Nomad e-ink first frame is slow; 3.5s often dumps 0 EditTexts.
+    time.sleep(6.0)
+    for _ in range(8):
+        xml = dump_ui(serial)
+        if len(centers(xml, "android.widget.EditText")) >= 3:
+            break
+        time.sleep(1.0)
 
     fill_login(serial, server, user, password)
     labels = re.findall(r'(?:text|content-desc)="([^"]+)"', dump_ui(serial))

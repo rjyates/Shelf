@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 class ShelfException implements Exception {
   ShelfException(this.message, {this.statusCode});
   final String message;
@@ -114,6 +116,9 @@ class ShelfApi {
       );
     }
     _client.connectionTimeout = const Duration(seconds: 10);
+    // adb reverse (and some USB proxies) drop idle sockets while Dart still
+    // pools them; the next request then fails with a false "unreachable".
+    _client.idleTimeout = Duration.zero;
   }
   final Uri base;
   final HttpClient _client;
@@ -132,9 +137,10 @@ class ShelfApi {
       ).timeout(const Duration(seconds: 15));
     } on ShelfException {
       rethrow;
-    } on Exception {
+    } on Exception catch (error) {
+      final detail = kDebugMode ? ' ($error)' : '';
       throw ShelfException(
-        'Could not reach your server. Check the address and connection.',
+        'Could not reach your server. Check the address and connection.$detail',
       );
     }
   }
@@ -149,6 +155,7 @@ class ShelfApi {
       base.resolve('/api/v1/$path'),
     );
     request.followRedirects = false;
+    request.persistentConnection = false;
     request.headers.contentType = ContentType.json;
     if (_token != null) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
@@ -189,6 +196,7 @@ class ShelfApi {
         base.resolve('/api/v1/books/import'),
       );
       request.followRedirects = false;
+      request.persistentConnection = false;
       request.headers.contentType = ContentType('application', 'epub+zip');
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       request.add(bytes);
@@ -356,6 +364,7 @@ class ShelfApi {
         base.resolve('/api/v1/books/$bookId/file'),
       );
       request.followRedirects = false;
+      request.persistentConnection = false;
       if (_token != null) {
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       }

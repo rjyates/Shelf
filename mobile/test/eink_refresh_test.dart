@@ -14,6 +14,12 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
           log.add(call);
           if (call.method == 'probe') return 'ratta_pw';
+          if (call.method == 'diagnose') {
+            return <String, Object?>{
+              'backend': 'ratta_pw',
+              'path': 'shelf_surface_overlay',
+            };
+          }
           return null;
         });
   });
@@ -29,16 +35,19 @@ void main() {
       final refresh = EinkRefresh(channel: channel);
       expect(await refresh.ensureReady(), 'ratta_pw');
       expect(refresh.isAccelerated, isTrue);
+      expect(await refresh.diagnose(), containsPair('backend', 'ratta_pw'));
       await refresh.beginInk();
-      await refresh.invalidate(left: 1, top: 2, right: 3, bottom: 4);
+      expect(refresh.hostLive, isTrue);
+      await refresh.clearInkLayer();
       await refresh.endInk();
       expect(log.map((c) => c.method), [
         'probe',
+        'diagnose',
         'beginInk',
-        'invalidate',
+        'clearInk',
         'endInk',
       ]);
-      expect(log[2].arguments, {'left': 1, 'top': 2, 'right': 3, 'bottom': 4});
+      expect(refresh.hostLive, isFalse);
     },
   );
 
@@ -51,7 +60,7 @@ void main() {
     final refresh = EinkRefresh(channel: channel);
     expect(await refresh.ensureReady(), 'noop');
     await refresh.beginInk();
-    await refresh.invalidate(left: 0, top: 0, right: 1, bottom: 1);
     expect(refresh.isAccelerated, isFalse);
+    expect(refresh.hostLive, isFalse);
   });
 }

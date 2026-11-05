@@ -46,7 +46,7 @@ Needed so EPUB download over `http://127.0.0.1:8080` works in debug.
 - `adb shell input text` rejects some shell-splitting URLs if the command is built via naive word-splitting — use Python `subprocess` list argv.
 - Colons in URLs are fine when passed as a single argv element.
 - After install, session is memory-only — every cold start needs login again.
-- `uiautomator dump` can return null on first frames — retry; dismiss IME with `KEYCODE_BACK` between fields.
+- `uiautomator dump` can return null on first frames — retry; dismiss IME with `KEYCODE_BACK` between fields (not while dump is stale); `pm clear` if fields are corrupted from a bad automation pass.
 
 ## Screenshots
 
@@ -54,8 +54,38 @@ Needed so EPUB download over `http://127.0.0.1:8080` works in debug.
 adb exec-out screencap -p > /tmp/shelf-nomad/shot.png
 ```
 
+## Nomad live ink (locked path)
+
+Accelerated drawing is **Nomad-only** until milestone 13 (generic tablet → golden
+OEM). Do **not** revive Notes HandWrite / PWCore / mid-stroke `screenRefresh` /
+WebView seeding / PixelCopy / `deinitForPw`. Full ledger:
+[`docs/research/nomad-stylus.md`](../../../docs/research/nomad-stylus.md).
+
+Shipped Nomad feel (~0.15–0.2s tip lag): translucent `InkHostView` +
+`EinkManager.setScreenMode(SPEED)` + `View.setEinkUpdateMode(A2)` + tip lead.
+Logcat tag `ShelfEink`. Ink mode AppBar control:
+`content-desc="Ink mode (stylus, fast refresh)"`.
+
+Do not chase mid-stroke “fill-in” with DU polish / dropping SPEED — smoke showed
+no win or worse tip feel; ledger in `nomad-stylus.md`.
+
+Java for Flutter builds: prefer JDK 21 when the host default is 25+.
+
+### Experimental DISPAREA (`debug.shelf.ink.ebc`)
+
+```bash
+adb shell setprop debug.shelf.ink.ebc 1          # Surface + ebc
+adb shell setprop debug.shelf.ink.ebc_only 1     # ebc only (no Surface present)
+adb shell setprop debug.shelf.ink.ebc_smoke 1    # synthetic stroke on ink-enter
+adb logcat --pid="$(adb shell pidof app.shelf.shelf_mobile)" | grep ShelfEbc
+```
+
+Panel FB is landscape vs portrait UI — native maps 90° CW. Default remains
+Surface+SPEED+A2. Details: `docs/research/nomad-stylus.md`.
+
 ## Related docs
 
 - `mobile/README.md` — product shape, HTTPS phone path
 - `AGENTS.md` — fmt/analyze/test gates
-- `docs/research/nomad-stylus.md` — Nomad ink path + do-not-retread
+- `docs/parity.md` — milestone status
+- `docs/research/nomad-stylus.md` — ink portability + do-not-retread

@@ -2,25 +2,62 @@ package app.shelf.shelf_mobile
 
 import android.content.Context
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebView
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * M8 e-ink refresh adapter: reflect SuperNote / Onyx framework APIs when present.
+ * Shelf-owned live ink overlay for Nomad.
  *
- * shortcut: waveform/mode ints are OEM-specific; 0/1 are probe defaults until
- * Nomad callability confirms better values. Never opens /dev/ebc.
+ * Translucent [InkHostView] + dirty present. REA: Notes tip feel is
+ * ThreadUpdateEpdc → HTEINK_IOC_DISPAREA (direct panel), not Surface damage.
+ * We approximate with [ShelfEink] SPEED screen mode + A2 on the host, plus tip
+ * lead — no Notes .so / HandWrite / PWCore.
+ *
+ * Experimental (prop `debug.shelf.ink.ebc=1`): also push dirty strips through
+ * Shelf-owned `/dev/ebc` [ShelfEbc] DISPAREA (Notes-like panel lane).
  */
-class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
+class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
+  companion object {
+    private const val TAG = "ShelfEink"
+
+    /** Lead the drawn tip by this many px of velocity (feel, not panel). */
+    private const val TIP_LEAD_MS = 28f
+  }
+
   private lateinit var channel: MethodChannel
+  private var strokeSink: EventChannel.EventSink? = null
   private var appContext: Context? = null
   private var activityView: View? = null
   private var backend: String = "noop"
-  private var pwController: Any? = null
-  private var einkManager: Any? = null
+  private var inkSession = false
+  private var inkHost: InkHostView? = null
+  private var hostReady = false
+  private var lastStylusX = Float.NaN
+  private var lastStylusY = Float.NaN
+  private var lastStylusMs = 0L
+  private var velX = 0f
+  private var velY = 0f
+  private var strokeTool = "stylus"
+  private var strokeOriginMs = 0L
+  private var loggedStylus = false
+  private val strokePts = ArrayList<HashMap<String, Any>>(256)
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private val dirtyUnion = Rect()
+  /** Whole in-progress stroke bounds — ebc re-stamps this each flush so the
+   * trail stays continuous (per-event strips looked dashed until Surface caught up). */
+  private val strokeDirtyUnion = Rect()
+  private val postRectScratch = Rect()
+  private var webSelectHardened = false
+  private var savedScreenMode = ShelfEink.SCREEN_DEFAULT
 
   fun attachActivityView(root: View?) {
     activityView = root
@@ -30,287 +67,572 @@ class EinkRefreshPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     appContext = binding.applicationContext
     channel = MethodChannel(binding.binaryMessenger, "shelf.eink/refresh")
     channel.setMethodCallHandler(this)
+    EventChannel(binding.binaryMessenger, "shelf.eink/strokes").setStreamHandler(this)
+    try {
+      diagnose()
+    } catch (t: Throwable) {
+      Log.w(TAG, "startup diagnose failed", t)
+    }
   }
 
   override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
     channel.setMethodCallHandler(null)
-    releasePw()
+    strokeSink = null
+    teardownHost()
     appContext = null
   }
 
-  override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+  override fun onListen(
+    arguments: Any?,
+    events: EventChannel.EventSink?,
+  ) {
+    strokeSink = events
+  }
+
+  override fun onCancel(arguments: Any?) {
+    strokeSink = null
+  }
+
+  override fun onMethodCall(
+    call: MethodCall,
+    result: MethodChannel.Result,
+  ) {
     when (call.method) {
       "probe" -> result.success(probe())
+      "diagnose" -> result.success(diagnose())
       "beginInk" -> {
-        beginInk()
+        @Suppress("UNCHECKED_CAST")
+        val args = call.arguments as? Map<String, Any?>
+        beginInk(args)
         result.success(null)
       }
-      "invalidate" -> {
-        val left = call.argument<Number>("left")?.toInt() ?: 0
-        val top = call.argument<Number>("top")?.toInt() ?: 0
-        val right = call.argument<Number>("right")?.toInt() ?: 0
-        val bottom = call.argument<Number>("bottom")?.toInt() ?: 0
-        invalidate(left, top, right, bottom)
+      "clearInk" -> {
+        inkHost?.clearInk()
         result.success(null)
       }
       "endInk" -> {
         endInk()
         result.success(null)
       }
-      "fullRefresh" -> {
-        fullRefresh()
-        result.success(null)
-      }
       else -> result.notImplemented()
     }
   }
 
+  private fun diagnose(): Map<String, Any?> {
+    val selected = probe()
+    val ebcWant = ShelfEbc.wantExperiment()
+    val ebcProbe = if (ebcWant) ShelfEbc.probe() else false
+    val report =
+      mapOf(
+        "backend" to selected,
+        "ink_session" to inkSession,
+        "host_ready" to hostReady,
+        "path" to "shelf_surface_overlay",
+        "ebc_experiment" to ebcWant,
+        "ebc_probe" to ebcProbe,
+        "ebc_active" to ShelfEbc.active,
+        "ebc_diag" to ShelfEbc.diagnose(),
+      )
+    Log.i(TAG, "diagnose $report")
+    return report
+  }
+
   private fun probe(): String {
     val ctx = appContext ?: return "noop"
-    val pm = ctx.packageManager
-    val hasHteink = pm.hasSystemFeature("android.software.hteink")
-    val hasEink = pm.hasSystemFeature("android.software.eink")
-    if (resolveEinkManager(ctx) != null ||
-      classExists("com.htfyun.eink.pw.core.EinkPWCoreController")
-    ) {
+    val hasEink =
+      try {
+        ctx.packageManager.hasSystemFeature("android.software.hteink") ||
+          ctx.packageManager.hasSystemFeature("android.software.eink")
+      } catch (_: Throwable) {
+        false
+      }
+    val mgr =
+      try {
+        ctx.getSystemService("eink")
+      } catch (_: Throwable) {
+        null
+      }
+    // Own overlay on any Nomad-class e-ink device — not Notes PW availability.
+    if (mgr != null || hasEink) {
       backend = "ratta_pw"
+      Log.i(TAG, "probe=$backend shelf_surface_overlay")
       return backend
     }
-    if (classExists("com.onyx.android.sdk.api.device.epd.EpdController") ||
-      classExists("com.onyx.android.sdk.device.EpdController")
-    ) {
-      backend = "onyx_epd"
-      return backend
-    }
-    backend = if (hasHteink || hasEink) "noop" else "noop"
+    backend = "noop"
+    Log.i(TAG, "probe=noop")
     return backend
   }
 
-  private fun beginInk() {
-    when (probe()) {
-      "ratta_pw" -> beginRatta()
-      "onyx_epd" -> beginOnyx()
+  private fun beginInk(args: Map<String, Any?>?) {
+    inkSession = true
+    hostReady = false
+    clearStroke()
+    lastStylusX = Float.NaN
+    lastStylusY = Float.NaN
+    lastStylusMs = 0L
+    velX = 0f
+    velY = 0f
+    loggedStylus = false
+    if (probe() == "noop") return
+
+    hardenWebViewSelection()
+    // System scribble waveform while inking (EinkManager.EINK_SCREEN_MODE_SPEED).
+    val ctxMode = appContext
+    if (ctxMode != null) {
+      savedScreenMode = ShelfEink.SCREEN_DEFAULT
+      ShelfEink.setScreenMode(ctxMode, ShelfEink.SCREEN_SPEED, gc = false)
+    }
+
+    val flutter = findFlutterView(activityView)
+    if (flutter == null) {
+      Log.w(TAG, "beginInk: no FlutterView")
+      return
+    }
+    val parent = flutter.parent as? ViewGroup
+    if (parent == null) {
+      Log.w(TAG, "beginInk: FlutterView has no parent")
+      return
+    }
+
+    teardownHostViewOnly()
+    val ctx = appContext ?: flutter.context
+    val host = InkHostView(ctx)
+    inkHost = host
+
+    val flutterLoc = IntArray(2)
+    flutter.getLocationOnScreen(flutterLoc)
+    val screenLeft = (args?.get("left") as? Number)?.toInt()
+    val screenTop = (args?.get("top") as? Number)?.toInt()
+    val boxW = (args?.get("width") as? Number)?.toInt()
+    val boxH = (args?.get("height") as? Number)?.toInt()
+    val lp: ViewGroup.LayoutParams =
+      if (screenLeft != null && screenTop != null && boxW != null && boxH != null &&
+        boxW > 1 && boxH > 1
+      ) {
+        val marginL = (screenLeft - flutterLoc[0]).coerceAtLeast(0)
+        val marginT = (screenTop - flutterLoc[1]).coerceAtLeast(0)
+        Log.i(TAG, "beginInk overlay ${boxW}x$boxH margin=$marginL,$marginT")
+        if (parent is android.widget.FrameLayout) {
+          android.widget.FrameLayout.LayoutParams(boxW, boxH).apply {
+            leftMargin = marginL
+            topMargin = marginT
+          }
+        } else {
+          ViewGroup.MarginLayoutParams(boxW, boxH).apply {
+            leftMargin = marginL
+            topMargin = marginT
+          }
+        }
+      } else {
+        Log.w(TAG, "beginInk: no content rect — full FlutterView")
+        ViewGroup.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          ViewGroup.LayoutParams.MATCH_PARENT,
+        )
+      }
+    parent.addView(host, lp)
+    host.post { bindHost(host) }
+    if (ShelfEbc.wantExperiment()) {
+      val ok = ShelfEbc.begin()
+      Log.i(TAG, "beginInk ebc experiment begin=$ok ${ShelfEbc.diagnose()}")
+    } else {
+      ShelfEbc.end()
+    }
+    Log.i(TAG, "beginInk shelf overlay attached")
+  }
+
+  private fun bindHost(host: InkHostView) {
+    if (!inkSession) return
+    val w = host.width
+    val h = host.height
+    if (w <= 1 || h <= 1) {
+      host.post { bindHost(host) }
+      return
+    }
+    // Transparent host only — never seed WebView (that covered the page white).
+    host.ensureSize(w, h)
+    ShelfEink.setHostInkMode(host, enable = true)
+    hostReady = true
+    Log.i(TAG, "bindHost ready ${w}x$h a2=true")
+    // Synthetic stroke for Nomad smoke (adb cannot inject EMR — SELinux).
+    if (ShelfEbc.active && ShelfEbc.wantSmokeStroke()) {
+      host.post { smokeEbcStroke(host) }
     }
   }
 
-  private fun invalidate(left: Int, top: Int, right: Int, bottom: Int) {
-    when (backend) {
-      "ratta_pw" -> invalidateRatta(left, top, right, bottom)
-      "onyx_epd" -> invalidateOnyx(left, top, right, bottom)
+  private fun smokeEbcStroke(host: InkHostView) {
+    if (!ShelfEbc.active || !hostReady) return
+    val dirty = host.drawSegment(80f, 80f, 320f, 280f, 5f, eraser = false)
+    if (dirty.isEmpty) return
+    val bmp = host.hostBitmap() ?: return
+    val loc = IntArray(2)
+    host.getLocationOnScreen(loc)
+    val ok =
+      ShelfEbc.postBitmap(
+        bmp,
+        dirty.left,
+        dirty.top,
+        dirty.right,
+        dirty.bottom,
+        loc[0],
+        loc[1],
+      )
+    Log.i(TAG, "smokeEbcStroke ok=$ok dirty=$dirty origin=${loc[0]},${loc[1]}")
+    // Also present so Surface path shows the same mark when not ebc_only.
+    if (!ShelfEbc.wantEbcOnly()) {
+      host.present(dirty)
     }
+  }
+
+  fun onMotionEvent(ev: MotionEvent): Boolean {
+    if (!inkSession || backend == "noop") return false
+    val idx = ev.actionIndex
+    val tool = ev.getToolType(idx)
+    if (tool != MotionEvent.TOOL_TYPE_STYLUS && tool != MotionEvent.TOOL_TYPE_ERASER) {
+      return false
+    }
+    val view = inkHost ?: findFlutterView(activityView) ?: return true
+    val loc = IntArray(2)
+    view.getLocationOnScreen(loc)
+    val x = ev.rawX - loc[0]
+    val y = ev.rawY - loc[1]
+    val pressure = ev.pressure.coerceIn(0.05f, 1f)
+    val tilt =
+      try {
+        ev.getAxisValue(MotionEvent.AXIS_TILT)
+      } catch (_: Throwable) {
+        0f
+      }
+    val orientation = ev.orientation
+    val eraser = tool == MotionEvent.TOOL_TYPE_ERASER
+    val now = ev.eventTime
+    val width = (1.2f + pressure * 3.8f).coerceIn(1.2f, 5f)
+    if (!loggedStylus) {
+      loggedStylus = true
+      Log.i(TAG, "stylus tool=$tool p=$pressure at=$x,$y hostReady=$hostReady")
+    }
+
+    val vw = view.width.coerceAtLeast(1).toFloat()
+    val vh = view.height.coerceAtLeast(1).toFloat()
+
+    when (ev.actionMasked) {
+      MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+        strokeTool = if (eraser) "eraser" else "stylus"
+        strokeOriginMs = now
+        strokePts.clear()
+        dirtyUnion.setEmpty()
+        strokeDirtyUnion.setEmpty()
+        velX = 0f
+        velY = 0f
+        appendPoint(x / vw, y / vh, pressure, tilt, orientation, 0)
+        lastStylusX = x
+        lastStylusY = y
+        lastStylusMs = now
+        drawIntoHost(x, y, x + 0.5f, y + 0.5f, width, eraser)
+        flushLive()
+      }
+      MotionEvent.ACTION_MOVE -> {
+        if (!lastStylusX.isNaN()) {
+          val hist = ev.historySize
+          for (h in 0 until hist) {
+            val hx = ev.getHistoricalX(idx, h) + (ev.rawX - ev.x) - loc[0]
+            val hy = ev.getHistoricalY(idx, h) + (ev.rawY - ev.y) - loc[1]
+            val hp =
+              try {
+                ev.getHistoricalPressure(idx, h).coerceIn(0.05f, 1f)
+              } catch (_: Throwable) {
+                pressure
+              }
+            val ht =
+              try {
+                ev.getHistoricalEventTime(h)
+              } catch (_: Throwable) {
+                now
+              }
+            val hw = (1.2f + hp * 3.8f).coerceIn(1.2f, 5f)
+            appendPoint(
+              hx / vw,
+              hy / vh,
+              hp,
+              tilt,
+              orientation,
+              (ht - strokeOriginMs).toInt().coerceAtLeast(0),
+            )
+            noteVelocity(lastStylusX, lastStylusY, lastStylusMs, hx, hy, ht)
+            drawIntoHost(lastStylusX, lastStylusY, hx, hy, hw, eraser)
+            lastStylusX = hx
+            lastStylusY = hy
+            lastStylusMs = ht
+          }
+          appendPoint(
+            x / vw,
+            y / vh,
+            pressure,
+            tilt,
+            orientation,
+            (now - strokeOriginMs).toInt().coerceAtLeast(0),
+          )
+          noteVelocity(lastStylusX, lastStylusY, lastStylusMs, x, y, now)
+          drawIntoHost(lastStylusX, lastStylusY, x, y, width, eraser)
+          // Tip lead: paint slightly ahead of the pen so lag feels smaller.
+          var dx = velX * TIP_LEAD_MS
+          var dy = velY * TIP_LEAD_MS
+          val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+          if (dist > 14f) {
+            val s = 14f / dist
+            dx *= s
+            dy *= s
+          }
+          if (dx != 0f || dy != 0f) {
+            drawIntoHost(x, y, x + dx, y + dy, width, eraser)
+          }
+          flushLive()
+        }
+        lastStylusX = x
+        lastStylusY = y
+        lastStylusMs = now
+      }
+      MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+        appendPoint(
+          x / vw,
+          y / vh,
+          pressure,
+          tilt,
+          orientation,
+          (now - strokeOriginMs).toInt().coerceAtLeast(0),
+        )
+        if (!lastStylusX.isNaN()) {
+          drawIntoHost(lastStylusX, lastStylusY, x, y, width, eraser)
+        }
+        flushLive()
+        emitStroke()
+        lastStylusX = Float.NaN
+        lastStylusY = Float.NaN
+        lastStylusMs = 0L
+        velX = 0f
+        velY = 0f
+      }
+    }
+    return true
+  }
+
+  private fun noteVelocity(
+    x0: Float,
+    y0: Float,
+    t0: Long,
+    x1: Float,
+    y1: Float,
+    t1: Long,
+  ) {
+    val dt = (t1 - t0).toFloat().coerceAtLeast(1f)
+    val nx = (x1 - x0) / dt
+    val ny = (y1 - y0) / dt
+    velX = velX * 0.35f + nx * 0.65f
+    velY = velY * 0.35f + ny * 0.65f
+  }
+
+  private fun drawIntoHost(
+    x0: Float,
+    y0: Float,
+    x1: Float,
+    y1: Float,
+    width: Float,
+    eraser: Boolean,
+  ) {
+    val host = inkHost ?: return
+    if (!hostReady) return
+    val dirty = host.drawSegment(x0, y0, x1, y1, width, eraser)
+    if (dirty.width() <= 0 || dirty.height() <= 0) return
+    if (dirtyUnion.isEmpty) {
+      dirtyUnion.set(dirty)
+    } else {
+      dirtyUnion.union(dirty)
+    }
+    if (strokeDirtyUnion.isEmpty) {
+      strokeDirtyUnion.set(dirty)
+    } else {
+      strokeDirtyUnion.union(dirty)
+    }
+  }
+
+  private fun flushLive() {
+    if (dirtyUnion.isEmpty) return
+    postRectScratch.set(dirtyUnion)
+    dirtyUnion.setEmpty()
+    val host = inkHost ?: return
+    // Surface+SPEED+A2 is what the user actually sees mid-stroke. Raw
+    // DISPAREA alone does not show until ink mode exits (soft DU). Keep
+    // Surface unless explicitly ebc_only (experiment; currently invisible).
+    val skipSurface = ShelfEbc.active && ShelfEbc.wantEbcOnly()
+    if (!skipSurface) {
+      host.present(postRectScratch)
+    }
+    if (ShelfEbc.active) {
+      val bmp = host.hostBitmap() ?: return
+      val loc = IntArray(2)
+      host.getLocationOnScreen(loc)
+      // Re-stamp whole stroke when ebc_only; otherwise just the new dirty
+      // (additive DISPAREA on top of Surface — may look dashed; experimental).
+      val rect = if (skipSurface) strokeDirtyUnion else postRectScratch
+      ShelfEbc.postBitmap(
+        bmp,
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.bottom,
+        loc[0],
+        loc[1],
+      )
+    }
+  }
+
+  private fun appendPoint(
+    nx: Float,
+    ny: Float,
+    pressure: Float,
+    tilt: Float,
+    orientation: Float,
+    timeMs: Int,
+  ) {
+    strokePts.add(
+      hashMapOf(
+        "x" to nx.coerceIn(0f, 1f).toDouble(),
+        "y" to ny.coerceIn(0f, 1f).toDouble(),
+        "p" to pressure.toDouble(),
+        "t" to tilt.toDouble(),
+        "o" to orientation.toDouble(),
+        "ms" to timeMs,
+      ),
+    )
+  }
+
+  private fun emitStroke() {
+    val pts = ArrayList(strokePts)
+    clearStroke()
+    if (pts.size < 2) return
+    val payload =
+      hashMapOf<String, Any>(
+        "phase" to "end",
+        "tool" to strokeTool,
+        "color" to if (strokeTool == "eraser") "#FFFFFF" else "#111111",
+        "width" to 2.0,
+        "points" to pts,
+      )
+    mainHandler.post {
+      try {
+        strokeSink?.success(payload)
+      } catch (t: Throwable) {
+        Log.w(TAG, "emitStroke failed", t)
+      }
+    }
+  }
+
+  private fun clearStroke() {
+    strokePts.clear()
+    strokeOriginMs = 0L
   }
 
   private fun endInk() {
-    when (backend) {
-      "ratta_pw" -> endRatta()
-      "onyx_epd" -> endOnyx()
+    inkSession = false
+    hostReady = false
+    clearStroke()
+    lastStylusX = Float.NaN
+    lastStylusY = Float.NaN
+    lastStylusMs = 0L
+    velX = 0f
+    velY = 0f
+    loggedStylus = false
+    ShelfEbc.end()
+    inkHost?.let { ShelfEink.setHostInkMode(it, enable = false) }
+    restoreWebViewSelection()
+    teardownHostViewOnly()
+    appContext?.let {
+      ShelfEink.setScreenMode(it, savedScreenMode, gc = false)
+      ShelfEink.softDu(it)
     }
+    Log.i(TAG, "endInk overlay removed")
   }
 
-  private fun fullRefresh() {
-    when (backend) {
-      "ratta_pw" -> callScreenRefresh(full = true)
-      "onyx_epd" -> invalidateOnyx(0, 0, 1, 1, full = true)
-    }
-  }
-
-  private fun beginRatta() {
-    val ctx = appContext ?: return
-    einkManager = resolveEinkManager(ctx)
+  private fun hardenWebViewSelection() {
+    val web = findWebView(activityView) ?: return
+    webSelectHardened = true
     try {
-      val cls = Class.forName("com.htfyun.eink.pw.core.EinkPWCoreController")
-      val instance = cls.getDeclaredConstructor().newInstance()
-      cls.getMethod("initForPw").invoke(instance)
-      pwController = instance
-    } catch (_: Throwable) {
-      pwController = null
-    }
-    // Prefer fast update mode on the Flutter surface when the OEM View API exists.
-    findFlutterView(activityView)?.let { view ->
-      tryInvoke(
-        view,
-        "setEinkUpdateMode",
-        arrayOf(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType),
-        arrayOf(1, 0),
+      web.isLongClickable = false
+      web.setOnLongClickListener { true }
+      web.evaluateJavascript(
+        """
+        (function(){
+          var s=document.createElement('style');
+          s.id='shelf-ink-noselect';
+          s.textContent='*{user-select:none !important;-webkit-user-select:none !important;}';
+          document.documentElement.appendChild(s);
+        })();
+        """.trimIndent(),
+        null,
       )
+    } catch (t: Throwable) {
+      Log.w(TAG, "hardenWebViewSelection failed", t)
     }
   }
 
-  private fun invalidateRatta(left: Int, top: Int, right: Int, bottom: Int) {
-    val ctrl = pwController
-    if (ctrl != null) {
-      try {
-        val rect = Rect(left, top, right.coerceAtLeast(left + 1), bottom.coerceAtLeast(top + 1))
-        ctrl.javaClass
-          .getMethod(
-            "postRectForPw",
-            Rect::class.java,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-          ).invoke(ctrl, rect, 0, 0, 0, 0)
-        return
-      } catch (_: Throwable) {
-        // fall through to screenRefresh
+  private fun restoreWebViewSelection() {
+    if (!webSelectHardened) return
+    webSelectHardened = false
+    val web = findWebView(activityView) ?: return
+    try {
+      web.isLongClickable = true
+      web.setOnLongClickListener(null)
+      web.evaluateJavascript(
+        "document.getElementById('shelf-ink-noselect')?.remove();",
+        null,
+      )
+    } catch (_: Throwable) {
+    }
+  }
+
+  private fun teardownHostViewOnly() {
+    val host = inkHost ?: return
+    inkHost = null
+    try {
+      (host.parent as? ViewGroup)?.removeView(host)
+    } catch (t: Throwable) {
+      Log.w(TAG, "remove InkHostView failed", t)
+    }
+    host.release()
+  }
+
+  private fun teardownHost() {
+    if (inkSession) endInk() else teardownHostViewOnly()
+    hostReady = false
+    inkSession = false
+  }
+
+  private fun findWebView(root: View?): WebView? {
+    if (root == null) return null
+    if (root is WebView) return root
+    if (root is ViewGroup) {
+      for (i in 0 until root.childCount) {
+        val found = findWebView(root.getChildAt(i))
+        if (found != null) return found
       }
     }
-    callScreenRefresh(full = false)
-  }
-
-  private fun endRatta() {
-    findFlutterView(activityView)?.let { view ->
-      tryInvoke(
-        view,
-        "setEinkUpdateMode",
-        arrayOf(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType),
-        arrayOf(0, 0),
-      )
-    }
-    releasePw()
-    callScreenRefresh(full = true)
-  }
-
-  private fun releasePw() {
-    val ctrl = pwController ?: return
-    pwController = null
-    try {
-      ctrl.javaClass.getMethod("deinitForPw").invoke(ctrl)
-    } catch (_: Throwable) {
-    }
-  }
-
-  private fun callScreenRefresh(full: Boolean) {
-    val mgr = einkManager ?: appContext?.let { resolveEinkManager(it) } ?: return
-    try {
-      mgr.javaClass
-        .getMethod("screenRefresh", Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-        .invoke(mgr, full, if (full) 0 else 1)
-    } catch (_: Throwable) {
-    }
-  }
-
-  private fun beginOnyx() {
-    val view = findFlutterView(activityView) ?: return
-    // DW / scribble-style mode when EpdController is on the classpath.
-    invokeOnyxUpdateMode(view, "DW")
-  }
-
-  private fun invalidateOnyx(
-    left: Int,
-    top: Int,
-    right: Int,
-    bottom: Int,
-    full: Boolean = false,
-  ) {
-    val view = findFlutterView(activityView) ?: return
-    if (full) {
-      invokeOnyxInvalidate(view, "GC")
-      return
-    }
-    try {
-      val deviceCls =
-        firstClass(
-          "com.onyx.android.sdk.device.Device",
-          "com.onyx.android.sdk.api.device.Device",
-        ) ?: return
-      val current = deviceCls.getMethod("currentDevice").invoke(null) ?: return
-      current.javaClass
-        .getMethod(
-          "handwritingRepaint",
-          View::class.java,
-          Int::class.javaPrimitiveType,
-          Int::class.javaPrimitiveType,
-          Int::class.javaPrimitiveType,
-          Int::class.javaPrimitiveType,
-        ).invoke(current, view, left, top, right, bottom)
-    } catch (_: Throwable) {
-      invokeOnyxInvalidate(view, "GU")
-    }
-  }
-
-  private fun endOnyx() {
-    val view = findFlutterView(activityView) ?: return
-    invokeOnyxUpdateMode(view, "GU")
-    invokeOnyxInvalidate(view, "GC")
-  }
-
-  private fun invokeOnyxUpdateMode(view: View, modeName: String) {
-    try {
-      val epd =
-        firstClass(
-          "com.onyx.android.sdk.api.device.epd.EpdController",
-          "com.onyx.android.sdk.device.EpdController",
-        ) ?: return
-      val modeCls = Class.forName("${epd.name}\$UpdateMode")
-      val mode = java.lang.Enum.valueOf(modeCls as Class<out Enum<*>>, modeName)
-      epd.getMethod("setViewDefaultUpdateMode", View::class.java, modeCls).invoke(null, view, mode)
-    } catch (_: Throwable) {
-    }
-  }
-
-  private fun invokeOnyxInvalidate(view: View, modeName: String) {
-    try {
-      val epd =
-        firstClass(
-          "com.onyx.android.sdk.api.device.epd.EpdController",
-          "com.onyx.android.sdk.device.EpdController",
-        ) ?: return
-      val modeCls = Class.forName("${epd.name}\$UpdateMode")
-      val mode = java.lang.Enum.valueOf(modeCls as Class<out Enum<*>>, modeName)
-      epd.getMethod("invalidate", View::class.java, modeCls).invoke(null, view, mode)
-    } catch (_: Throwable) {
-    }
-  }
-
-  private fun resolveEinkManager(ctx: Context): Any? {
-    einkManager?.let { return it }
-    return try {
-      ctx.getSystemService("eink")
-    } catch (_: Throwable) {
-      null
-    }
+    return null
   }
 
   private fun findFlutterView(root: View?): View? {
     if (root == null) return null
     val name = root.javaClass.name
-    if (name.contains("FlutterView") || name.contains("FlutterSurfaceView")) return root
+    if (name.contains("FlutterView") || name.contains("FlutterSurfaceView") ||
+      name.contains("FlutterTextureView")
+    ) {
+      return root
+    }
     if (root is ViewGroup) {
       for (i in 0 until root.childCount) {
-        findFlutterView(root.getChildAt(i))?.let { return it }
+        val found = findFlutterView(root.getChildAt(i))
+        if (found != null) return found
       }
     }
     return null
-  }
-
-  private fun classExists(name: String): Boolean =
-    try {
-      Class.forName(name)
-      true
-    } catch (_: Throwable) {
-      false
-    }
-
-  private fun firstClass(vararg names: String): Class<*>? {
-    for (name in names) {
-      try {
-        return Class.forName(name)
-      } catch (_: Throwable) {
-      }
-    }
-    return null
-  }
-
-  private fun tryInvoke(
-    target: Any,
-    method: String,
-    types: Array<Class<*>?>,
-    args: Array<Any?>,
-  ) {
-    try {
-      target.javaClass.getMethod(method, *types).invoke(target, *args)
-    } catch (_: Throwable) {
-    }
   }
 }
