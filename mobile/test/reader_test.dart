@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf_mobile/api.dart';
-import 'package:shelf_mobile/reader.dart';
 
 void main() {
   test('reads the shared EPUB contract fixture', () {
@@ -79,89 +78,5 @@ void main() {
       ]),
       '2 books · 38% average progress',
     );
-  });
-  test('reader confines navigation to its server and sandbox frames', () {
-    final base = Uri.parse('https://shelf.example.com');
-    expect(
-      readerNavigationAllowed(
-        base,
-        'https://shelf.example.com/reader?id=1',
-        true,
-      ),
-      isTrue,
-    );
-    expect(
-      readerNavigationAllowed(
-        base,
-        'https://shelf.example.com/reader/1/1?format=epub',
-        true,
-      ),
-      isTrue,
-    );
-    expect(
-      readerNavigationAllowed(
-        base,
-        'https://shelf.example.com/orbit-reader/orbit-reader.js',
-        true,
-      ),
-      isTrue,
-    );
-    expect(
-      readerNavigationAllowed(base, 'https://other.example.com/reader', true),
-      isFalse,
-    );
-    expect(readerNavigationAllowed(base, 'javascript:alert(1)', true), isFalse);
-    expect(readerNavigationAllowed(base, 'about:blank', true), isFalse);
-    expect(readerNavigationAllowed(base, 'about:srcdoc', false), isTrue);
-    expect(
-      readerNavigationAllowed(
-        base,
-        'blob:https://other.example.com/123',
-        false,
-      ),
-      isFalse,
-    );
-    expect(
-      readerNavigationAllowed(
-        base,
-        'blob:https://shelf.example.com/123',
-        false,
-      ),
-      isTrue,
-    );
-    expect(
-      readerNavigationAllowed(
-        base,
-        'https://shelf.example.com/api/v1/logout',
-        true,
-      ),
-      isFalse,
-    );
-    expect(
-      readerNavigationAllowed(base, 'https://shelf.example.com/', true),
-      isFalse,
-    );
-  });
-
-  test('reader exit URLs are the server root including library hash', () {
-    final base = Uri.parse('https://shelf.example.com');
-    expect(readerIsExitUrl(base, 'https://shelf.example.com/'), isTrue);
-    expect(readerIsExitUrl(base, 'https://shelf.example.com/#library'), isTrue);
-    expect(
-      readerIsExitUrl(base, 'https://shelf.example.com/reader?id=1'),
-      isFalse,
-    );
-    expect(
-      readerIsExitUrl(base, 'https://other.example.com/#library'),
-      isFalse,
-    );
-  });
-
-  test('reader cookie domain is the server host', () {
-    expect(
-      readerCookieDomain(Uri.parse('https://shelf.example.com')),
-      'shelf.example.com',
-    );
-    expect(readerCookieDomain(Uri.parse('http://127.0.0.1:8080')), '127.0.0.1');
   });
 }

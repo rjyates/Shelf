@@ -16,12 +16,12 @@ Mid-stroke “fill-in while drawing” experiments abandoned (see Do not retread
 
 Read **Do not retread** before changing ink. Older sections are historical.
 
-### Roadmap (drawing)
+### Roadmap (drawing) — parity **milestone 13** (after M9–M12)
 
-1. **Generic Android tablet drawing** — one portable mid-stroke path (Surface /
+1. **G1 Generic Android tablet drawing** — one portable mid-stroke path (Surface /
    Flutter) that works on any stylus Android tablet without OEM refresh APIs.
    Nomad keeps its SPEED+A2 backend behind the same `EinkRefresh` contract.
-2. **Golden tablets** — after the generic path is solid, deepen a few devices
+2. **G2 Golden tablets** — after the generic path is solid, deepen a few devices
    that are open enough to hack (framework / EPD / binder access). Nomad is the
    first golden; candidates later (e.g. Onyx `EpdController`) only when we can
    smoke them the way we did Nomad. Do not invent backends from datasheets alone.

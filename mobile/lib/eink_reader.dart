@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_readium/flutter_readium.dart';
 
 import 'api.dart';
-import 'display_profile.dart';
 import 'eink_refresh.dart';
 import 'epub_store.dart';
 import 'ink_overlay.dart';
@@ -647,14 +646,7 @@ class _MarksList extends StatelessWidget {
   }
 }
 
-/// Local spine/Readium reader: Android e-ink with cache, or any offline open with cache.
-bool shouldOpenLocalEpubReader({
-  required DisplayProfile profile,
-  required bool isAndroid,
-  required bool hasCachedEpub,
-  required bool online,
-}) {
-  if (!hasCachedEpub) return false;
-  if (!online) return true;
-  return isAndroid && profile == DisplayProfile.eink;
-}
+/// Whether Read can proceed: local EPUB bytes exist, or the device is online
+/// so the library can download them before opening Readium.
+bool canOpenEpubReader({required bool hasCachedEpub, required bool online}) =>
+    hasCachedEpub || online;
