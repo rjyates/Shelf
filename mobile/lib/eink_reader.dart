@@ -112,6 +112,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
               isPdf: widget.book.isPdf,
               isCbz: widget.book.isCbz,
             ),
+            digest: widget.book.digest,
           )
           .absolute
           .path;

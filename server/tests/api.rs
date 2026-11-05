@@ -72,6 +72,27 @@ fn sample_cbz() -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+fn sample_cbr() -> Vec<u8> {
+    let mut builder = rars::Builder::new(rars::ArchiveVersion::Rar50);
+    builder
+        .add_bytes(b"002.png".to_vec(), tiny_png().to_vec(), None, None)
+        .unwrap();
+    builder
+        .add_bytes(b"001.png".to_vec(), tiny_png().to_vec(), None, None)
+        .unwrap();
+    builder.to_bytes().unwrap()
+}
+
+/// Minimal single-page DjVu from `cjb2` (1×1 bitmap).
+fn sample_djvu() -> Vec<u8> {
+    vec![
+        0x41, 0x54, 0x26, 0x54, 0x46, 0x4F, 0x52, 0x4D, 0x00, 0x00, 0x00, 0x22, 0x44, 0x4A, 0x56,
+        0x55, 0x49, 0x4E, 0x46, 0x4F, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x01, 0x00, 0x01, 0x18, 0x00,
+        0x64, 0x00, 0x16, 0x01, 0x53, 0x6A, 0x62, 0x7A, 0x00, 0x00, 0x00, 0x04, 0xBC, 0x73, 0x1B,
+        0xD7,
+    ]
+}
+
 async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCode, Value) {
     upload_named(app, bytes, token, None).await
 }
@@ -84,6 +105,8 @@ async fn upload_named(
 ) -> (StatusCode, Value) {
     let content_type = if bytes.starts_with(b"%PDF") {
         "application/pdf"
+    } else if bytes.starts_with(b"Rar!") || bytes.starts_with(b"AT&TFORM") {
+        "application/octet-stream"
     } else if bytes.starts_with(b"PK") && !bytes.windows(19).any(|w| w == b"application/epub+zi") {
         // CBZ (or other ZIP) — EPUB fixtures always embed the mimetype string.
         "application/vnd.comicbook+zip"
@@ -570,6 +593,116 @@ async fn cbz_import_page_images_and_location() {
     assert_eq!(catalogue[0]["position"], "cbzpage(2)");
     assert_eq!(catalogue[0]["percentage"], 1.0);
     assert_eq!(catalogue[0]["reading_status"], "finished");
+}
+
+#[tokio::test]
+async fn cbr_and_djvu_import_normalize_to_comic_pages() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("cbr-djvu.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, book) = upload_named(
+        &app,
+        sample_cbr(),
+        Some(&token),
+        Some("Night_City_Issue_2.cbr"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let cbr_id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["format"], "cbr");
+    assert_eq!(catalogue[0]["title"], "Night City Issue 2");
+    let pages = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{cbr_id}/pages"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(pages.0, StatusCode::OK, "{}", pages.1);
+    assert_eq!(pages.1["pageCount"], 2);
+    let file = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/books/{cbr_id}/file"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(file.status(), StatusCode::OK);
+    assert_eq!(
+        file.headers()["content-type"],
+        "application/vnd.comicbook+zip"
+    );
+    assert!(to_bytes(file.into_body(), 1024 * 1024)
+        .await
+        .unwrap()
+        .starts_with(b"PK"));
+
+    let (status, book) = upload_named(
+        &app,
+        sample_djvu(),
+        Some(&token),
+        Some("Scanned_Notes.djvu"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let djvu_id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let djvu = catalogue
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == djvu_id)
+        .unwrap();
+    assert_eq!(djvu["format"], "djvu");
+    assert_eq!(djvu["title"], "Scanned Notes");
+    let pages = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{djvu_id}/pages"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(pages.0, StatusCode::OK, "{}", pages.1);
+    assert_eq!(pages.1["pageCount"], 1);
+    let page0 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/books/{djvu_id}/pages/0"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page0.status(), StatusCode::OK);
+    assert_eq!(page0.headers()["content-type"], "image/png");
+    assert!(
+        to_bytes(page0.into_body(), 1024 * 1024)
+            .await
+            .unwrap()
+            .len()
+            > 8
+    );
 }
 
 async fn call(

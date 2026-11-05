@@ -1032,7 +1032,9 @@
             "enum": [
               "epub",
               "pdf",
-              "cbz"
+              "cbz",
+              "cbr",
+              "djvu"
             ]
           },
           "percentage": {
@@ -1050,6 +1052,11 @@
           },
           "has_cover": {
             "type": "boolean"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 of the uploaded file bytes (hex). Mobile offline cache keys on this."
           }
         }
       }

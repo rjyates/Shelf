@@ -83,14 +83,14 @@ impl AppState {
     }
 }
 
-/// SQLite cannot ALTER a CHECK; rebuild epub_files when `cbz` is still rejected.
-fn migrate_epub_files_allow_cbz(db: &Connection) -> rusqlite::Result<()> {
+/// SQLite cannot ALTER a CHECK; rebuild epub_files when comic formats are missing.
+fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
     let sql: String = db.query_row(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='epub_files'",
         [],
         |r| r.get(0),
     )?;
-    if sql.contains("'cbz'") {
+    if sql.contains("'cbr'") && sql.contains("'djvu'") {
         return Ok(());
     }
     db.execute_batch(
@@ -104,7 +104,7 @@ fn migrate_epub_files_allow_cbz(db: &Connection) -> rusqlite::Result<()> {
            cover_mime TEXT,
            position TEXT,
            percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
-           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz'))
+           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','djvu'))
          );
          INSERT INTO epub_files_new
            (book_id,digest,content,cover,cover_mime,position,percentage,format)
@@ -137,7 +137,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
            OR id IN (SELECT book_id FROM epub_files WHERE percentage=1)
          )",
     );
-    migrate_epub_files_allow_cbz(&db)?;
+    migrate_epub_files_formats(&db)?;
     Ok(Router::new()
         .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
         .route("/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/app.css")) }))
@@ -392,6 +392,8 @@ struct Book {
 #[derive(Serialize)]
 struct EpubInfo {
     format: &'static str,
+    /// SHA-256 of the uploaded bytes (hex). Clients key offline caches on this.
+    digest: String,
     percentage: f64,
     position: Option<String>,
     has_cover: bool,
@@ -407,10 +409,11 @@ struct NewBook {
 async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Vec<Book>>> {
     state.db(move |db| {
         let user = authenticate(db, &headers)?;
-        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,b.reading_status,f.book_id,f.percentage,f.position,f.cover IS NOT NULL,f.format FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
+        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,b.reading_status,f.book_id,f.percentage,f.position,f.cover IS NOT NULL,f.format,f.digest FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
         let books = query.query_map([user], |r| {
             let imported = r.get::<_, Option<i64>>(6)?.is_some();
             let format = r.get::<_, Option<String>>(10)?;
+            let digest = r.get::<_, Option<String>>(11)?;
             Ok(Book {
                 id: r.get(0)?,
                 title: r.get(1)?,
@@ -423,8 +426,11 @@ async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<J
                         format: match format.as_deref() {
                             Some("pdf") => "pdf",
                             Some("cbz") => "cbz",
+                            Some("cbr") => "cbr",
+                            Some("djvu") => "djvu",
                             _ => "epub",
                         },
+                        digest: digest.unwrap_or_default(),
                         percentage: r.get(7)?,
                         position: r.get(8)?,
                         has_cover: r.get(9)?,

@@ -22,7 +22,13 @@ function displayTitle(title) {
     .trim();
 }
 function isImported(book) {
-  return book.format === "epub" || book.format === "pdf" || book.format === "cbz";
+  return (
+    book.format === "epub" ||
+    book.format === "pdf" ||
+    book.format === "cbz" ||
+    book.format === "cbr" ||
+    book.format === "djvu"
+  );
 }
 function isFinished(book) {
   if (book.reading_status === "finished") return true;
@@ -198,7 +204,10 @@ function render() {
           ),
           {
             href: `/reader?id=${book.id}${
-              book.format === "pdf" || book.format === "cbz"
+              book.format === "pdf" ||
+              book.format === "cbz" ||
+              book.format === "cbr" ||
+              book.format === "djvu"
                 ? `&format=${book.format}`
                 : ""
             }`,
@@ -247,7 +256,15 @@ function render() {
         "p",
         isImported(book)
           ? `${Math.round(book.percentage * 100)}% read · ${
-              book.format === "pdf" ? "PDF" : book.format === "cbz" ? "CBZ" : "EPUB"
+              book.format === "pdf"
+                ? "PDF"
+                : book.format === "cbz"
+                  ? "CBZ"
+                  : book.format === "cbr"
+                    ? "CBR"
+                    : book.format === "djvu"
+                      ? "DjVu"
+                      : "EPUB"
             }`
           : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`,
         "fine",
@@ -425,10 +442,13 @@ $("epub-files").addEventListener("change", async () => {
       const contentType =
         file.type === "application/pdf" || name.endsWith(".pdf")
           ? "application/pdf"
-          : file.type === "application/vnd.comicbook+zip" ||
-              name.endsWith(".cbz")
+          : file.type === "application/vnd.comicbook+zip" || name.endsWith(".cbz")
             ? "application/vnd.comicbook+zip"
-            : "application/epub+zip";
+            : name.endsWith(".cbr") ||
+                name.endsWith(".djvu") ||
+                name.endsWith(".djv")
+              ? "application/octet-stream"
+              : "application/epub+zip";
       const result = await api("books/import", {
         method: "POST",
         headers: {

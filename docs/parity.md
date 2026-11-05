@@ -31,7 +31,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Folder scanning and multiple libraries | Planned |
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
 | PDF reading | **M9 web + mobile PDF** — ingest + BO `pdf-v4`; mobile Readium PDF open/cache with shared `pdfpage(N)`, fit-to-page, tap-to-hide chrome, page/progress footer — `docs/research/m9-pdf-comics-leverage.md` |
-| Comic archive reading | **M9 web + mobile CBZ** — web ingest + page images + BO `cbz/` reader; mobile Readium CBZ open/cache with shared `cbzpage(N)`; CBR/DjVu still later — same leverage doc |
+| Comic archive reading | **M9 web + mobile CBZ/CBR/DjVu** — CBZ as ZIP; CBR/DjVu normalized to ZIP-of-images at ingest (`cbr`/`djvu` labels); shared page API + `cbzpage(N)`; web BO comic reader; mobile Readium opens the ZIP-backed file — same leverage doc |
 | Audiobook playback and background media controls | Planned |
 | EPUB Media Overlay read-along and alignment | Planned; BO media-overlay UI is present, Shelf audio serving is not |
 | Annotations, highlights, searchable/exportable notes | Persisted on Shelf; BO + e-ink Readium UI; export/search still Planned |
@@ -71,7 +71,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 8. **E-ink partial-refresh adapters** — **complete for SuperNote Nomad** (2026-11-04): Dart `EinkRefresh` + Shelf `InkHostView` + SPEED/A2/tip lead (~0.15–0.2s tip lag). Not Notes HandWrite/PWCore. Live A2 thinner until ink-off softDu — accepted. Experimental `/dev/ebc` DISPAREA stays opt-in (`debug.shelf.ink.ebc`), not default. Other Android tablets stay Flutter Canvas (`noop`). Lessons + do-not-retread: `docs/research/nomad-stylus.md`.
 
-9. **PDF and comic readers** — web PDF + mobile Readium PDF done; web CBZ + mobile Readium CBZ done; CBR/DjVu still open. **Leverage map:** [`docs/research/m9-pdf-comics-leverage.md`](research/m9-pdf-comics-leverage.md).
+9. **PDF and comic readers** — web PDF + mobile Readium PDF done; web + mobile CBZ done; CBR/DjVu ingest (ZIP-normalized, shared page/`cbzpage` path) done. **Leverage map:** [`docs/research/m9-pdf-comics-leverage.md`](research/m9-pdf-comics-leverage.md).
 
 10. **TTS and media overlays** — Foliate/BO hooks first on the WebView path; native/e-ink listen features after reading stacks are stable. Then Storyteller-like extras (sleep timer, sync offset, PiP) where they fit.
 

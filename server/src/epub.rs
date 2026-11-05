@@ -1,7 +1,7 @@
 use super::*;
 use axum::{body::to_bytes, extract::Request};
 use rust_embed::RustEmbed;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 
 /// Built Book Orbit EPUB reader (AGPL-3.0-only). See web/orbit-reader/vendor/bookorbit/ATTRIBUTION.md.
 #[derive(RustEmbed)]
@@ -65,7 +65,7 @@ static IMPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 fn invalid() -> ApiError {
     ApiError(
         StatusCode::BAD_REQUEST,
-        "Not a supported book file. Use an unencrypted EPUB, PDF, or CBZ.",
+        "Not a supported book file. Use an unencrypted EPUB, PDF, CBZ, CBR, or DjVu.",
     )
 }
 
@@ -75,6 +75,22 @@ fn is_pdf(bytes: &[u8]) -> bool {
 
 fn is_zip(bytes: &[u8]) -> bool {
     bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06")
+}
+
+/// RAR 1.5+ / RAR 5 signature (`Rar!\x1a\x07` …).
+fn is_rar(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"Rar!\x1a\x07")
+}
+
+/// Bundled DjVu (`AT&TFORM` + IFF size + `DJVM`/`DJVU`).
+fn is_djvu(bytes: &[u8]) -> bool {
+    bytes.len() >= 16
+        && bytes.starts_with(b"AT&TFORM")
+        && (&bytes[12..16] == b"DJVM" || &bytes[12..16] == b"DJVU")
+}
+
+fn is_comic_format(format: &str) -> bool {
+    matches!(format, "cbz" | "cbr" | "djvu")
 }
 
 fn image_mime(path: &str) -> Option<&'static str> {
@@ -132,6 +148,79 @@ fn comic_page_names(bytes: &[u8]) -> ApiResult<Vec<String>> {
         return Err(invalid());
     }
     Ok(names)
+}
+
+/// Pack image pages into a CBZ-compatible ZIP (lexicographic names).
+fn pack_comic_zip(mut pages: Vec<(String, Vec<u8>)>) -> ApiResult<Vec<u8>> {
+    pages.sort_by(|a, b| a.0.cmp(&b.0));
+    if pages.is_empty() || pages.len() > 10_000 {
+        return Err(invalid());
+    }
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, data) in pages {
+        if data.len() > 50 * 1024 * 1024 {
+            return Err(invalid());
+        }
+        zip.start_file(name, opts).map_err(|_| invalid())?;
+        zip.write_all(&data).map_err(|_| invalid())?;
+    }
+    Ok(zip.finish().map_err(|_| invalid())?.into_inner())
+}
+
+/// Extract a CBR (RAR of images) into a ZIP of the same pages.
+fn cbr_to_zip(bytes: &[u8]) -> ApiResult<Vec<u8>> {
+    if bytes.len() > 500 * 1024 * 1024 {
+        return Err(invalid());
+    }
+    let options = rars::ArchiveReadOptions::default()
+        .with_max_total_output_bytes(500 * 1024 * 1024)
+        .with_max_member_output_bytes(50 * 1024 * 1024);
+    let archive = rars::ArchiveReader::read_with_options(bytes, options).map_err(|_| invalid())?;
+    let mut wanted: Vec<(String, Vec<u8>)> = Vec::new();
+    for member in archive.members() {
+        if member.meta.is_directory || member.meta.is_redirection || member.meta.is_encrypted {
+            continue;
+        }
+        let name = String::from_utf8_lossy(&member.meta.name).replace('\\', "/");
+        if !is_comic_image_path(&name) {
+            continue;
+        }
+        if member.meta.unpacked_size > 50 * 1024 * 1024 {
+            return Err(invalid());
+        }
+        wanted.push((name, member.meta.name.clone()));
+    }
+    if wanted.len() > 10_000 {
+        return Err(invalid());
+    }
+    let mut pages = Vec::with_capacity(wanted.len());
+    for (display, raw_name) in wanted {
+        let data = archive
+            .read_member_with_options(&raw_name, options)
+            .map_err(|_| invalid())?
+            .ok_or_else(invalid)?;
+        if data.is_empty() {
+            continue;
+        }
+        pages.push((display, data));
+    }
+    pack_comic_zip(pages)
+}
+
+/// Render a DjVu document to a ZIP of page PNGs.
+fn djvu_to_zip(bytes: &[u8]) -> ApiResult<Vec<u8>> {
+    if bytes.len() > 200 * 1024 * 1024 {
+        return Err(invalid());
+    }
+    let doc = djvu_rs::Document::from_bytes(bytes.to_vec()).map_err(|_| invalid())?;
+    // 150 DPI is the djvu-rs CBZ default — readable without ballooning storage.
+    let zip = djvu_rs::cbz::djvu_to_cbz(doc.inner(), &djvu_rs::cbz::CbzOptions::default())
+        .map_err(|_| invalid())?;
+    // Ensure the export actually contains image pages we can serve.
+    let _ = comic_page_names(&zip)?;
+    Ok(zip)
 }
 
 fn is_epub_zip(bytes: &[u8]) -> bool {
@@ -357,18 +446,20 @@ fn import_pdf(
     Ok(id)
 }
 
-fn import_cbz(
+/// Store a ZIP-of-images comic under `format` (`cbz` / `cbr` / `djvu`).
+fn import_comic_zip(
     tx: &rusqlite::Transaction<'_>,
     user: i64,
-    bytes: &[u8],
+    zip_bytes: &[u8],
     digest: &str,
     filename: Option<&str>,
+    format: &str,
 ) -> ApiResult<i64> {
-    if !is_zip(bytes) || is_epub_zip(bytes) {
+    if !is_comic_format(format) || !is_zip(zip_bytes) || is_epub_zip(zip_bytes) {
         return Err(invalid());
     }
-    let pages = comic_page_names(bytes)?;
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| invalid())?;
+    let pages = comic_page_names(zip_bytes)?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(zip_bytes)).map_err(|_| invalid())?;
     let cover_name = pages[0].clone();
     let mut cover_file = archive.by_name(&cover_name).map_err(|_| invalid())?;
     let mut cover = Vec::new();
@@ -382,8 +473,8 @@ fn import_cbz(
     )?;
     let id = tx.last_insert_rowid();
     tx.execute(
-        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format) VALUES (?,?,?,?,?,'cbz')",
-        params![id, digest, bytes, cover, cover_mime],
+        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format) VALUES (?,?,?,?,?,?)",
+        params![id, digest, zip_bytes, cover, cover_mime, format],
     )?;
     Ok(id)
 }
@@ -426,8 +517,15 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
             }
             let id = if is_pdf(&bytes) {
                 import_pdf(&tx, user, &bytes, &digest, filename.as_deref())?
+            } else if is_rar(&bytes) {
+                // CBR → ZIP at ingest so page API + Readium CBZ path stay shared.
+                let zip = cbr_to_zip(&bytes)?;
+                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cbr")?
+            } else if is_djvu(&bytes) {
+                let zip = djvu_to_zip(&bytes)?;
+                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "djvu")?
             } else if is_zip(&bytes) && !is_epub_zip(&bytes) {
-                import_cbz(&tx, user, &bytes, &digest, filename.as_deref())?
+                import_comic_zip(&tx, user, &bytes, &digest, filename.as_deref(), "cbz")?
             } else {
                 import_epub(&tx, user, &bytes, &digest)?
             };
@@ -493,9 +591,10 @@ pub(super) async fn file(
                 )
                 .optional()?
                 .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+            // CBR/DjVu are stored as ZIP-of-images after ingest; serve as CBZ for Readium.
             let (mime, disposition) = match format.as_str() {
                 "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
-                "cbz" => (
+                "cbz" | "cbr" | "djvu" => (
                     "application/vnd.comicbook+zip",
                     "attachment; filename=book.cbz",
                 ),
@@ -542,10 +641,10 @@ pub(super) async fn comic_page_count(
                 )
                 .optional()?
                 .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
-            if format != "cbz" {
+            if !is_comic_format(&format) {
                 return Err(ApiError(
                     StatusCode::BAD_REQUEST,
-                    "Page images are only available for CBZ comics.",
+                    "Page images are only available for comic archives.",
                 ));
             }
             let page_count = comic_page_names(&content)?.len();
@@ -554,7 +653,7 @@ pub(super) async fn comic_page_count(
         .await
 }
 
-/// `GET /books/{id}/pages/{page}` — 0-based page image from a CBZ.
+/// `GET /books/{id}/pages/{page}` — 0-based page image from a comic ZIP.
 pub(super) async fn comic_page(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -571,10 +670,10 @@ pub(super) async fn comic_page(
                 )
                 .optional()?
                 .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
-            if format != "cbz" {
+            if !is_comic_format(&format) {
                 return Err(ApiError(
                     StatusCode::BAD_REQUEST,
-                    "Page images are only available for CBZ comics.",
+                    "Page images are only available for comic archives.",
                 ));
             }
             let names = comic_page_names(&content)?;

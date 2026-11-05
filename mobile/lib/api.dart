@@ -23,6 +23,8 @@ class Book {
     this.isEpub = false,
     this.isPdf = false,
     this.isCbz = false,
+    this.format,
+    this.digest,
     this.percentage = 0,
     this.position,
   });
@@ -34,11 +36,18 @@ class Book {
     final read = json['pages_read'];
     final format = json['format'];
     final epub = format == 'epub';
-    // PDF/CBZ are imported like EPUB (null page count + %). Mobile opens EPUB+PDF; CBZ later.
-    final imported = epub || format == 'pdf' || format == 'cbz';
+    final comic = format == 'cbz' || format == 'cbr' || format == 'djvu';
+    // PDF/comics are imported like EPUB (null page count + %). CBR/DjVu arrive as ZIP-backed comics.
+    final imported = epub || format == 'pdf' || comic;
     final percentage = json['percentage'];
     final position = json['position'];
     final status = json['reading_status'] ?? 'open';
+    final digest = json['digest'];
+    final digestOk =
+        digest == null ||
+        (digest is String &&
+            digest.length == 64 &&
+            RegExp(r'^[a-f0-9]{64}$').hasMatch(digest));
     if (id is! int ||
         id < 1 ||
         title is! String ||
@@ -54,7 +63,10 @@ class Book {
                 (position != null &&
                     (position is! String ||
                         position.length > 4096 ||
-                        position.codeUnits.any((c) => c < 32))))) ||
+                        position.codeUnits.any((c) => c < 32))) ||
+                !digestOk ||
+                digest is! String ||
+                digest.isEmpty)) ||
         read is! int ||
         read < 0 ||
         (!imported && read > (total as int)) ||
@@ -81,7 +93,9 @@ class Book {
       position: imported ? position as String? : null,
       pagesRead: read,
       isPdf: format == 'pdf',
-      isCbz: format == 'cbz',
+      isCbz: comic,
+      format: imported && format is String ? format : null,
+      digest: imported ? digest as String : null,
       readingStatus: status,
     );
   }
@@ -92,6 +106,10 @@ class Book {
   final bool isEpub;
   final bool isPdf;
   final bool isCbz;
+  /// Server format string for imported books (`epub` / `pdf` / `cbz` / `cbr` / `djvu`).
+  final String? format;
+  /// SHA-256 hex of the uploaded file; offline cache key.
+  final String? digest;
   final bool hasCover;
   final double percentage;
   final String? position;

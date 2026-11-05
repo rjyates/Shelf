@@ -627,7 +627,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     for (final book in books) {
       if (!book.opensInReader) continue;
       final ext = EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
-      if (await store.has(book.id, extension: ext)) saved.add(book.id);
+      if (await store.has(book.id, extension: ext, digest: book.digest)) {
+        saved.add(book.id);
+      }
     }
     return saved;
   }
@@ -679,7 +681,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final ext = _localExtension(book);
     if (store == null || ext == null) return;
     try {
-      await store.remove(book.id, extension: ext);
+      await store.remove(book.id, extension: ext, digest: book.digest);
       if (mounted) {
         setState(() => _savedOffline.remove(book.id));
         ScaffoldMessenger.of(context).showSnackBar(
@@ -823,7 +825,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await widget.api.deleteBook(book.id);
       final ext = _localExtension(book);
       if (ext != null) {
-        await widget.epubs?.remove(book.id, extension: ext);
+        await widget.epubs?.remove(
+          book.id,
+          extension: ext,
+          digest: book.digest,
+        );
       }
       await _refresh();
       if (mounted) {
@@ -911,7 +917,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
         await Connectivity().checkConnectivity(),
       );
       final ext = EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
-      var cached = await epubs.has(book.id, extension: ext);
+      var cached = await epubs.has(
+        book.id,
+        extension: ext,
+        digest: book.digest,
+      );
       if (!cached) {
         if (!online) {
           closePrepareDialog();
@@ -933,6 +943,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             book.id,
             await widget.api.downloadEpub(book.id),
             extension: ext,
+            digest: book.digest,
           );
           cached = true;
           if (mounted) setState(() => _savedOffline.add(book.id));
@@ -1169,12 +1180,22 @@ class _BookTile extends StatelessWidget {
     final progress = book.isImported
         ? book.percentage
         : book.pagesRead / book.totalPages!;
-    final progressLabel = book.isEpub
-        ? '${(book.percentage * 100).round()}% read · EPUB'
-        : book.isPdf
-        ? '${(book.percentage * 100).round()}% read · PDF'
-        : book.isCbz
-        ? '${(book.percentage * 100).round()}% read · CBZ'
+    final formatLabel = switch (book.format) {
+      'pdf' => 'PDF',
+      'cbz' => 'CBZ',
+      'cbr' => 'CBR',
+      'djvu' => 'DjVu',
+      'epub' => 'EPUB',
+      _ => book.isPdf
+          ? 'PDF'
+          : book.isCbz
+          ? 'CBZ'
+          : book.isEpub
+          ? 'EPUB'
+          : null,
+    };
+    final progressLabel = formatLabel != null
+        ? '${(book.percentage * 100).round()}% read · $formatLabel'
         : '${book.pagesRead} / ${book.totalPages} pages';
     final action = opening
         ? 'Opening…'

@@ -18,7 +18,8 @@ const router = createRouter({
         const id = Number(to.query.id)
         const raw =
           typeof to.query.format === 'string' ? to.query.format.toLowerCase() : 'epub'
-        const format = raw === 'pdf' || raw === 'cbz' ? raw : 'epub'
+        const format =
+          raw === 'pdf' || raw === 'cbz' || raw === 'cbr' || raw === 'djvu' ? raw : 'epub'
         if (Number.isFinite(id) && id > 0) {
           return {
             path: `/reader/${id}/${id}`,
