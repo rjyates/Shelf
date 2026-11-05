@@ -92,10 +92,13 @@ function render() {
   $("library-panel").hidden = insights;
   $("insights-panel").hidden = !insights;
   const query = $("search").value.toLowerCase();
+  const isImported = (book) => book.format === "epub" || book.format === "pdf";
+  const fraction = (book) =>
+    isImported(book) ? book.percentage : book.pages_read / book.total_pages;
   const visible = catalogue.filter((book) =>
     library
       ? `${book.title} ${book.author}`.toLowerCase().includes(query)
-      : book.format === "epub"
+      : isImported(book)
         ? book.position && book.percentage < 1
         : book.pages_read > 0 && book.pages_read < book.total_pages,
   );
@@ -111,10 +114,6 @@ function render() {
       ? "Try another title or author."
       : "Open Library to record your progress on a book."
     : "Add a book to begin building your library.";
-  const fraction = (book) =>
-    book.format === "epub"
-      ? book.percentage
-      : book.pages_read / book.total_pages;
   for (const book of visible) {
     const article = element("article", undefined, "book");
     const cover = element("div", undefined, "cover");
@@ -157,19 +156,21 @@ function render() {
       progress,
       element(
         "p",
-        book.format === "epub"
-          ? `${Math.round(book.percentage * 100)}% read · EPUB`
+        isImported(book)
+          ? `${Math.round(book.percentage * 100)}% read · ${book.format === "pdf" ? "PDF" : "EPUB"}`
           : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`,
         "fine",
       ),
-      book.format === "epub"
+      isImported(book)
         ? Object.assign(
             element(
               "a",
               book.position ? "Continue reading →" : "Read book →",
               "quiet",
             ),
-            { href: `/reader?id=${book.id}` },
+            {
+              href: `/reader?id=${book.id}${book.format === "pdf" ? "&format=pdf" : ""}`,
+            },
           )
         : update,
     );
@@ -283,9 +284,14 @@ $("epub-files").addEventListener("change", async () => {
   for (const file of files) {
     message(`Importing ${file.name}…`);
     try {
+      const isPdf =
+        file.type === "application/pdf" ||
+        file.name.toLowerCase().endsWith(".pdf");
       const result = await api("books/import", {
         method: "POST",
-        headers: { "Content-Type": "application/epub+zip" },
+        headers: {
+          "Content-Type": isPdf ? "application/pdf" : "application/epub+zip",
+        },
         body: file,
       });
       if (result.duplicate) duplicates++;

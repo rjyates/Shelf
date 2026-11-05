@@ -87,6 +87,9 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let db = Connection::open(&database)?;
     db.pragma_update(None, "journal_mode", "WAL")?;
     db.execute_batch(include_str!("../schema.sql"))?;
+    // Existing libraries created before PDF support lack the format column.
+    let _ =
+        db.execute_batch("ALTER TABLE epub_files ADD COLUMN format TEXT NOT NULL DEFAULT 'epub'");
     Ok(Router::new()
         .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
         .route("/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/app.css")) }))
@@ -331,8 +334,31 @@ struct NewBook {
 async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Vec<Book>>> {
     state.db(move |db| {
         let user = authenticate(db, &headers)?;
-        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,f.book_id,f.percentage,f.position,f.cover IS NOT NULL FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
-        let books = query.query_map([user], |r| Ok(Book { id:r.get(0)?,title:r.get(1)?,author:r.get(2)?,total_pages:r.get(3)?,pages_read:r.get(4)?, epub: if r.get::<_,Option<i64>>(5)?.is_some() {Some(EpubInfo {format:"epub",percentage:r.get(6)?,position:r.get(7)?,has_cover:r.get(8)?})} else {None} }))?.collect::<Result<Vec<_>,_>>()?;
+        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,f.book_id,f.percentage,f.position,f.cover IS NOT NULL,f.format FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
+        let books = query.query_map([user], |r| {
+            let imported = r.get::<_, Option<i64>>(5)?.is_some();
+            let format = r.get::<_, Option<String>>(9)?;
+            Ok(Book {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                author: r.get(2)?,
+                total_pages: r.get(3)?,
+                pages_read: r.get(4)?,
+                epub: if imported {
+                    Some(EpubInfo {
+                        format: match format.as_deref() {
+                            Some("pdf") => "pdf",
+                            _ => "epub",
+                        },
+                        percentage: r.get(6)?,
+                        position: r.get(7)?,
+                        has_cover: r.get(8)?,
+                    })
+                } else {
+                    None
+                },
+            })
+        })?.collect::<Result<Vec<_>,_>>()?;
         Ok(Json(books))
     }).await
 }
@@ -387,7 +413,7 @@ async fn update_progress(
         .db(move |db| {
             let user = authenticate(db, &headers)?;
             let imported: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?)",params![id,user],|r|r.get(0))?;
-            if imported { return Err(ApiError(StatusCode::BAD_REQUEST,"Use the EPUB reader to record progress.")); }
+            if imported { return Err(ApiError(StatusCode::BAD_REQUEST,"Use the reader to record progress.")); }
             let total: Option<i64> = db
                 .query_row(
                     "SELECT total_pages FROM books WHERE id=? AND user_id=?",

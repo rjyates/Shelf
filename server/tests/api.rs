@@ -27,11 +27,28 @@ fn sample_epub(unsafe_path: bool) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+fn sample_pdf() -> Vec<u8> {
+    br#"%PDF-1.1
+1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj
+2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj
+3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>endobj
+4 0 obj<< /Title (Shelf PDF Fixture) >>endobj
+trailer<< /Root 1 0 R /Info 4 0 R >>
+%%EOF
+"#
+    .to_vec()
+}
+
 async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCode, Value) {
+    let content_type = if bytes.starts_with(b"%PDF") {
+        "application/pdf"
+    } else {
+        "application/epub+zip"
+    };
     let mut request = Request::builder()
         .method("POST")
         .uri("/api/v1/books/import")
-        .header("content-type", "application/epub+zip");
+        .header("content-type", content_type);
     if let Some(token) = token {
         request = request.header("authorization", format!("Bearer {token}"));
     }
@@ -199,10 +216,11 @@ async fn epub_import_duplicate_access_and_saved_position_survive_restart() {
         .to_str()
         .unwrap()
         .contains("HttpOnly"));
-    assert!(reader.headers()["content-security-policy"]
+    let csp = reader.headers()["content-security-policy"]
         .to_str()
-        .unwrap()
-        .contains("frame-src blob:"));
+        .unwrap();
+    assert!(csp.contains("frame-src blob:"));
+    assert!(csp.contains("wasm-unsafe-eval"));
     let stats = call(&restarted, "GET", "/api/v1/stats", Value::Null, Some(token))
         .await
         .1;
@@ -240,6 +258,79 @@ async fn epub_import_duplicate_access_and_saved_position_survive_restart() {
         .0,
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn pdf_import_serve_and_page_location() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("pdf.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, book) = upload(&app, sample_pdf(), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["format"], "pdf");
+    assert_eq!(catalogue[0]["title"], "Shelf PDF Fixture");
+    assert_eq!(catalogue[0]["total_pages"], Value::Null);
+    let location = format!("/api/v1/books/{id}/location");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &location,
+            json!({"position":"pdfpage(0)","percentage":0.1}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &location,
+            json!({"position":"pdfpage(3)","percentage":0.25}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["position"], "pdfpage(3)");
+    assert_eq!(catalogue[0]["percentage"], 0.25);
+    let file = format!("/api/v1/books/{id}/file");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&file)
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.headers()["content-type"], "application/pdf");
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap(),
+        sample_pdf()
+    );
+    let duplicate = upload(&app, sample_pdf(), Some(&token)).await;
+    assert_eq!(duplicate.0, StatusCode::OK);
+    assert_eq!(duplicate.1["duplicate"], true);
 }
 
 async fn call(

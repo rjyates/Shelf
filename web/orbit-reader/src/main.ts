@@ -1,5 +1,5 @@
 /**
- * Shelf host for the Book Orbit EPUB reader.
+ * Shelf host for the Book Orbit reader (EPUB + PDF).
  * Reader implementation: https://github.com/bookorbit/bookorbit (AGPL-3.0-only)
  */
 import { createApp } from 'vue'
@@ -16,10 +16,14 @@ const router = createRouter({
       path: '/reader',
       redirect: (to) => {
         const id = Number(to.query.id)
+        const format =
+          typeof to.query.format === 'string' && to.query.format.toLowerCase() === 'pdf'
+            ? 'pdf'
+            : 'epub'
         if (Number.isFinite(id) && id > 0) {
           return {
             path: `/reader/${id}/${id}`,
-            query: { format: 'epub' },
+            query: { format },
           }
         }
         return { path: '/' }

@@ -20,6 +20,7 @@ class Book {
     required this.pagesRead,
     this.hasCover = false,
     this.isEpub = false,
+    this.isPdf = false,
     this.percentage = 0,
     this.position,
   });
@@ -29,7 +30,10 @@ class Book {
     final author = json['author'];
     final total = json['total_pages'];
     final read = json['pages_read'];
-    final epub = json['format'] == 'epub';
+    final format = json['format'];
+    final epub = format == 'epub';
+    // PDF is imported like EPUB (null page count + %) but mobile open is still EPUB-only.
+    final imported = epub || format == 'pdf';
     final percentage = json['percentage'];
     final position = json['position'];
     if (id is! int ||
@@ -37,8 +41,8 @@ class Book {
         title is! String ||
         title.trim().isEmpty ||
         author is! String ||
-        (!epub && (total is! int || total < 1)) ||
-        (epub &&
+        (!imported && (total is! int || total < 1)) ||
+        (imported &&
             (total != null ||
                 percentage is! num ||
                 !percentage.isFinite ||
@@ -50,8 +54,8 @@ class Book {
                         position.codeUnits.any((c) => c < 32))))) ||
         read is! int ||
         read < 0 ||
-        (!epub && read > (total as int)) ||
-        (epub && read != 0)) {
+        (!imported && read > (total as int)) ||
+        (imported && read != 0)) {
       throw ShelfException(
         'Your server returned an invalid book entry. Check the server version.',
       );
@@ -62,10 +66,11 @@ class Book {
       author: author,
       totalPages: total as int?,
       isEpub: epub,
-      hasCover: epub && json['has_cover'] == true,
-      percentage: epub ? (percentage as num).toDouble() : 0,
-      position: epub ? position as String? : null,
+      hasCover: imported && json['has_cover'] == true,
+      percentage: imported ? (percentage as num).toDouble() : 0,
+      position: imported ? position as String? : null,
       pagesRead: read,
+      isPdf: format == 'pdf',
     );
   }
   final int id;
@@ -73,19 +78,23 @@ class Book {
   final String author;
   final int? totalPages;
   final bool isEpub;
+  final bool isPdf;
   final bool hasCover;
   final double percentage;
   final String? position;
   final int pagesRead;
 
-  /// Fraction complete for catalogue math (EPUB % or manual pages).
-  double get progressFraction => isEpub ? percentage : pagesRead / totalPages!;
+  bool get isImported => isEpub || isPdf;
+
+  /// Fraction complete for catalogue math (imported % or manual pages).
+  double get progressFraction =>
+      isImported ? percentage : pagesRead / totalPages!;
 }
 
-/// Library blurb: EPUB has no page count (decision 0003), so mean progress replaces "pages turned".
+/// Library blurb: imported books have no page count (decision 0003), so mean progress replaces "pages turned".
 String libraryReadingBlurb(List<Book> books) {
   final started = books
-      .where((book) => book.isEpub ? book.percentage > 0 : book.pagesRead > 0)
+      .where((book) => book.isImported ? book.percentage > 0 : book.pagesRead > 0)
       .toList();
   if (started.isEmpty) {
     return '${books.length} books';

@@ -829,7 +829,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       book: book,
                       wide: wide,
                       savedOffline: _savedOffline.contains(book.id),
-                      onOpen: () => book.isEpub ? _read(book) : _record(book),
+                      onOpen: () {
+                        if (book.isEpub) {
+                          _read(book);
+                        } else if (!book.isPdf) {
+                          _record(book);
+                        }
+                      },
                       onSaveOffline: book.isEpub && widget.epubs != null
                           ? () => _saveOffline(book)
                           : null,
@@ -862,13 +868,19 @@ class _BookTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final progress = book.isEpub
+    final progress = book.isImported
         ? book.percentage
         : book.pagesRead / book.totalPages!;
     final progressLabel = book.isEpub
         ? '${(book.percentage * 100).round()}% read · EPUB'
+        : book.isPdf
+        ? '${(book.percentage * 100).round()}% read · PDF'
         : '${book.pagesRead} / ${book.totalPages} pages';
-    final action = book.isEpub ? 'Read book' : 'Record progress';
+    final action = book.isEpub
+        ? 'Read book'
+        : book.isPdf
+        ? 'PDF on web'
+        : 'Record progress';
     final cover = book.hasCover
         ? Image.network(
             api.base.resolve('/api/v1/books/${book.id}/cover').toString(),
@@ -892,7 +904,7 @@ class _BookTile extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         Semantics(
-          label: book.isEpub
+          label: book.isImported
               ? '${book.title}: ${(book.percentage * 100).round()}% read'
               : '${book.title}: ${book.pagesRead} of ${book.totalPages} pages',
           child: Column(
