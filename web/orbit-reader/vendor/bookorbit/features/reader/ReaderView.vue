@@ -80,7 +80,10 @@ const isPeekMode = computed(() => {
   return (Array.isArray(mode) ? mode[0] : mode) === 'peek'
 })
 const trackingEnabled = computed(() => !isPeekMode.value)
-const isTtsAvailable = normalizedFileFormat === 'epub'
+const isEpubNarrationCapable = normalizedFileFormat === 'epub'
+/** OpenAI-compatible TTS backends configured in Shelf settings; empty hides synthesize-listen. */
+const ttsProvidersConfigured = ref(false)
+const isTtsAvailable = computed(() => isEpubNarrationCapable && ttsProvidersConfigured.value)
 
 const containerRef = ref<HTMLElement | null>(null)
 const showSidebar = ref(false)
@@ -279,7 +282,9 @@ const ttsPosition = useTtsPosition()
 const mediaOverlay = useMediaOverlay()
 let mediaOverlayStartId = 0
 
-const isMediaOverlayAvailable = computed(() => isTtsAvailable && hasMediaOverlay.value)
+const isMediaOverlayAvailable = computed(() => isEpubNarrationCapable && hasMediaOverlay.value)
+/** Headphones: media overlays always; synthesized TTS only after Settings enables a provider. */
+const isListenAvailable = computed(() => isMediaOverlayAvailable.value || isTtsAvailable.value)
 const isTtsActive = computed(() => isActive.value && currentBook.value?.bookFileId === fileId)
 const isNavigationLocked = computed(
   () =>
@@ -309,14 +314,29 @@ watch(mediaOverlay.isPlaying, (playing) => {
   if (playing) relocationSource = 'narration'
 })
 
+async function refreshTtsProviderGate() {
+  if (!isEpubNarrationCapable) {
+    ttsProvidersConfigured.value = false
+    return
+  }
+  const providers = await getProviders().catch(() => [])
+  ttsProvidersConfigured.value = providers.length > 0
+}
+
 function ensureTtsAvailable(): boolean {
-  if (isTtsAvailable) return true
-  toast.error('TTS currently supports EPUB files only')
-  return false
+  if (!isEpubNarrationCapable) {
+    toast.error('TTS currently supports EPUB files only')
+    return false
+  }
+  if (!ttsProvidersConfigured.value) {
+    toast.error('Add an OpenAI-compatible TTS provider under Settings to enable listen.')
+    return false
+  }
+  return true
 }
 
 function applySavedTtsResumeHighlight() {
-  if (!isTtsAvailable) return
+  if (!isTtsAvailable.value) return
   if (!foliateReady.value || isTtsActive.value) return
   const saved = ttsPosition.savedPosition.value
   if (!saved?.cfi) return
@@ -953,7 +973,7 @@ onMounted(async () => {
         bookMeta.value = b
       })
       .catch(() => {}),
-    ...(isTtsAvailable ? [loadUserPreferences().catch(() => {})] : []),
+    ...(isEpubNarrationCapable ? [loadUserPreferences().catch(() => {}), refreshTtsProviderGate()] : []),
   ])
 
   await customFonts.fetchAllFonts()
@@ -1025,7 +1045,7 @@ onMounted(async () => {
     toast.info(t('reader.toast.resumed', { pct, label }), { duration: 2500 })
   }
 
-  if (isTtsAvailable) {
+  if (isTtsAvailable.value) {
     // Load saved TTS position and show its marker immediately on open.
     await ttsPosition.loadPosition(fileId)
     if (ttsPosition.hasSavedPosition.value) {
@@ -1356,7 +1376,7 @@ onUnmounted(() => {
       :footerMode="footerMode"
       :peek-mode="isPeekMode"
       :isTtsActive="isTtsActive || (mediaOverlay.isActive.value && mediaOverlay.isPlaying.value)"
-      :isTtsAvailable="isTtsAvailable"
+      :isTtsAvailable="isListenAvailable"
       :isMediaOverlay="isMediaOverlayAvailable"
       :isPinned="isPinned"
       :showTapZones="showTapZones"

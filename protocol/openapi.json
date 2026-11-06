@@ -402,6 +402,119 @@
         }
       }
     },
+    "/tts/text/{id}/{chapter}": {
+      "get": {
+        "description": "EPUB chapter text blocks for TTS (0-based chapter index).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1 }
+          },
+          {
+            "in": "path",
+            "name": "chapter",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 0 }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Chapter sentences" },
+          "400": { "description": "Not an EPUB" },
+          "401": { "description": "No valid session" },
+          "404": { "description": "Book or chapter not found" }
+        }
+      }
+    },
+    "/tts/providers": {
+      "get": {
+        "description": "Enabled OpenAI-compatible TTS providers (no secrets). Empty means the reader hides synthesize-listen.",
+        "responses": {
+          "200": { "description": "Provider list" },
+          "401": { "description": "No valid session" }
+        }
+      }
+    },
+    "/tts/voices": {
+      "get": {
+        "description": "Curated voices for enabled TTS providers.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "providerId",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Voice list" },
+          "401": { "description": "No valid session" }
+        }
+      }
+    },
+    "/tts/synthesize": {
+      "post": {
+        "description": "Proxy speech synthesis to a configured OpenAI-compatible provider.",
+        "responses": {
+          "200": { "description": "Audio bytes" },
+          "400": { "description": "Invalid request or disabled provider" },
+          "401": { "description": "No valid session" },
+          "502": { "description": "Upstream TTS failed" }
+        }
+      }
+    },
+    "/tts/admin/providers": {
+      "get": {
+        "description": "List all TTS providers for settings (includes secrets).",
+        "responses": {
+          "200": { "description": "Admin provider list" },
+          "401": { "description": "No valid session" }
+        }
+      },
+      "post": {
+        "description": "Add an OpenAI-compatible TTS provider.",
+        "responses": {
+          "201": { "description": "Created provider" },
+          "400": { "description": "Invalid body" },
+          "401": { "description": "No valid session" }
+        }
+      }
+    },
+    "/tts/admin/providers/{id}": {
+      "put": {
+        "description": "Update a TTS provider (enable/disable, voices, URL, etc.).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1 }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Updated provider" },
+          "401": { "description": "No valid session" },
+          "404": { "description": "Not found" }
+        }
+      },
+      "delete": {
+        "description": "Remove a TTS provider.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1 }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "401": { "description": "No valid session" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
     "/books/{id}/pages/{page}": {
       "get": {
         "description": "CBZ page image bytes (0-based page index).",

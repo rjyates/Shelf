@@ -104,13 +104,78 @@ function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
+const KOKORO_VOICES = [
+  { id: "af_heart", name: "Heart", shortName: "af_heart", language: "English", locale: "en-US", gender: "Female" },
+  { id: "af_bella", name: "Bella", shortName: "af_bella", language: "English", locale: "en-US", gender: "Female" },
+  { id: "af_sarah", name: "Sarah", shortName: "af_sarah", language: "English", locale: "en-US", gender: "Female" },
+  { id: "am_adam", name: "Adam", shortName: "am_adam", language: "English", locale: "en-US", gender: "Male" },
+  { id: "am_michael", name: "Michael", shortName: "am_michael", language: "English", locale: "en-US", gender: "Male" },
+  { id: "bf_emma", name: "Emma", shortName: "bf_emma", language: "English", locale: "en-GB", gender: "Female" },
+  { id: "bm_george", name: "George", shortName: "bm_george", language: "English", locale: "en-GB", gender: "Male" },
+];
+
+async function renderTtsProviders() {
+  const list = $("tts-providers");
+  const empty = $("tts-empty");
+  if (!list || !empty) return;
+  list.replaceChildren();
+  try {
+    const providers = await api("tts/admin/providers");
+    empty.hidden = providers.length > 0;
+    for (const provider of providers) {
+      const card = element("article", undefined, "tts-provider");
+      const title = element("h3", provider.name);
+      const url = element("p", provider.baseUrl, "fine");
+      const meta = element(
+        "p",
+        `${provider.enabled ? "Enabled" : "Disabled"} · ${(provider.staticVoices || []).length} voices · model ${provider.defaultModel || "—"}`,
+        "fine",
+      );
+      const actions = element("div", undefined, "tts-actions");
+      const toggle = element("button", provider.enabled ? "Disable" : "Enable", "quiet");
+      toggle.type = "button";
+      toggle.addEventListener("click", async () => {
+        try {
+          await api(`tts/admin/providers/${provider.id}`, {
+            method: "PUT",
+            body: JSON.stringify({ enabled: !provider.enabled }),
+          });
+          message(provider.enabled ? "TTS provider disabled." : "TTS provider enabled.");
+          await renderTtsProviders();
+        } catch (error) {
+          message(error.message);
+        }
+      });
+      const remove = element("button", "Remove", "quiet");
+      remove.type = "button";
+      remove.addEventListener("click", async () => {
+        if (!confirm(`Remove TTS provider “${provider.name}”?`)) return;
+        try {
+          await api(`tts/admin/providers/${provider.id}`, { method: "DELETE" });
+          message("TTS provider removed.");
+          await renderTtsProviders();
+        } catch (error) {
+          message(error.message);
+        }
+      });
+      actions.append(toggle, remove);
+      card.append(title, url, meta, actions);
+      list.append(card);
+    }
+  } catch (error) {
+    empty.hidden = false;
+    empty.textContent = error.message;
+  }
+}
+
 function render() {
   const requested = location.hash.slice(1);
-  const view = ["overview", "library", "insights"].includes(requested)
+  const view = ["overview", "library", "insights", "settings"].includes(requested)
     ? requested
     : "overview";
   const library = view === "library";
   const insights = view === "insights";
+  const settings = view === "settings";
   for (const link of document.querySelectorAll("[data-view]")) {
     if (link.dataset.view === view) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
@@ -119,20 +184,26 @@ function render() {
     ? "Your library."
     : insights
       ? "A life in pages."
-      : "An evening well read.";
+      : settings
+        ? "Listening setup."
+        : "An evening well read.";
   $("subtitle").textContent = library
     ? "A home for every chapter."
     : insights
       ? "The reading you have recorded, so far."
-      : "A little further into another world.";
+      : settings
+        ? "Configure a speech provider before the reader offers listen."
+        : "A little further into another world.";
   $("breadcrumb").textContent = `YOUR READING ROOM / ${view.toUpperCase()}`;
   $("section-title").textContent = library
     ? "01 / Your catalogue"
     : "01 / Currently reading";
   $("search-label").hidden = !library;
-  $("view-library").hidden = library;
-  $("library-panel").hidden = insights;
+  $("view-library").hidden = library || insights || settings;
+  $("library-panel").hidden = insights || settings;
   $("insights-panel").hidden = !insights;
+  $("settings-panel").hidden = !settings;
+  if (settings) void renderTtsProviders();
   const query = $("search").value.toLowerCase();
   const fraction = (book) =>
     isImported(book) ? book.percentage : book.pages_read / book.total_pages;
@@ -415,6 +486,39 @@ $("progress-form").addEventListener("submit", async (event) => {
 });
 $("search").addEventListener("input", render);
 window.addEventListener("hashchange", render);
+$("tts-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const error = $("tts-error");
+  error.hidden = true;
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const data = new FormData(form);
+    const payload = {
+      name: String(data.get("name") || "").trim(),
+      baseUrl: String(data.get("baseUrl") || "").trim(),
+      apiKey: String(data.get("apiKey") || "").trim() || undefined,
+      defaultModel: String(data.get("defaultModel") || "").trim() || undefined,
+      supportsVoiceDiscovery: true,
+      staticVoices: data.get("loadKokoroVoices") ? KOKORO_VOICES : [],
+    };
+    await api("tts/admin/providers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    form.reset();
+    form.elements.defaultModel.value = "kokoro";
+    form.elements.loadKokoroVoices.checked = true;
+    message("TTS provider saved. Open an EPUB and use Listen.");
+    await renderTtsProviders();
+  } catch (err) {
+    error.hidden = false;
+    error.textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 async function start() {
   try {
     const status = await api("setup");

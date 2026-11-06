@@ -422,11 +422,15 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
     return emptyResponse()
   }
 
-  // TTS, sessions, media-overlay playlists, EPUB info/stream — not on Shelf yet.
+  // Prefs/position stay in localStorage until SQLite TTS prefs land.
+  // Providers, voices, synthesize, admin, and chapter text hit the Shelf server.
+  const ttsLocal = await handleTtsLocal(path, method, url, init)
+  if (ttsLocal) return ttsLocal
+
+  // Sessions, media-overlay playlists, EPUB info/stream — later M10 slices.
   if (
     path.startsWith('/api/v1/fonts') ||
     path.startsWith('/api/v1/server-fonts') ||
-    path.startsWith('/api/v1/tts') ||
     path.includes('/sessions') ||
     path.includes('/media-overlay') ||
     path.startsWith('/api/v1/epub/')
@@ -438,6 +442,123 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
   }
 
   return null
+}
+
+const TTS_PREFS_KEY = 'shelf:tts:preferences'
+const TTS_BOOK_PREFS_PREFIX = 'shelf:tts:book:'
+const TTS_POS_PREFIX = 'shelf:tts:position:'
+
+async function handleTtsLocal(
+  path: string,
+  method: string,
+  _url: URL,
+  init?: RequestInit,
+): Promise<Response | null> {
+  if (!path.startsWith('/api/v1/tts')) return null
+  // Server owns providers, voices, synthesize, preview, admin, and chapter text.
+  if (
+    path.startsWith('/api/v1/tts/text/') ||
+    path === '/api/v1/tts/providers' ||
+    path.startsWith('/api/v1/tts/voices') ||
+    path === '/api/v1/tts/synthesize' ||
+    path === '/api/v1/tts/preview' ||
+    path.startsWith('/api/v1/tts/admin')
+  ) {
+    return null
+  }
+
+  if (path === '/api/v1/tts/preferences') {
+    if (method === 'GET') {
+      try {
+        const raw = localStorage.getItem(TTS_PREFS_KEY)
+        if (raw) return jsonResponse(JSON.parse(raw) as Json)
+      } catch {
+        /* ignore */
+      }
+      return jsonResponse({ providerId: null, voiceId: null, speed: 1 })
+    }
+    if (method === 'PUT') {
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, Json>) : {}
+      const next = {
+        providerId: (body.providerId as string | null | undefined) ?? null,
+        voiceId: (body.voiceId as string | null | undefined) ?? null,
+        speed: typeof body.speed === 'number' ? body.speed : 1,
+      }
+      localStorage.setItem(TTS_PREFS_KEY, JSON.stringify(next))
+      return jsonResponse(next)
+    }
+  }
+
+  const bookPrefs = path.match(/^\/api\/v1\/tts\/preferences\/book\/(\d+)$/)
+  if (bookPrefs) {
+    const key = `${TTS_BOOK_PREFS_PREFIX}${bookPrefs[1]}`
+    if (method === 'GET') {
+      try {
+        const raw = localStorage.getItem(key)
+        if (raw) return jsonResponse(JSON.parse(raw) as Json)
+      } catch {
+        /* ignore */
+      }
+      let user: { providerId?: string | null; voiceId?: string | null; speed?: number } = {
+        providerId: null,
+        voiceId: null,
+        speed: 1,
+      }
+      try {
+        const raw = localStorage.getItem(TTS_PREFS_KEY)
+        if (raw) user = JSON.parse(raw) as typeof user
+      } catch {
+        /* ignore */
+      }
+      return jsonResponse({
+        providerId: user.providerId ?? null,
+        voiceId: user.voiceId ?? null,
+        speed: user.speed ?? 1,
+        isBookOverride: false,
+      })
+    }
+    if (method === 'PUT') {
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, Json>) : {}
+      const next = {
+        providerId: (body.providerId as string | null | undefined) ?? null,
+        voiceId: (body.voiceId as string | null | undefined) ?? null,
+        speed: typeof body.speed === 'number' ? body.speed : 1,
+        isBookOverride: true,
+      }
+      localStorage.setItem(key, JSON.stringify(next))
+      return emptyResponse()
+    }
+    if (method === 'DELETE') {
+      localStorage.removeItem(key)
+      return emptyResponse()
+    }
+  }
+
+  const posMatch = path.match(/^\/api\/v1\/tts\/position\/(\d+)$/)
+  if (posMatch) {
+    const key = `${TTS_POS_PREFIX}${posMatch[1]}`
+    if (method === 'GET') {
+      try {
+        const raw = localStorage.getItem(key)
+        if (raw) return jsonResponse(JSON.parse(raw) as Json)
+      } catch {
+        /* ignore */
+      }
+      return jsonResponse(null)
+    }
+    if (method === 'PUT') {
+      const body = init?.body ? (JSON.parse(String(init.body)) as Json) : null
+      if (body) localStorage.setItem(key, JSON.stringify(body))
+      return emptyResponse()
+    }
+    if (method === 'DELETE') {
+      localStorage.removeItem(key)
+      return emptyResponse()
+    }
+  }
+
+  if (method === 'GET') return jsonResponse({})
+  return emptyResponse()
 }
 
 export async function api(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {

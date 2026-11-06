@@ -30,6 +30,9 @@
         <a href="#insights" data-view="insights"
           ><span aria-hidden="true">⌁</span> Reading insights</a
         >
+        <a href="#settings" data-view="settings"
+          ><span aria-hidden="true">⚙</span> Settings</a
+        >
       </nav>
       <div class="side-note">
         <img class="sprig" src="/ornaments/sprig.png" alt="" width="64" height="134" />
@@ -132,6 +135,55 @@
             Totals use page progress for manual books and EPUB percentage for
             imports. Session history, streaks, and annual goals are planned.
           </p>
+        </section>
+        <section id="settings-panel" class="panel" hidden>
+          <div class="section-head">
+            <h2><span>03 /</span> Text to speech</h2>
+          </div>
+          <p class="fine">
+            Listen in the EPUB reader only appears after you add an enabled
+            OpenAI-compatible provider (for example Kokoro-FastAPI at
+            <code>http://127.0.0.1:8880/v1</code>). Shelf does not ship a speech
+            engine; point this at one you run yourself.
+          </p>
+          <div id="tts-providers" class="tts-provider-list"></div>
+          <p id="tts-empty" class="fine">No TTS providers yet.</p>
+          <form id="tts-form" class="tts-form">
+            <h3>Add provider</h3>
+            <label
+              >Name<input
+                name="name"
+                required
+                maxlength="120"
+                placeholder="Kokoro"
+            /></label>
+            <label
+              >Base URL<input
+                name="baseUrl"
+                type="url"
+                required
+                maxlength="500"
+                placeholder="http://127.0.0.1:8880/v1"
+            /></label>
+            <label
+              >API key
+              <span class="fine">(optional)</span
+              ><input name="apiKey" type="password" maxlength="500" autocomplete="off"
+            /></label>
+            <label
+              >Default model<input
+                name="defaultModel"
+                maxlength="120"
+                placeholder="kokoro"
+                value="kokoro"
+            /></label>
+            <label class="check"
+              ><input name="loadKokoroVoices" type="checkbox" checked /> Load
+              Kokoro voice list</label
+            >
+            <p id="tts-error" role="alert" hidden></p>
+            <button class="primary" type="submit">Save provider</button>
+          </form>
         </section>
         <footer>
           YOUR BOOKS. YOUR SERVER. YOUR READING ROOM.<span

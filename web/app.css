@@ -516,6 +516,50 @@ progress {
   padding: 0 24px 24px;
   margin: 0;
 }
+#settings-panel {
+  padding-bottom: 28px;
+}
+#settings-panel > .fine,
+#settings-panel > .tts-form {
+  padding: 0 24px;
+}
+.tts-provider-list {
+  display: grid;
+  gap: 14px;
+  padding: 8px 24px 18px;
+}
+.tts-provider {
+  border: 1px solid var(--line, #3a4034);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.tts-provider h3 {
+  margin: 0 0 4px;
+  font: 22px var(--display);
+}
+.tts-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.tts-form {
+  display: grid;
+  gap: 12px;
+  max-width: 520px;
+  margin-top: 8px;
+}
+.tts-form h3 {
+  margin: 8px 0 0;
+  font: 22px var(--display);
+}
+.tts-form label.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  font: 14px/1.4 var(--sans);
+}
 footer {
   display: flex;
   justify-content: space-between;

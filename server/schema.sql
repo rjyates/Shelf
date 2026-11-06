@@ -67,3 +67,19 @@ CREATE TABLE IF NOT EXISTS reader_defaults (
   user_id INTEGER PRIMARY KEY REFERENCES users(id),
   settings TEXT NOT NULL
 );
+-- OpenAI-compatible TTS backends (Kokoro, LocalAI, etc.). Empty = listen UI hidden.
+CREATE TABLE IF NOT EXISTS tts_providers (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  api_key TEXT,
+  default_model TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+  display_order INTEGER NOT NULL DEFAULT 0,
+  static_voices TEXT NOT NULL DEFAULT '[]',
+  supports_voice_discovery INTEGER NOT NULL DEFAULT 1 CHECK(supports_voice_discovery IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS tts_providers_user ON tts_providers(user_id, display_order, id);
