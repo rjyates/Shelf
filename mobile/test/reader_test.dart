@@ -4,6 +4,9 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf_mobile/api.dart';
 
+const _digest =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
 void main() {
   test('reads the shared EPUB contract fixture', () {
     final book = Book.fromJson(
@@ -13,6 +16,7 @@ void main() {
     expect(book.totalPages, isNull);
     expect(book.percentage, 0.5);
     expect(book.isEpub, isTrue);
+    expect(book.digest, isNotNull);
   });
   test('EPUB entries use percentage without inventing page counts', () {
     final book = Book.fromJson({
@@ -22,6 +26,7 @@ void main() {
       'total_pages': null,
       'pages_read': 0,
       'format': 'epub',
+      'digest': _digest,
       'percentage': 0.42,
     });
     expect(book.isEpub, isTrue);
@@ -35,6 +40,7 @@ void main() {
         'total_pages': null,
         'pages_read': 0,
         'format': 'epub',
+        'digest': _digest,
         'percentage': 2,
       }),
       throwsA(isA<ShelfException>()),
@@ -52,6 +58,7 @@ void main() {
           'total_pages': null,
           'pages_read': 0,
           'format': 'epub',
+          'digest': _digest,
           'percentage': 0,
         }),
       ]),
@@ -66,6 +73,7 @@ void main() {
           'total_pages': null,
           'pages_read': 0,
           'format': 'epub',
+          'digest': _digest,
           'percentage': 0.5,
         }),
         Book.fromJson({

@@ -73,7 +73,7 @@ Storyteller’s mobile apps rebuilt on **Readium v3** for EPUB (and read-along).
 2. **Server + web CBZ** — ingest CBZ; page-count + page-image API; un-stub `cbz/` UI.
 3. **Mobile PDF** — Readium PDF adapter through Flutter; cache + open; ink page ids.
 4. **Mobile CBZ** — Readium CBZ/Divina or shared cache of page images; RTL/fit prefs.
-5. **CBR / DjVu** — only after CBZ proven (decode cost / licensing).
+5. **CBR / DjVu** — done: convert to ZIP-of-images at ingest (`rars` + MIT `djvu-rs`); keep `cbr`/`djvu` format labels; reuse CBZ page API + Readium CBZ download.
 
 ## Do not reinvent
 

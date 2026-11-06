@@ -11,6 +11,7 @@ import 'connectivity.dart';
 import 'display_profile.dart';
 import 'eink_reader.dart';
 import 'epub_store.dart';
+import 'session_store.dart';
 import 'sync_outbox.dart';
 
 void main() => runApp(const ShelfApp());
@@ -318,14 +319,100 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final _username = TextEditingController();
   final _password = TextEditingController();
   final _form = GlobalKey<FormState>();
+  final _sessions = SessionStore();
   bool _busy = false;
+  bool _restoring = true;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _bootstrap();
+  }
+
   @override
   void dispose() {
     _server.dispose();
     _username.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+  Future<void> _bootstrap() async {
+    final remembered = await _sessions.rememberedFields();
+    if (remembered.server != null) {
+      _server.text = remembered.server!;
+    }
+    if (remembered.username != null) {
+      _username.text = remembered.username!;
+    }
+    final saved = await _sessions.load();
+    if (!mounted) {
+      return;
+    }
+    if (saved == null) {
+      setState(() => _restoring = false);
+      return;
+    }
+    _server.text = saved.server.toString();
+    _username.text = saved.username;
+    ShelfApi? api;
+    try {
+      api = ShelfApi(saved.server)..restoreSession(saved.token);
+      try {
+        await api.books();
+      } on ShelfException catch (error) {
+        if (error.statusCode == 401) {
+          api.close();
+          await _sessions.clearToken();
+          if (mounted) {
+            setState(() {
+              _restoring = false;
+              _error = 'Your saved session expired. Sign in again.';
+            });
+          }
+          return;
+        }
+        // Keep the token when the server is unreachable; library works offline.
+      }
+      if (!mounted) {
+        api.close();
+        return;
+      }
+      await _openLibrary(api);
+    } catch (_) {
+      api?.close();
+    }
+    if (mounted) {
+      setState(() => _restoring = false);
+    }
+  }
+
+  Future<void> _openLibrary(ShelfApi api) async {
+    final offlineRoot = Directory(
+      '${(await getApplicationDocumentsDirectory()).path}/shelf_offline',
+    );
+    await offlineRoot.create(recursive: true);
+    if (!mounted) {
+      api.close();
+      return;
+    }
+    final revoked = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => LibraryScreen(
+          api: api,
+          profile: widget.profile,
+          onProfileChanged: widget.onProfileChanged,
+          outbox: SyncOutbox(offlineRoot),
+          epubs: EpubStore(offlineRoot),
+        ),
+      ),
+    );
+    if (mounted && revoked == false) {
+      setState(
+        () => _error = 'Signed out on this phone. Other server sessions could not be revoked.',
+      );
+    }
   }
 
   Future<void> _connect() async {
@@ -338,37 +425,23 @@ class _ConnectScreenState extends State<ConnectScreen> {
     });
     ShelfApi? api;
     try {
-      api = ShelfApi(Uri.parse(_server.text.trim()));
-      await api.login(_username.text.trim(), _password.text);
+      final server = Uri.parse(_server.text.trim());
+      final username = _username.text.trim();
+      api = ShelfApi(server);
+      await api.login(username, _password.text);
       _password.clear();
+      final token = api.sessionToken;
+      if (token == null) {
+        throw ShelfException('Server did not return a session.');
+      }
+      await _sessions.save(
+        SavedSession(server: server, username: username, token: token),
+      );
       if (!mounted) {
         api.close();
         return;
       }
-      final offlineRoot = Directory(
-        '${(await getApplicationDocumentsDirectory()).path}/shelf_offline',
-      );
-      await offlineRoot.create(recursive: true);
-      if (!mounted) {
-        api.close();
-        return;
-      }
-      final revoked = await Navigator.of(context).push<bool>(
-        MaterialPageRoute<bool>(
-          builder: (_) => LibraryScreen(
-            api: api!,
-            profile: widget.profile,
-            onProfileChanged: widget.onProfileChanged,
-            outbox: SyncOutbox(offlineRoot),
-            epubs: EpubStore(offlineRoot),
-          ),
-        ),
-      );
-      if (mounted && revoked == false) {
-        setState(
-          () => _error = 'Signed out on this phone. Other server sessions could not be revoked.',
-        );
-      }
+      await _openLibrary(api);
     } catch (error) {
       api?.close();
       if (mounted) {
@@ -387,6 +460,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_restoring) {
+      return const Scaffold(
+        body: SafeArea(child: Center(child: Text('Opening your library…'))),
+      );
+    }
     final wide = MediaQuery.sizeOf(context).width >= 700;
     return Scaffold(
       body: SafeArea(
@@ -479,11 +557,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       ),
                       child: const Text('Display settings'),
                     ),
-                    const SizedBox(height: 24),
-                    Text(
-                      'Your session stays in memory. Signing in again is required after closing the app.',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
                   ],
                 ),
               ),
@@ -519,6 +592,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String? _error;
   late DisplayProfile _profile = widget.profile;
   final Set<int> _savedOffline = {};
+
+  /// Book id while Read is downloading/opening — e-ink needs instant tap feedback.
+  int? _openingBookId;
+  final ValueNotifier<String> _openingLabel = ValueNotifier('Opening…');
   StreamSubscription<List<ConnectivityResult>>? _connectivity;
 
   @override
@@ -538,6 +615,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void dispose() {
     _connectivity?.cancel();
+    _openingLabel.dispose();
     widget.api.close();
     super.dispose();
   }
@@ -547,7 +625,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (store == null) return {};
     final saved = <int>{};
     for (final book in books) {
-      if (book.isEpub && await store.has(book.id)) saved.add(book.id);
+      if (!book.opensInReader) continue;
+      final ext = EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
+      if (await store.has(book.id, extension: ext, digest: book.digest)) {
+        saved.add(book.id);
+      }
     }
     return saved;
   }
@@ -589,16 +671,170 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
-  Future<void> _saveOffline(Book book) async {
+  String? _localExtension(Book book) {
+    if (!book.opensInReader) return null;
+    return EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
+  }
+
+  Future<void> _removeLocalCopy(Book book) async {
     final store = widget.epubs;
-    if (store == null || !book.isEpub) return;
+    final ext = _localExtension(book);
+    if (store == null || ext == null) return;
     try {
-      await store.save(book.id, await widget.api.downloadEpub(book.id));
+      await store.remove(book.id, extension: ext, digest: book.digest);
       if (mounted) {
-        setState(() => _savedOffline.add(book.id));
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Saved for offline use.')));
+        setState(() => _savedOffline.remove(book.id));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Removed from this device.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  Future<void> _manage(Book book) async {
+    final hasLocal = _savedOffline.contains(book.id);
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Manage book'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(book.title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            Text(switch (book.readingStatus) {
+              'finished' => 'This book is marked finished.',
+              'unfinished' => 'Marked unfinished — not counting as a re-read.',
+              'rereading' => 'Marked as re-reading.',
+              _ => 'Catalogue tools for this book.',
+            }, style: Theme.of(context).textTheme.bodyMedium),
+            if (!book.isFinished) ...[
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Mark as finished'),
+                subtitle: const Text('Sets progress to 100%'),
+                onTap: () => Navigator.pop(context, 'finish'),
+              ),
+            ] else ...[
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Mark as unfinished'),
+                subtitle: const Text('Closed without a re-read'),
+                onTap: () => Navigator.pop(context, 'unfinished'),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Mark as re-reading'),
+                subtitle: const Text('Reopens for another pass'),
+                onTap: () => Navigator.pop(context, 'rereading'),
+              ),
+            ],
+            if (hasLocal) ...[
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Remove from this device'),
+                subtitle: const Text(
+                  'Frees local storage; the library copy stays on the server',
+                ),
+                onTap: () => Navigator.pop(context, 'remove-local'),
+              ),
+            ],
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Remove from library'),
+              subtitle: const Text('Deletes the server copy permanently'),
+              onTap: () => Navigator.pop(context, 'remove'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'remove-local') {
+      await _removeLocalCopy(book);
+      return;
+    }
+    if (action == 'finish' || action == 'unfinished' || action == 'rereading') {
+      try {
+        switch (action) {
+          case 'finish':
+            await widget.api.markFinished(book.id);
+          case 'unfinished':
+            await widget.api.markUnfinished(book.id);
+          case 'rereading':
+            await widget.api.markRereading(book.id);
+        }
+        await _refresh();
+        if (mounted) {
+          final label = switch (action) {
+            'finish' => 'Marked as finished.',
+            'unfinished' => 'Marked as unfinished.',
+            _ => 'Marked as re-reading.',
+          };
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(label)));
+        }
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+        }
+      }
+      return;
+    }
+    if (action != 'remove') return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove this book?'),
+        content: Text(
+          '${book.title} will be deleted from your library, including the '
+          'stored file, reading position, bookmarks, and annotations. '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove permanently'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.api.deleteBook(book.id);
+      final ext = _localExtension(book);
+      if (ext != null) {
+        await widget.epubs?.remove(
+          book.id,
+          extension: ext,
+          digest: book.digest,
+        );
+      }
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Book removed.')));
       }
     } catch (error) {
       if (mounted) {
@@ -620,7 +856,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       );
       if (file == null) return;
-      final duplicate = await widget.api.importEpub(await file.readAsBytes());
+      final duplicate = await widget.api.importEpub(
+        await file.readAsBytes(),
+        filename: file.name,
+      );
       await _refresh();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -640,46 +879,111 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _read(Book book) async {
     final epubs = widget.epubs;
-    if (epubs == null) return;
-    final online = connectivityLooksOnline(
-      await Connectivity().checkConnectivity(),
-    );
-    var cached = await epubs.has(book.id);
-    if (!cached) {
-      if (!online) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Save offline first to read without a connection.'),
+    if (epubs == null || !book.opensInReader) return;
+    if (_openingBookId != null) return;
+    // Paint tap feedback before any await — e-ink refresh is slow enough that
+    // a delayed spinner looks like a missed tap.
+    _openingLabel.value = 'Opening…';
+    setState(() => _openingBookId = book.id);
+    var prepareDialogOpen = true;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) {
+          return PopScope(
+            canPop: false,
+            child: AlertDialog(
+              content: ValueListenableBuilder<String>(
+                valueListenable: _openingLabel,
+                builder: (_, label, _) => Text(label),
+              ),
             ),
           );
-        }
-        return;
-      }
-      try {
-        await epubs.save(book.id, await widget.api.downloadEpub(book.id));
-        cached = true;
-        if (mounted) setState(() => _savedOffline.add(book.id));
-      } catch (error) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(error.toString())));
-        }
-        return;
-      }
-    }
-    if (!mounted || !cached) return;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => EinkReaderScreen(
-          api: widget.api,
-          book: book,
-          epubs: epubs,
-          outbox: widget.outbox,
-        ),
+        },
       ),
     );
-    await _refresh();
+    // Let the dialog route mount on this frame before cache/download work.
+    await Future<void>.delayed(Duration.zero);
+    void closePrepareDialog() {
+      if (!prepareDialogOpen || !mounted) return;
+      prepareDialogOpen = false;
+      final nav = Navigator.of(context, rootNavigator: true);
+      if (nav.canPop()) nav.pop();
+    }
+
+    try {
+      final online = connectivityLooksOnline(
+        await Connectivity().checkConnectivity(),
+      );
+      final ext = EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
+      var cached = await epubs.has(
+        book.id,
+        extension: ext,
+        digest: book.digest,
+      );
+      if (!cached) {
+        if (!online) {
+          closePrepareDialog();
+          if (mounted) {
+            setState(() => _openingBookId = null);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Save offline first to read without a connection.',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        _openingLabel.value = 'Downloading…';
+        try {
+          await epubs.save(
+            book.id,
+            await widget.api.downloadEpub(book.id),
+            extension: ext,
+            digest: book.digest,
+          );
+          cached = true;
+          if (mounted) setState(() => _savedOffline.add(book.id));
+        } catch (error) {
+          closePrepareDialog();
+          if (mounted) {
+            setState(() => _openingBookId = null);
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(error.toString())));
+          }
+          return;
+        }
+      }
+      if (!mounted || !cached) {
+        closePrepareDialog();
+        if (mounted) setState(() => _openingBookId = null);
+        return;
+      }
+      _openingLabel.value = 'Opening…';
+      closePrepareDialog();
+      if (mounted) setState(() => _openingBookId = null);
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => EinkReaderScreen(
+            api: widget.api,
+            book: book,
+            epubs: epubs,
+            outbox: widget.outbox,
+          ),
+        ),
+      );
+      await _refresh();
+    } catch (error) {
+      closePrepareDialog();
+      if (mounted) {
+        setState(() => _openingBookId = null);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
   }
 
   Future<void> _record(Book book) async {
@@ -722,6 +1026,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } catch (_) {
       revoked = false;
     }
+    await SessionStore().clearToken();
     if (mounted) {
       Navigator.pop(context, revoked);
     }
@@ -829,10 +1134,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       book: book,
                       wide: wide,
                       savedOffline: _savedOffline.contains(book.id),
-                      onOpen: () => book.isEpub ? _read(book) : _record(book),
-                      onSaveOffline: book.isEpub && widget.epubs != null
-                          ? () => _saveOffline(book)
-                          : null,
+                      opening: _openingBookId == book.id,
+                      openBusy: _openingBookId != null,
+                      onOpen: () {
+                        if (book.opensInReader) {
+                          _read(book);
+                        } else {
+                          _record(book);
+                        }
+                      },
+                      onManage: () => _manage(book),
                     ),
                 ],
               ),
@@ -851,24 +1162,49 @@ class _BookTile extends StatelessWidget {
     required this.wide,
     required this.savedOffline,
     required this.onOpen,
-    this.onSaveOffline,
+    required this.onManage,
+    this.opening = false,
+    this.openBusy = false,
   });
   final ShelfApi api;
   final Book book;
   final bool wide;
   final bool savedOffline;
+  final bool opening;
+  final bool openBusy;
   final VoidCallback onOpen;
-  final VoidCallback? onSaveOffline;
+  final VoidCallback onManage;
 
   @override
   Widget build(BuildContext context) {
-    final progress = book.isEpub
+    final progress = book.isImported
         ? book.percentage
         : book.pagesRead / book.totalPages!;
-    final progressLabel = book.isEpub
-        ? '${(book.percentage * 100).round()}% read · EPUB'
+    final formatLabel = switch (book.format) {
+      'pdf' => 'PDF',
+      'cbz' => 'CBZ',
+      'cbr' => 'CBR',
+      'cb7' => 'CB7',
+      'djvu' => 'DjVu',
+      'epub' => 'EPUB',
+      _ =>
+        book.isPdf
+            ? 'PDF'
+            : book.isCbz
+            ? 'CBZ'
+            : book.isEpub
+            ? 'EPUB'
+            : null,
+    };
+    final progressLabel = formatLabel != null
+        ? '${(book.percentage * 100).round()}% read · $formatLabel'
         : '${book.pagesRead} / ${book.totalPages} pages';
-    final action = book.isEpub ? 'Read book' : 'Record progress';
+    final action = opening
+        ? 'Opening…'
+        : book.opensInReader
+        ? 'Read book'
+        : 'Record progress';
+    final showLocalIcon = book.opensInReader;
     final cover = book.hasCover
         ? Image.network(
             api.base.resolve('/api/v1/books/${book.id}/cover').toString(),
@@ -884,7 +1220,24 @@ class _BookTile extends StatelessWidget {
     final textBlock = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(book.title, style: Theme.of(context).textTheme.headlineSmall),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                book.title,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+            ),
+            if (showLocalIcon) ...[
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: _LocalCopyIcon(downloaded: savedOffline),
+              ),
+            ],
+          ],
+        ),
         const SizedBox(height: 6),
         Text(
           book.author.isEmpty ? 'Author not recorded' : book.author,
@@ -892,7 +1245,7 @@ class _BookTile extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         Semantics(
-          label: book.isEpub
+          label: book.isImported
               ? '${book.title}: ${(book.percentage * 100).round()}% read'
               : '${book.title}: ${book.pagesRead} of ${book.totalPages} pages',
           child: Column(
@@ -926,18 +1279,19 @@ class _BookTile extends StatelessWidget {
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
-          child: FilledButton(onPressed: onOpen, child: Text(action)),
-        ),
-        if (onSaveOffline != null) ...[
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: savedOffline ? null : onSaveOffline,
-              child: Text(savedOffline ? 'Saved offline' : 'Save offline'),
-            ),
+          child: FilledButton(
+            onPressed: openBusy && !opening ? null : (opening ? null : onOpen),
+            child: Text(action),
           ),
-        ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: onManage,
+            child: const Text('Manage book'),
+          ),
+        ),
       ],
     );
 
@@ -978,6 +1332,101 @@ class _BookTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// High-contrast local-copy badge for e-ink (no mid-grays / soft fills).
+/// Downloaded: filled tray + check. Not downloaded: outline tray + down arrow.
+class _LocalCopyIcon extends StatelessWidget {
+  const _LocalCopyIcon({required this.downloaded});
+  final bool downloaded;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = downloaded
+        ? 'Downloaded on this device'
+        : 'Not downloaded — Read book will download it';
+    return Semantics(
+      label: label,
+      child: Tooltip(
+        message: label,
+        child: CustomPaint(
+          size: const Size(28, 28),
+          painter: _LocalCopyIconPainter(downloaded: downloaded),
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalCopyIconPainter extends CustomPainter {
+  _LocalCopyIconPainter({required this.downloaded});
+  final bool downloaded;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stroke = Paint()
+      ..color = ink
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.square
+      ..strokeJoin = StrokeJoin.miter;
+    final fill = Paint()
+      ..color = ink
+      ..style = PaintingStyle.fill;
+
+    final w = size.width;
+    final h = size.height;
+    // Device tray (bottom).
+    final tray = Path()
+      ..moveTo(w * 0.18, h * 0.62)
+      ..lineTo(w * 0.18, h * 0.82)
+      ..lineTo(w * 0.82, h * 0.82)
+      ..lineTo(w * 0.82, h * 0.62);
+    canvas.drawPath(tray, stroke);
+    canvas.drawLine(
+      Offset(w * 0.12, h * 0.62),
+      Offset(w * 0.88, h * 0.62),
+      stroke,
+    );
+
+    if (downloaded) {
+      // Filled mark: heavy check.
+      final check = Path()
+        ..moveTo(w * 0.28, h * 0.38)
+        ..lineTo(w * 0.42, h * 0.52)
+        ..lineTo(w * 0.72, h * 0.22);
+      canvas.drawPath(
+        check,
+        Paint()
+          ..color = ink
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.square
+          ..strokeJoin = StrokeJoin.miter,
+      );
+      // Solid corner tick so the “on device” state reads even when dithered.
+      canvas.drawRect(
+        Rect.fromLTWH(w * 0.70, h * 0.68, w * 0.12, h * 0.12),
+        fill,
+      );
+    } else {
+      // Down arrow into the tray.
+      canvas.drawLine(
+        Offset(w * 0.5, h * 0.18),
+        Offset(w * 0.5, h * 0.48),
+        stroke,
+      );
+      final head = Path()
+        ..moveTo(w * 0.34, h * 0.38)
+        ..lineTo(w * 0.5, h * 0.52)
+        ..lineTo(w * 0.66, h * 0.38);
+      canvas.drawPath(head, stroke);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _LocalCopyIconPainter oldDelegate) =>
+      oldDelegate.downloaded != downloaded;
 }
 
 class ProgressDialog extends StatefulWidget {

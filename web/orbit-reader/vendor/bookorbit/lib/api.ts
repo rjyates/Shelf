@@ -219,36 +219,60 @@ type ShelfBookRow = {
   position?: string | null
   has_cover?: boolean
   epub?: {
+    format?: string
     percentage?: number | null
     position?: string | null
     has_cover?: boolean
   } | null
 }
 
-/** Resolve EPUB progress/cover from a Shelf book row (flat or nested). */
+/** Resolve imported-file progress/cover from a Shelf book row (flat or nested). */
 export function shelfEpubFields(book: ShelfBookRow): {
+  format: 'epub' | 'pdf' | 'cbz' | 'cbr' | 'cb7' | 'djvu'
   percentage: number
   position: string | null
   has_cover: boolean
 } | null {
   const nested = book.epub
-  const isEpub =
+  const raw = book.format ?? nested?.format
+  const format =
+    raw === 'pdf' || raw === 'cbz' || raw === 'cbr' || raw === 'cb7' || raw === 'djvu'
+      ? raw
+      : 'epub'
+  const isImported =
     book.format === 'epub' ||
+    book.format === 'pdf' ||
+    book.format === 'cbz' ||
+    book.format === 'cbr' ||
+    book.format === 'cb7' ||
+    book.format === 'djvu' ||
     nested != null ||
     typeof book.percentage === 'number' ||
     typeof book.position === 'string' ||
     book.has_cover === true
-  if (!isEpub) return null
+  if (!isImported) return null
   return {
+    format,
     percentage: nested?.percentage ?? book.percentage ?? 0,
     position: nested?.position ?? book.position ?? null,
     has_cover: nested?.has_cover ?? book.has_cover === true,
   }
 }
 
+function parseFixedPage(position: string | null): number | null {
+  if (!position?.endsWith(')')) return null
+  for (const prefix of ['pdfpage(', 'cbzpage('] as const) {
+    if (!position.startsWith(prefix)) continue
+    const n = Number.parseInt(position.slice(prefix.length, -1), 10)
+    if (Number.isFinite(n) && n >= 1) return n
+  }
+  return null
+}
+
 /** Map Shelf catalogue rows into the Book Orbit BookDetail fields the reader reads. */
 function shelfBookToDetail(book: ShelfBookRow & { title: string; author: string }): Json {
-  const epub = shelfEpubFields(book)
+  const imported = shelfEpubFields(book)
+  const format = imported?.format ?? 'epub'
   return {
     id: book.id,
     title: book.title,
@@ -256,12 +280,12 @@ function shelfBookToDetail(book: ShelfBookRow & { title: string; author: string 
     files: [
       {
         id: book.id,
-        format: 'epub',
+        format,
         size: 0,
       },
     ],
-    coverVersion: epub?.has_cover ? 1 : null,
-    coverSource: epub?.has_cover ? 'embedded' : null,
+    coverVersion: imported?.has_cover ? 1 : null,
+    coverSource: imported?.has_cover ? 'embedded' : null,
   }
 }
 
@@ -307,10 +331,11 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
     if (!list.ok) return list
     const books = (await list.json()) as ShelfBookRow[]
     const book = books.find((item) => item.id === fileId)
-    const epub = book ? shelfEpubFields(book) : null
-    if (!epub) return jsonResponse({ items: [] })
+    const imported = book ? shelfEpubFields(book) : null
+    if (!imported) return jsonResponse({ items: [] })
     // Book Orbit UI uses 0–100; Shelf stores 0–1.
-    const shelfPct = epub.percentage ?? 0
+    const shelfPct = imported.percentage ?? 0
+    const fixedPage = parseFixedPage(imported.position)
     return jsonResponse({
       items: [
         {
@@ -318,8 +343,8 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
           percentage: shelfPct <= 1 ? shelfPct * 100 : shelfPct,
           updatedAt: null,
           text: {
-            cfi: epub.position ?? null,
-            page: null,
+            cfi: fixedPage == null ? imported.position : null,
+            page: fixedPage,
             updatedAt: null,
           },
           narration: null,
@@ -332,15 +357,38 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
 
   if (path === '/api/v1/reading-progress' && method === 'PUT') {
     const body = init?.body ? (JSON.parse(String(init.body)) as {
-      writes?: Array<{ fileId: number; percentage?: number; text?: { cfi?: string | null } }>
+      writes?: Array<{
+        fileId: number
+        percentage?: number
+        text?: { cfi?: string | null; page?: number | null }
+      }>
     }) : {}
     const write = body.writes?.[0]
     if (!write?.fileId) return jsonResponse({ error: 'Missing write' }, 400)
-    const position = write.text?.cfi
+    const cfi = write.text?.cfi
+    const page = typeof write.text?.page === 'number' && write.text.page >= 1 ? write.text.page : null
+    let pageToken = 'pdfpage'
+    if (page != null) {
+      const list = await fetch('/api/v1/books', { credentials: 'same-origin' })
+      if (list.ok) {
+        const books = (await list.json()) as ShelfBookRow[]
+        const book = books.find((item) => item.id === write.fileId)
+        const comic = shelfEpubFields(book ?? { id: 0 })?.format
+        if (comic === 'cbz' || comic === 'cbr' || comic === 'cb7' || comic === 'djvu') {
+          pageToken = 'cbzpage'
+        }
+      }
+    }
+    const position =
+      typeof cfi === 'string' && cfi.startsWith('epubcfi(')
+        ? cfi
+        : page != null
+          ? `${pageToken}(${Math.floor(page)})`
+          : null
     const rawPct = typeof write.percentage === 'number' ? write.percentage : 0
     // Book Orbit posts 0–100; Shelf POST /location requires 0..=1.
     const percentage = Math.min(1, Math.max(0, rawPct > 1 ? rawPct / 100 : rawPct))
-    if (!position || !position.startsWith('epubcfi(')) return emptyResponse()
+    if (!position) return emptyResponse()
     const locationBody = { position, percentage }
     try {
       const res = await fetch(`/api/v1/books/${write.fileId}/location`, {

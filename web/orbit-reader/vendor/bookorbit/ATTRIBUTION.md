@@ -1,8 +1,8 @@
 # Book Orbit reader sources
 
 This tree is derived from [Book Orbit](https://github.com/bookorbit/bookorbit)
-(`client/src/features/reader`, Foliate assets, shared reader UI, and supporting
-modules required to mount the EPUB reader).
+(`client/src/features/reader` including `pdf-v4`, `cbz`, Foliate assets, shared
+reader UI, and supporting modules required to mount the EPUB, PDF, and CBZ readers).
 
 Book Orbit is licensed under the GNU Affero General Public License v3.0 only.
 Shelf is also AGPL-3.0-only. Retain this notice in copies and substantial

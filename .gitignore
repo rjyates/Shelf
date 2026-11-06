@@ -22,3 +22,5 @@ mobile/device-test.env
 .DS_Store
 artifacts/
 release-out/
+# Local upload fixtures (see samples/README.md); keep binaries out of git.
+samples/*.cbz

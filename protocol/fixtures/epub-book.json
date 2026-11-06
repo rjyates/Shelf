@@ -4,7 +4,9 @@
   "author": "Shelf tests",
   "total_pages": null,
   "pages_read": 0,
+  "reading_status": "open",
   "format": "epub",
+  "digest": "78281b690a36ca417e74f2566dba16e67684a8d29188d1cbbbb42769d7245f3d",
   "percentage": 0.5,
   "position": "epubcfi(/6/2!/4/2)",
   "has_cover": false

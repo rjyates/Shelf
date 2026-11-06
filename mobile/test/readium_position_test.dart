@@ -28,6 +28,126 @@ void main() {
     expect(shelfPercentageFromLocator(locator), 0.4);
   });
 
+  test('PDF locators persist as pdfpage(N) for web interop', () {
+    final locator = Locator(
+      href: '/doc.pdf',
+      type: 'application/pdf',
+      locations: Locations(position: 3, totalProgression: 0.5),
+    );
+    expect(
+      shelfPositionFromLocator(locator, paged: ShelfPagedFormat.pdf),
+      'pdfpage(3)',
+    );
+    expect(pageFromShelfPosition('pdfpage(3)', ShelfPagedFormat.pdf), 3);
+    final pub = Publication(
+      metadata: Metadata(
+        localizedTitle: LocalizedString.fromString('t'),
+        numberOfPages: 12,
+      ),
+      // Real PDFs are one reading-order resource; position is the page number.
+      readingOrder: [Link(href: '/doc.pdf', type: 'application/pdf')],
+    );
+    final restored = restoreReadiumLocator(
+      publication: pub,
+      position: 'pdfpage(6)',
+      percentage: 0.5,
+    );
+    expect(restored?.locations?.position, 6);
+    expect(restored?.href, '/doc.pdf');
+    expect(restored?.locations?.totalProgression, 0.5);
+    expect(
+      shelfPercentageFromLocator(
+        Locator(
+          href: '/doc.pdf',
+          type: 'application/pdf',
+          locations: Locations(position: 6),
+        ),
+        paged: ShelfPagedFormat.pdf,
+        pageCount: 12,
+      ),
+      0.5,
+    );
+  });
+
+  test('CBZ locators persist as cbzpage(N) via reading-order index', () {
+    final pub = Publication(
+      metadata: Metadata(localizedTitle: LocalizedString.fromString('t')),
+      readingOrder: [
+        for (var i = 1; i <= 4; i++)
+          Link(href: '/page$i.png', type: 'image/png'),
+      ],
+    );
+    final locator = Locator(
+      href: '/page3.png',
+      type: 'image/png',
+      locations: Locations(),
+    );
+    expect(
+      shelfPositionFromLocator(
+        locator,
+        paged: ShelfPagedFormat.cbz,
+        publication: pub,
+      ),
+      'cbzpage(3)',
+    );
+    final restored = restoreReadiumLocator(
+      publication: pub,
+      position: 'cbzpage(3)',
+      percentage: 0.75,
+    );
+    expect(restored?.href, '/page3.png');
+    expect(restored?.locations?.position, 3);
+    expect(
+      shelfPercentageFromLocator(
+        restored!,
+        paged: ShelfPagedFormat.cbz,
+        publication: pub,
+      ),
+      0.75,
+    );
+  });
+
+  test('reader progress label matches web page · percent style', () {
+    expect(
+      readerProgressLabel(
+        paged: ShelfPagedFormat.pdf,
+        locator: Locator(
+          href: '/doc.pdf',
+          type: 'application/pdf',
+          locations: Locations(position: 6),
+        ),
+        bookPercentage: 0,
+        pageCount: 12,
+      ),
+      'Page 6 of 12 · 50%',
+    );
+    expect(
+      readerProgressLabel(
+        paged: null,
+        locator: Locator(
+          href: '/a.xhtml',
+          type: 'application/xhtml+xml',
+          locations: Locations(totalProgression: 0.42),
+        ),
+        bookPercentage: 0.1,
+      ),
+      '42%',
+    );
+  });
+
+  test('PDF page= fragments encode as pdfpage(N)', () {
+    final locator = Locator(
+      href: '/doc.pdf',
+      type: 'application/pdf',
+      locations: Locations(fragments: ['page=6']),
+    );
+    expect(
+      shelfPositionFromLocator(locator, paged: ShelfPagedFormat.pdf),
+      'pdfpage(6)',
+    );
+    expect(pageFromLocator(locator), 6);
+  });
+
   test('prefers an existing epubcfi fragment', () {
     final locator = Locator(
       href: '/OPS/chapter.xhtml',

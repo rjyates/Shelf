@@ -83,10 +83,63 @@ impl AppState {
     }
 }
 
+/// SQLite cannot ALTER a CHECK; rebuild epub_files when comic formats are missing.
+fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
+    let sql: String = db.query_row(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='epub_files'",
+        [],
+        |r| r.get(0),
+    )?;
+    if sql.contains("'cb7'") {
+        let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source BLOB");
+        return Ok(());
+    }
+    db.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+         BEGIN;
+         CREATE TABLE epub_files_new (
+           book_id INTEGER PRIMARY KEY REFERENCES books(id),
+           digest TEXT NOT NULL,
+           content BLOB NOT NULL,
+           cover BLOB,
+           cover_mime TEXT,
+           position TEXT,
+           percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
+           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu')),
+           source BLOB
+         );
+         INSERT INTO epub_files_new
+           (book_id,digest,content,cover,cover_mime,position,percentage,format)
+           SELECT book_id,digest,content,cover,cover_mime,position,percentage,format
+           FROM epub_files;
+         DROP TABLE epub_files;
+         ALTER TABLE epub_files_new RENAME TO epub_files;
+         CREATE INDEX IF NOT EXISTS epub_digest ON epub_files(digest);
+         COMMIT;
+         PRAGMA foreign_keys=ON;",
+    )?;
+    Ok(())
+}
+
 pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let db = Connection::open(&database)?;
     db.pragma_update(None, "journal_mode", "WAL")?;
     db.execute_batch(include_str!("../schema.sql"))?;
+    // Existing libraries created before PDF / reading-status support lack these columns.
+    let _ =
+        db.execute_batch("ALTER TABLE epub_files ADD COLUMN format TEXT NOT NULL DEFAULT 'epub'");
+    let _ = db.execute_batch("ALTER TABLE annotations ADD COLUMN pdf TEXT");
+    let _ = db
+        .execute_batch("ALTER TABLE books ADD COLUMN reading_status TEXT NOT NULL DEFAULT 'open'");
+    // Backfill finished from progress for libraries that only had % / pages.
+    let _ = db.execute_batch(
+        "UPDATE books SET reading_status='finished'
+         WHERE reading_status='open' AND (
+           pages_read=total_pages
+           OR id IN (SELECT book_id FROM epub_files WHERE percentage=1)
+         )",
+    );
+    migrate_epub_files_formats(&db)?;
     Ok(Router::new()
         .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
         .route("/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/app.css")) }))
@@ -106,10 +159,22 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/login", post(login))
         .route("/api/v1/logout", post(logout))
         .route("/api/v1/books", get(books).post(add_book))
+        .route("/api/v1/books/{id}", axum::routing::delete(epub::delete_book))
         .route("/api/v1/books/{id}/progress", post(update_progress))
+        .route("/api/v1/books/{id}/finished", post(mark_finished))
+        .route("/api/v1/books/{id}/unfinished", post(mark_unfinished))
+        .route("/api/v1/books/{id}/rereading", post(mark_rereading))
         .route("/api/v1/books/import", post(epub::import).layer(DefaultBodyLimit::disable()))
         .route("/api/v1/books/{id}/file", get(epub::file))
+        .route("/api/v1/books/{id}/source", get(epub::source_file))
         .route("/api/v1/books/{id}/cover", get(epub::cover))
+        .route("/api/v1/books/{id}/pages", get(epub::comic_page_count))
+        .route("/api/v1/books/{id}/pages/{page}", get(epub::comic_page))
+        // Book Orbit DjVu text sheet path.
+        .route(
+            "/api/v1/djvu/files/{id}/pages/{page}/text",
+            get(epub::djvu_page_text),
+        )
         .route("/api/v1/books/{id}/location", post(epub::location))
         .route(
             "/api/v1/books/{id}/bookmarks",
@@ -226,6 +291,12 @@ async fn setup(
         .await
 }
 
+/// Sliding idle window renewed on every authenticated request. Active clients stay
+/// signed in; idle clients must sign in again after this period.
+const SESSION_IDLE_SECS: i64 = 30 * 24 * 60 * 60;
+/// Browser cookie lifetime (Chrome caps ~400d). Server idle sliding is authoritative.
+const SESSION_COOKIE_MAX_AGE: i64 = 400 * 24 * 60 * 60;
+
 fn token_hash(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
 }
@@ -245,16 +316,23 @@ fn authenticate(db: &Connection, headers: &HeaderMap) -> ApiResult<i64> {
     let token = bearer
         .or(cookie)
         .ok_or(ApiError(StatusCode::UNAUTHORIZED, "Please sign in."))?;
-    db.query_row(
-        "SELECT user_id FROM sessions WHERE token_hash=? AND expires_at > unixepoch()",
-        [token_hash(token)],
-        |r| r.get(0),
-    )
-    .optional()?
-    .ok_or(ApiError(
-        StatusCode::UNAUTHORIZED,
-        "Your session has expired. Please sign in.",
-    ))
+    let hash = token_hash(token);
+    let user_id: i64 = db
+        .query_row(
+            "SELECT user_id FROM sessions WHERE token_hash=? AND expires_at > unixepoch()",
+            [&hash],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(ApiError(
+            StatusCode::UNAUTHORIZED,
+            "Your session has expired. Please sign in.",
+        ))?;
+    db.execute(
+        "UPDATE sessions SET expires_at = unixepoch() + ?1 WHERE token_hash = ?2",
+        params![SESSION_IDLE_SECS, hash],
+    )?;
+    Ok(user_id)
 }
 
 async fn login(
@@ -278,9 +356,14 @@ async fn login(
         let mut bytes = [0u8; 32]; OsRng.fill_bytes(&mut bytes);
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         db.execute("DELETE FROM sessions WHERE expires_at <= unixepoch()", [])?;
-        db.execute("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,unixepoch()+604800)", params![token_hash(&token), record.unwrap().0])?;
+        db.execute(
+            "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,unixepoch()+?)",
+            params![token_hash(&token), record.unwrap().0, SESSION_IDLE_SECS],
+        )?;
         let secure = if std::env::var("SHELF_SECURE_COOKIE").as_deref() == Ok("true") { "; Secure" } else { "" };
-        let cookie = format!("shelf_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800{secure}");
+        let cookie = format!(
+            "shelf_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE}{secure}"
+        );
         Ok(([(header::SET_COOKIE, cookie), (header::CACHE_CONTROL, "no-store".into())], Json(serde_json::json!({"token":token}))).into_response())
     }).await
 }
@@ -310,12 +393,15 @@ struct Book {
     author: String,
     total_pages: Option<i64>,
     pages_read: i64,
+    reading_status: String,
     #[serde(flatten)]
     epub: Option<EpubInfo>,
 }
 #[derive(Serialize)]
 struct EpubInfo {
     format: &'static str,
+    /// SHA-256 of the uploaded bytes (hex). Clients key offline caches on this.
+    digest: String,
     percentage: f64,
     position: Option<String>,
     has_cover: bool,
@@ -331,8 +417,38 @@ struct NewBook {
 async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Vec<Book>>> {
     state.db(move |db| {
         let user = authenticate(db, &headers)?;
-        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,f.book_id,f.percentage,f.position,f.cover IS NOT NULL FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
-        let books = query.query_map([user], |r| Ok(Book { id:r.get(0)?,title:r.get(1)?,author:r.get(2)?,total_pages:r.get(3)?,pages_read:r.get(4)?, epub: if r.get::<_,Option<i64>>(5)?.is_some() {Some(EpubInfo {format:"epub",percentage:r.get(6)?,position:r.get(7)?,has_cover:r.get(8)?})} else {None} }))?.collect::<Result<Vec<_>,_>>()?;
+        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,b.reading_status,f.book_id,f.percentage,f.position,f.cover IS NOT NULL,f.format,f.digest FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
+        let books = query.query_map([user], |r| {
+            let imported = r.get::<_, Option<i64>>(6)?.is_some();
+            let format = r.get::<_, Option<String>>(10)?;
+            let digest = r.get::<_, Option<String>>(11)?;
+            Ok(Book {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                author: r.get(2)?,
+                total_pages: r.get(3)?,
+                pages_read: r.get(4)?,
+                reading_status: r.get(5)?,
+                epub: if imported {
+                    Some(EpubInfo {
+                        format: match format.as_deref() {
+                            Some("pdf") => "pdf",
+                            Some("cbz") => "cbz",
+                            Some("cbr") => "cbr",
+                            Some("cb7") => "cb7",
+                            Some("djvu") => "djvu",
+                            _ => "epub",
+                        },
+                        digest: digest.unwrap_or_default(),
+                        percentage: r.get(7)?,
+                        position: r.get(8)?,
+                        has_cover: r.get(9)?,
+                    })
+                } else {
+                    None
+                },
+            })
+        })?.collect::<Result<Vec<_>,_>>()?;
         Ok(Json(books))
     }).await
 }
@@ -387,7 +503,7 @@ async fn update_progress(
         .db(move |db| {
             let user = authenticate(db, &headers)?;
             let imported: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?)",params![id,user],|r|r.get(0))?;
-            if imported { return Err(ApiError(StatusCode::BAD_REQUEST,"Use the EPUB reader to record progress.")); }
+            if imported { return Err(ApiError(StatusCode::BAD_REQUEST,"Use the reader to record progress.")); }
             let total: Option<i64> = db
                 .query_row(
                     "SELECT total_pages FROM books WHERE id=? AND user_id=?",
@@ -406,6 +522,108 @@ async fn update_progress(
                 "UPDATE books SET pages_read=? WHERE id=? AND user_id=?",
                 params![value.pages_read, id, user],
             )?;
+            if value.pages_read == total {
+                db.execute(
+                    "UPDATE books SET reading_status='finished' WHERE id=? AND user_id=?",
+                    params![id, user],
+                )?;
+            }
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
+}
+
+/// Set catalogue lifecycle status; finished also completes progress, reopen clears it.
+fn set_reading_status(db: &Connection, user: i64, id: i64, status: &str) -> ApiResult<()> {
+    let imported: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?)",
+        params![id, user],
+        |r| r.get(0),
+    )?;
+    let owned = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM books WHERE id=? AND user_id=?)",
+        params![id, user],
+        |r| r.get::<_, bool>(0),
+    )?;
+    if !owned {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Book not found."));
+    }
+    match status {
+        "finished" => {
+            if imported {
+                db.execute(
+                    "UPDATE epub_files SET percentage=1 WHERE book_id=?",
+                    params![id],
+                )?;
+            } else {
+                db.execute(
+                    "UPDATE books SET pages_read=total_pages WHERE id=? AND user_id=?",
+                    params![id, user],
+                )?;
+            }
+        }
+        "unfinished" | "rereading" => {
+            // Keep imported position so re-open can resume; clear completion only.
+            if imported {
+                db.execute(
+                    "UPDATE epub_files SET percentage=0 WHERE book_id=?",
+                    params![id],
+                )?;
+            } else {
+                db.execute(
+                    "UPDATE books SET pages_read=0 WHERE id=? AND user_id=?",
+                    params![id, user],
+                )?;
+            }
+        }
+        _ => {
+            return Err(ApiError(StatusCode::BAD_REQUEST, "Unknown reading status."));
+        }
+    }
+    db.execute(
+        "UPDATE books SET reading_status=? WHERE id=? AND user_id=?",
+        params![status, id, user],
+    )?;
+    Ok(())
+}
+
+async fn mark_finished(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> ApiResult<StatusCode> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            set_reading_status(db, user, id, "finished")?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
+}
+
+async fn mark_unfinished(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> ApiResult<StatusCode> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            set_reading_status(db, user, id, "unfinished")?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
+}
+
+async fn mark_rereading(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> ApiResult<StatusCode> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            set_reading_status(db, user, id, "rereading")?;
             Ok(StatusCode::NO_CONTENT)
         })
         .await
@@ -421,8 +639,8 @@ async fn stats(
         let values: (i64, i64, i64, i64, Option<f64>) = db.query_row(
             "SELECT count(*),
                     coalesce(sum(b.pages_read),0),
-                    coalesce(sum(CASE WHEN f.book_id IS NULL THEN b.pages_read=b.total_pages ELSE f.percentage=1 END),0),
-                    coalesce(sum(CASE WHEN f.book_id IS NULL THEN b.pages_read>0 AND b.pages_read<b.total_pages ELSE f.position IS NOT NULL AND f.percentage<1 END),0),
+                    coalesce(sum(CASE WHEN b.reading_status='finished' THEN 1 ELSE 0 END),0),
+                    coalesce(sum(CASE WHEN b.reading_status='rereading' OR (b.reading_status='open' AND CASE WHEN f.book_id IS NULL THEN b.pages_read>0 AND b.pages_read<b.total_pages ELSE f.position IS NOT NULL AND f.percentage<1 END) THEN 1 ELSE 0 END),0),
                     (SELECT avg(CASE WHEN f2.book_id IS NOT NULL THEN f2.percentage
                                      WHEN b2.total_pages>0 THEN cast(b2.pages_read as real)/b2.total_pages END)
                      FROM books b2 LEFT JOIN epub_files f2 ON f2.book_id=b2.id

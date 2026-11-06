@@ -64,6 +64,21 @@ pub(super) struct BookmarkPatch {
     note: Option<Option<String>>,
 }
 
+#[derive(Deserialize, Serialize, Clone)]
+struct AnnotationRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+struct AnnotationPdfPosition {
+    page: i64,
+    rect: AnnotationRect,
+    rects: Vec<AnnotationRect>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NewAnnotation {
@@ -75,6 +90,29 @@ pub(super) struct NewAnnotation {
     chapter_title: Option<String>,
     #[serde(default)]
     book_file_id: Option<i64>,
+    /// EmbedPDF highlight geometry; required for PDF reader highlights to round-trip.
+    pdf: Option<AnnotationPdfPosition>,
+}
+
+fn finite_rect(rect: &AnnotationRect) -> bool {
+    [rect.x, rect.y, rect.width, rect.height]
+        .into_iter()
+        .all(f64::is_finite)
+}
+
+fn validate_pdf(pdf: &AnnotationPdfPosition) -> ApiResult<()> {
+    if !(0..1_000_000).contains(&pdf.page)
+        || pdf.rects.is_empty()
+        || pdf.rects.len() > 512
+        || !finite_rect(&pdf.rect)
+        || pdf.rects.iter().any(|rect| !finite_rect(rect))
+    {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Invalid PDF annotation position.",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -257,14 +295,19 @@ fn annotation_json(
     note: Option<String>,
     chapter_title: Option<String>,
     created_at: String,
+    pdf_raw: Option<String>,
 ) -> Value {
-    // Foliate expects this BO-shaped object; keep fields flat rather than a row type.
+    let pdf: Option<AnnotationPdfPosition> = pdf_raw
+        .as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok());
+    let pageno = pdf.as_ref().map(|position| position.page);
+    // Foliate/PDF readers expect this BO-shaped object; keep fields flat rather than a row type.
     json!({
         "id": id,
         "bookId": book_id,
         "cfi": cfi,
         "jumpFileId": book_id,
-        "pageno": null,
+        "pageno": pageno,
         "text": text,
         "color": color,
         "style": style,
@@ -276,7 +319,23 @@ fn annotation_json(
         "highlightedAt": created_at,
         "createdAt": created_at,
         "updatedAt": null,
+        "pdf": pdf,
     })
+}
+
+fn annotation_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    Ok(annotation_json(
+        r.get(0)?,
+        r.get(1)?,
+        r.get(2)?,
+        r.get(3)?,
+        r.get(4)?,
+        r.get(5)?,
+        r.get(6)?,
+        r.get(7)?,
+        r.get(8)?,
+        r.get(9)?,
+    ))
 }
 
 pub(super) async fn list_annotations(
@@ -291,22 +350,10 @@ pub(super) async fn list_annotations(
             owned_book(db, user, book_id)?;
             let _ = query.reader_file_id;
             let mut stmt = db.prepare(
-                "SELECT id,book_id,cfi,text,color,style,note,chapter_title,created_at FROM annotations WHERE user_id=? AND book_id=? ORDER BY id",
+                "SELECT id,book_id,cfi,text,color,style,note,chapter_title,created_at,pdf FROM annotations WHERE user_id=? AND book_id=? ORDER BY id",
             )?;
             let rows = stmt
-                .query_map(params![user, book_id], |r| {
-                    Ok(annotation_json(
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                        r.get(7)?,
-                        r.get(8)?,
-                    ))
-                })?
+                .query_map(params![user, book_id], annotation_row)?
                 .collect::<Result<Vec<_>, _>>()?;
             if query.page.is_some() || query.reader_file_id.is_some() {
                 let total = rows.len();
@@ -344,13 +391,22 @@ pub(super) async fn create_annotation(
             "Invalid annotation position.",
         ));
     }
+    if let Some(pdf) = &body.pdf {
+        validate_pdf(pdf)?;
+    }
     let _ = body.book_file_id;
+    let pdf_json = body
+        .pdf
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Invalid PDF annotation position."))?;
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
             owned_book(db, user, book_id)?;
             db.execute(
-                "INSERT INTO annotations(user_id,book_id,cfi,text,color,style,note,chapter_title) VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO annotations(user_id,book_id,cfi,text,color,style,note,chapter_title,pdf) VALUES (?,?,?,?,?,?,?,?,?)",
                 params![
                     user,
                     book_id,
@@ -359,26 +415,15 @@ pub(super) async fn create_annotation(
                     color,
                     style,
                     body.note,
-                    body.chapter_title
+                    body.chapter_title,
+                    pdf_json
                 ],
             )?;
             let id = db.last_insert_rowid();
             let row = db.query_row(
-                "SELECT id,book_id,cfi,text,color,style,note,chapter_title,created_at FROM annotations WHERE id=? AND user_id=?",
+                "SELECT id,book_id,cfi,text,color,style,note,chapter_title,created_at,pdf FROM annotations WHERE id=? AND user_id=?",
                 params![id, user],
-                |r| {
-                    Ok(annotation_json(
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                        r.get(7)?,
-                        r.get(8)?,
-                    ))
-                },
+                annotation_row,
             )?;
             Ok((StatusCode::CREATED, Json(row)))
         })
@@ -423,21 +468,9 @@ pub(super) async fn patch_annotation(
                 params![note, color, style, annotation_id, user, book_id],
             )?;
             let row = db.query_row(
-                "SELECT id,book_id,cfi,text,color,style,note,chapter_title,created_at FROM annotations WHERE id=? AND user_id=?",
+                "SELECT id,book_id,cfi,text,color,style,note,chapter_title,created_at,pdf FROM annotations WHERE id=? AND user_id=?",
                 params![annotation_id, user],
-                |r| {
-                    Ok(annotation_json(
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                        r.get(7)?,
-                        r.get(8)?,
-                    ))
-                },
+                annotation_row,
             )?;
             Ok(Json(row))
         })

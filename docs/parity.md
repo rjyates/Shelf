@@ -15,10 +15,10 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 | Capability | Shelf status |
 | --- | --- |
-| First-account setup, login, session revocation | Implemented in foundation |
+| First-account setup, login, session revocation | Implemented; mobile stores the session token in platform secure storage; server uses a 30-day sliding idle window renewed on authenticated requests |
 | Manual catalogue entries and persisted page progress | Implemented on web and shared mobile |
 | Overview, library search, real catalogue/progress totals | Implemented on web; catalogue/totals on mobile |
-| Android and iPhone shared client | Foundation with login, catalogue, add book, record progress, Readium EPUB reader |
+| Android and iPhone shared client | Foundation with login, persisted secure session, catalogue, add book, record progress, Readium EPUB/PDF reader |
 | Single-container Compose packaging | Implemented; published image begins after a successful main release |
 | Independent semantic server/mobile releases | Workflow implemented; publication verified only after main release |
 | EPUB upload/import and authenticated downloads | Implemented; exact-byte deduplication and embedded raster covers; single **Add book** action |
@@ -30,8 +30,8 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Stylus / freehand ink on pages (native overlay) | **M7–M8 complete** (2026-11-04): Nomad SPEED+A2+tip lead (~0.15–0.2s); Flutter `noop` elsewhere. Mid-stroke fill-in experiments closed. Drawing G1/G2 is milestone 13. |
 | Folder scanning and multiple libraries | Planned |
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
-| PDF reading | **M9 next** — leverage Book Orbit `pdf-v4` (EmbedPDF/Pdfium) on web; Readium PDF adapters on mobile — `docs/research/m9-pdf-comics-leverage.md` |
-| Comic archive reading | **M9** after PDF — leverage Book Orbit `cbz/` UI + page API; Readium CBZ/Divina on mobile — same leverage doc |
+| PDF reading | **M9 web + mobile PDF** — ingest + BO `pdf-v4`; mobile Readium PDF open/cache with shared `pdfpage(N)`, fit-to-page, tap-to-hide chrome, page/progress footer — `docs/research/m9-pdf-comics-leverage.md` |
+| Comic archive reading | **M9 web + mobile CBZ/CBR/CB7/DjVu** — CBZ as ZIP; CBR/CB7/DjVu → ZIP-of-images at ingest (labels preserved; original on `/source`); shared page API + `cbzpage(N)`; DjVu embedded text sheet; web BO comic reader; mobile Readium ZIP path with scroll/RTL/spread prefs — same leverage doc |
 | Audiobook playback and background media controls | Planned |
 | EPUB Media Overlay read-along and alignment | Planned; BO media-overlay UI is present, Shelf audio serving is not |
 | Annotations, highlights, searchable/exportable notes | Persisted on Shelf; BO + e-ink Readium UI; export/search still Planned |
@@ -41,7 +41,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | OPDS and Send-to-Kindle | Planned |
 | Metadata providers and cover enrichment | Planned |
 | Authors, series, smart scopes, collections | Planned |
-| Session-based statistics, heatmaps, streaks, Reading DNA | Planned; overview already exposes average progress across started books |
+| Session-based statistics, heatmaps, streaks, Reading DNA | Planned; overview average progress; catalogue `reading_status` (`open`/`finished`/`unfinished`/`rereading`) stored for later reopen metrics |
 | Annual goals, monthly challenges, achievements | Planned |
 | Hardcover, Readwise, StoryGraph | Planned; external accounts remain unconfigured |
 | Multiple users, roles, OIDC/SSO | Planned; initial foundation is one account |
@@ -71,7 +71,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 8. **E-ink partial-refresh adapters** — **complete for SuperNote Nomad** (2026-11-04): Dart `EinkRefresh` + Shelf `InkHostView` + SPEED/A2/tip lead (~0.15–0.2s tip lag). Not Notes HandWrite/PWCore. Live A2 thinner until ink-off softDu — accepted. Experimental `/dev/ebc` DISPAREA stays opt-in (`debug.shelf.ink.ebc`), not default. Other Android tablets stay Flutter Canvas (`noop`). Lessons + do-not-retread: `docs/research/nomad-stylus.md`.
 
-9. **PDF and comic readers** — next: fixed-layout is the strong ink surface; comics follow. **Leverage map:** [`docs/research/m9-pdf-comics-leverage.md`](research/m9-pdf-comics-leverage.md).
+9. **PDF and comic readers** — web PDF + mobile Readium PDF done; web + mobile CBZ/CBR/CB7/DjVu done (ZIP-normalized ingest, `/source` originals, DjVu text sheet, mobile comic view prefs). **Leverage map:** [`docs/research/m9-pdf-comics-leverage.md`](research/m9-pdf-comics-leverage.md).
 
 10. **TTS and media overlays** — Foliate/BO hooks first on the WebView path; native/e-ink listen features after reading stacks are stable. Then Storyteller-like extras (sleep timer, sync offset, PiP) where they fit.
 

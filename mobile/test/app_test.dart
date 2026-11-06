@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shelf_mobile/api.dart';
@@ -11,6 +12,7 @@ import 'package:shelf_mobile/main.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({displayProfilePrefsKey: 'eink'});
+    FlutterSecureStorage.setMockInitialValues({});
   });
 
   test('rejects malformed server data before rendering progress', () {
@@ -73,7 +75,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const ShelfApp());
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('Your reading room.'), findsOneWidget);
     await tester.ensureVisible(find.text('Open your library'));
     await tester.tap(find.text('Open your library'));

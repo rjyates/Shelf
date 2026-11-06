@@ -14,7 +14,10 @@ CREATE TABLE IF NOT EXISTS books (
   title TEXT NOT NULL,
   author TEXT NOT NULL,
   total_pages INTEGER NOT NULL CHECK(total_pages > 0),
-  pages_read INTEGER NOT NULL DEFAULT 0 CHECK(pages_read >= 0 AND pages_read <= total_pages)
+  pages_read INTEGER NOT NULL DEFAULT 0 CHECK(pages_read >= 0 AND pages_read <= total_pages),
+  -- Catalogue lifecycle for later stats (distinct from raw % / pages).
+  reading_status TEXT NOT NULL DEFAULT 'open'
+    CHECK(reading_status IN ('open','finished','unfinished','rereading'))
 );
 CREATE TABLE IF NOT EXISTS epub_files (
   book_id INTEGER PRIMARY KEY REFERENCES books(id),
@@ -23,7 +26,10 @@ CREATE TABLE IF NOT EXISTS epub_files (
   cover BLOB,
   cover_mime TEXT,
   position TEXT,
-  percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1)
+  percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
+  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu')),
+  -- Original upload for converted comics (CBR/CB7/DjVu); NULL when content is the source.
+  source BLOB
 );
 CREATE INDEX IF NOT EXISTS epub_digest ON epub_files(digest);
 CREATE TABLE IF NOT EXISTS bookmarks (
@@ -46,6 +52,8 @@ CREATE TABLE IF NOT EXISTS annotations (
   style TEXT NOT NULL DEFAULT 'highlight',
   note TEXT,
   chapter_title TEXT,
+  -- JSON AnnotationPdfPosition for EmbedPDF highlights; NULL for EPUB/CFI rows.
+  pdf TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS annotations_book ON annotations(user_id, book_id);

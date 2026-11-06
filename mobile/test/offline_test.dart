@@ -28,6 +28,39 @@ void main() {
     expect(await store.fileFor(7).readAsBytes(), [80, 75, 3, 4]);
   });
 
+  test('pdf store uses a .pdf extension beside epubs', () async {
+    final store = EpubStore(temp);
+    await store.save(9, [37, 80, 68, 70], extension: 'pdf');
+    expect(await store.has(9, extension: 'pdf'), isTrue);
+    expect(await store.has(9), isFalse);
+    expect(store.fileFor(9, extension: 'pdf').path.endsWith('9.pdf'), isTrue);
+  });
+
+  test('cbz store uses a .cbz extension', () async {
+    final store = EpubStore(temp);
+    expect(EpubStore.extensionFor(isCbz: true), 'cbz');
+    await store.save(3, [80, 75, 3, 4], extension: 'cbz');
+    expect(await store.has(3, extension: 'cbz'), isTrue);
+    expect(store.fileFor(3, extension: 'cbz').path.endsWith('3.cbz'), isTrue);
+  });
+
+  test('digest keys prevent stale bytes when a book id is reused', () async {
+    final store = EpubStore(temp);
+    const oldDigest =
+        '1111111111111111111111111111111111111111111111111111111111111111';
+    const newDigest =
+        '2222222222222222222222222222222222222222222222222222222222222222';
+    await store.save(2, [1, 2, 3], extension: 'cbz', digest: oldDigest);
+    expect(await store.has(2, extension: 'cbz', digest: oldDigest), isTrue);
+    expect(await store.has(2, extension: 'cbz', digest: newDigest), isFalse);
+    await store.save(2, [9, 9, 9], extension: 'cbz', digest: newDigest);
+    expect(await store.has(2, extension: 'cbz', digest: oldDigest), isFalse);
+    expect(
+      await store.fileFor(2, extension: 'cbz', digest: newDigest).readAsBytes(),
+      [9, 9, 9],
+    );
+  });
+
   test('outbox enqueues and flushes in order, keeping failures', () async {
     final outbox = SyncOutbox(temp);
     await outbox.enqueue(

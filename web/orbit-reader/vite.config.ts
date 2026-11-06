@@ -15,6 +15,12 @@ export default defineConfig({
     ],
   },
   publicDir: 'public',
+  optimizeDeps: {
+    exclude: ['@embedpdf/core', '@embedpdf/core/vue'],
+  },
+  worker: {
+    format: 'es',
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

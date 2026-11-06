@@ -18,8 +18,13 @@ class Book {
     required this.author,
     required this.totalPages,
     required this.pagesRead,
+    this.readingStatus = 'open',
     this.hasCover = false,
     this.isEpub = false,
+    this.isPdf = false,
+    this.isCbz = false,
+    this.format,
+    this.digest,
     this.percentage = 0,
     this.position,
   });
@@ -29,16 +34,31 @@ class Book {
     final author = json['author'];
     final total = json['total_pages'];
     final read = json['pages_read'];
-    final epub = json['format'] == 'epub';
+    final format = json['format'];
+    final epub = format == 'epub';
+    final comic =
+        format == 'cbz' ||
+        format == 'cbr' ||
+        format == 'cb7' ||
+        format == 'djvu';
+    // PDF/comics are imported like EPUB (null page count + %). CBR/CB7/DjVu arrive as ZIP-backed comics.
+    final imported = epub || format == 'pdf' || comic;
     final percentage = json['percentage'];
     final position = json['position'];
+    final status = json['reading_status'] ?? 'open';
+    final digest = json['digest'];
+    final digestOk =
+        digest == null ||
+        (digest is String &&
+            digest.length == 64 &&
+            RegExp(r'^[a-f0-9]{64}$').hasMatch(digest));
     if (id is! int ||
         id < 1 ||
         title is! String ||
         title.trim().isEmpty ||
         author is! String ||
-        (!epub && (total is! int || total < 1)) ||
-        (epub &&
+        (!imported && (total is! int || total < 1)) ||
+        (imported &&
             (total != null ||
                 percentage is! num ||
                 !percentage.isFinite ||
@@ -47,11 +67,21 @@ class Book {
                 (position != null &&
                     (position is! String ||
                         position.length > 4096 ||
-                        position.codeUnits.any((c) => c < 32))))) ||
+                        position.codeUnits.any((c) => c < 32))) ||
+                !digestOk ||
+                digest is! String ||
+                digest.isEmpty)) ||
         read is! int ||
         read < 0 ||
-        (!epub && read > (total as int)) ||
-        (epub && read != 0)) {
+        (!imported && read > (total as int)) ||
+        (imported && read != 0) ||
+        status is! String ||
+        !const {
+          'open',
+          'finished',
+          'unfinished',
+          'rereading',
+        }.contains(status)) {
       throw ShelfException(
         'Your server returned an invalid book entry. Check the server version.',
       );
@@ -62,10 +92,15 @@ class Book {
       author: author,
       totalPages: total as int?,
       isEpub: epub,
-      hasCover: epub && json['has_cover'] == true,
-      percentage: epub ? (percentage as num).toDouble() : 0,
-      position: epub ? position as String? : null,
+      hasCover: imported && json['has_cover'] == true,
+      percentage: imported ? (percentage as num).toDouble() : 0,
+      position: imported ? position as String? : null,
       pagesRead: read,
+      isPdf: format == 'pdf',
+      isCbz: comic,
+      format: imported && format is String ? format : null,
+      digest: imported ? digest as String : null,
+      readingStatus: status,
     );
   }
   final int id;
@@ -73,19 +108,44 @@ class Book {
   final String author;
   final int? totalPages;
   final bool isEpub;
+  final bool isPdf;
+  final bool isCbz;
+
+  /// Server format string for imported books (`epub` / `pdf` / `cbz` / `cbr` / `cb7` / `djvu`).
+  final String? format;
+
+  /// SHA-256 hex of the uploaded file; offline cache key.
+  final String? digest;
   final bool hasCover;
   final double percentage;
   final String? position;
   final int pagesRead;
+  final String readingStatus;
 
-  /// Fraction complete for catalogue math (EPUB % or manual pages).
-  double get progressFraction => isEpub ? percentage : pagesRead / totalPages!;
+  bool get isImported => isEpub || isPdf || isCbz;
+
+  /// Formats opened in the Readium reader (not manual page progress).
+  bool get opensInReader => isEpub || isPdf || isCbz;
+
+  /// Fraction complete for catalogue math (imported % or manual pages).
+  double get progressFraction =>
+      isImported ? percentage : pagesRead / totalPages!;
+
+  bool get isFinished {
+    if (readingStatus == 'finished') return true;
+    if (readingStatus == 'unfinished' || readingStatus == 'rereading') {
+      return false;
+    }
+    return isImported ? percentage >= 1 : pagesRead >= totalPages!;
+  }
 }
 
-/// Library blurb: EPUB has no page count (decision 0003), so mean progress replaces "pages turned".
+/// Library blurb: imported books have no page count (decision 0003), so mean progress replaces "pages turned".
 String libraryReadingBlurb(List<Book> books) {
   final started = books
-      .where((book) => book.isEpub ? book.percentage > 0 : book.pagesRead > 0)
+      .where(
+        (book) => book.isImported ? book.percentage > 0 : book.pagesRead > 0,
+      )
       .toList();
   if (started.isEmpty) {
     return '${books.length} books';
@@ -187,7 +247,7 @@ class ShelfApi {
     if (_token != null) HttpHeaders.authorizationHeader: 'Bearer $_token',
   };
 
-  Future<bool> importEpub(List<int> bytes) async {
+  Future<bool> importEpub(List<int> bytes, {String? filename}) async {
     if (bytes.isEmpty) {
       throw ShelfException('Choose a non-empty EPUB file.');
     }
@@ -199,6 +259,9 @@ class ShelfApi {
       request.persistentConnection = false;
       request.headers.contentType = ContentType('application', 'epub+zip');
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      if (filename != null && filename.trim().isNotEmpty) {
+        request.headers.set('x-shelf-filename', filename.trim());
+      }
       request.add(bytes);
       final response = await request.close().timeout(
         const Duration(seconds: 90),
@@ -234,6 +297,14 @@ class ShelfApi {
     _token = (data as Map<String, dynamic>)['token'] as String;
   }
 
+  /// Reattach a previously persisted server session token.
+  void restoreSession(String token) {
+    if (token.isEmpty) {
+      throw ShelfException('Saved session is empty.');
+    }
+    _token = token;
+  }
+
   Future<List<Book>> books() async {
     final data = await request('books');
     if (data is! List) {
@@ -265,6 +336,22 @@ class ShelfApi {
       method: 'POST',
       body: {'pages_read': pages},
     );
+  }
+
+  Future<void> deleteBook(int id) async {
+    await request('books/$id', method: 'DELETE');
+  }
+
+  Future<void> markFinished(int id) async {
+    await request('books/$id/finished', method: 'POST');
+  }
+
+  Future<void> markUnfinished(int id) async {
+    await request('books/$id/unfinished', method: 'POST');
+  }
+
+  Future<void> markRereading(int id) async {
+    await request('books/$id/rereading', method: 'POST');
   }
 
   Future<void> saveLocation(
@@ -357,7 +444,7 @@ class ShelfApi {
     await request('books/$bookId/annotations/$annotationId', method: 'DELETE');
   }
 
-  /// Authenticated EPUB bytes for offline storage.
+  /// Authenticated EPUB/PDF/CBZ bytes for offline storage / Readium open.
   Future<List<int>> downloadEpub(int bookId) async {
     try {
       final request = await _client.getUrl(
@@ -385,11 +472,11 @@ class ShelfApi {
         throw ShelfException(
           response.statusCode == 404
               ? 'Book not found.'
-              : 'Could not download this EPUB.',
+              : 'Could not download this book file.',
         );
       }
       if (bytes.isEmpty) {
-        throw ShelfException('Could not download this EPUB.');
+        throw ShelfException('Could not download this book file.');
       }
       return bytes;
     } on ShelfException {

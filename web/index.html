@@ -52,7 +52,7 @@
           <input
             id="epub-files"
             type="file"
-            accept=".epub,application/epub+zip"
+            accept=".epub,.pdf,.cbz,.cbr,.cb7,.djvu,.djv,application/epub+zip,application/pdf,application/vnd.comicbook+zip,application/vnd.comicbook-rar,application/x-7z-compressed,image/vnd.djvu,application/zip"
             multiple
             hidden
           />
@@ -166,5 +166,75 @@
         <button class="primary">Save progress</button>
       </form>
     </dialog>
+    <dialog id="manage-dialog" aria-labelledby="manage-heading">
+      <div class="section-head">
+        <h2 id="manage-heading">Manage book</h2>
+        <button
+          type="button"
+          id="close-manage"
+          class="quiet"
+          aria-label="Close manage dialog"
+        >
+          ✕
+        </button>
+      </div>
+      <p class="manage-book" id="manage-title"></p>
+      <p class="fine" id="manage-help">
+        Catalogue tools for this book.
+      </p>
+      <p id="manage-error" role="alert" hidden></p>
+      <ul class="manage-options">
+        <li>
+          <button type="button" id="manage-finish" class="manage-option">
+            <span class="manage-option-label">Mark as finished</span>
+            <span class="manage-option-hint">Sets progress to 100%</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" id="manage-unfinished" class="manage-option" hidden>
+            <span class="manage-option-label">Mark as unfinished</span>
+            <span class="manage-option-hint">Closed without a re-read</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" id="manage-rereading" class="manage-option" hidden>
+            <span class="manage-option-label">Mark as re-reading</span>
+            <span class="manage-option-hint">Reopens for another pass</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" id="manage-remove" class="manage-option">
+            <span class="manage-option-label">Remove from library</span>
+            <span class="manage-option-hint">Deletes the stored file</span>
+          </button>
+        </li>
+      </ul>
+    </dialog>
+    <dialog id="remove-dialog" aria-labelledby="remove-heading">
+      <div class="section-head">
+        <h2 id="remove-heading">Remove this book?</h2>
+        <button
+          type="button"
+          id="close-remove"
+          class="quiet"
+          aria-label="Close remove dialog"
+        >
+          ✕
+        </button>
+      </div>
+      <p>
+        <strong id="remove-title"></strong> will be deleted from your library,
+        including the stored file, reading position, bookmarks, and annotations.
+        This cannot be undone.
+      </p>
+      <p id="remove-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" id="cancel-remove" class="quiet">Cancel</button>
+        <button type="button" id="confirm-remove" class="primary">
+          Remove permanently
+        </button>
+      </div>
+    </dialog>
   </body>
 </html>
+

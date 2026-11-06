@@ -15,7 +15,7 @@ The user requested Book Orbit's functionality with Shelf's approved v3 design, a
 
 ## Decision
 
-Use Rust with Axum and SQLite for the server, serving locally bundled browser assets from one process. SQLite avoids a separate database service in the copy-and-paste Compose setup. Use Flutter/Dart for Android and iPhone, with the same versioned HTTP API used by the browser. Keep sessions in mobile memory until secure persisted sessions are implemented.
+Use Rust with Axum and SQLite for the server, serving locally bundled browser assets from one process. SQLite avoids a separate database service in the copy-and-paste Compose setup. Use Flutter/Dart for Android and iPhone, with the same versioned HTTP API used by the browser. Mobile persists the server session token in platform secure storage (not the password). Server sessions use a 30-day sliding idle window renewed on each authenticated request so active clients stay signed in; sign-out and long idle still require a fresh login.
 
 The initial vertical slice provides first-account setup, login, a persistent metadata catalogue, manually recorded page progress, and real catalogue totals. File ingestion, readers, playback, and external integrations remain explicit roadmap items.
 
