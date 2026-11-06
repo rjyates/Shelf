@@ -126,24 +126,32 @@ async fn upload_named(
     } else {
         "application/epub+zip"
     };
-    let mut request = Request::builder()
-        .method("POST")
-        .uri("/api/v1/books/import")
-        .header("content-type", content_type);
-    if let Some(token) = token {
-        request = request.header("authorization", format!("Bearer {token}"));
+    // Process-wide IMPORTS semaphore (capacity 2) is shared across parallel #[tokio::test]s.
+    for attempt in 0..12 {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/books/import")
+            .header("content-type", content_type);
+        if let Some(token) = token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        if let Some(filename) = filename {
+            request = request.header("x-shelf-filename", filename);
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::from(bytes.clone())).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 65536).await.unwrap();
+        let json = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        if status != StatusCode::TOO_MANY_REQUESTS || attempt == 11 {
+            return (status, json);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50 * (attempt + 1) as u64)).await;
     }
-    if let Some(filename) = filename {
-        request = request.header("x-shelf-filename", filename);
-    }
-    let response = app
-        .clone()
-        .oneshot(request.body(Body::from(bytes)).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let body = to_bytes(response.into_body(), 65536).await.unwrap();
-    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    unreachable!()
 }
 
 #[tokio::test]
