@@ -1,15 +1,20 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_readium/flutter_readium.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
 import 'comic_prefs.dart';
+import 'connectivity.dart';
 import 'eink_refresh.dart';
 import 'epub_store.dart';
 import 'ink_overlay.dart';
 import 'ink_stroke.dart';
+import 'listen_mode.dart';
 import 'readium_position.dart';
+import 'server_tts_player.dart';
 import 'sync_outbox.dart';
 
 /// Readium-backed local EPUB/PDF reader (Shelf bookmarks/annotations).
@@ -48,8 +53,16 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   DateTime? _openedAt;
   StreamSubscription<Locator>? _locatorSub;
   StreamSubscription<InkStroke>? _nativeStrokeSub;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  StreamSubscription<void>? _ttsPlayerSub;
   final _inkLayerKey = GlobalKey();
   ComicViewPrefs _comicPrefs = const ComicViewPrefs();
+  late final ServerTtsPlayer _ttsPlayer = ServerTtsPlayer(widget.api);
+  var _online = false;
+  var _ttsProvidersOk = false;
+  List<TtsVoiceInfo> _ttsVoices = [];
+  TtsVoiceInfo? _selectedVoice;
+  var _ttsBusy = false;
 
   ShelfPagedFormat? get _pagedFormat {
     if (widget.book.isPdf) return ShelfPagedFormat.pdf;
@@ -68,6 +81,12 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     return null;
   }
 
+  bool get _showListen => shelfServerTtsListenAvailable(
+    isEpub: widget.book.isEpub,
+    online: _online,
+    hasEnabledProviders: _ttsProvidersOk,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -75,11 +94,76 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     _nativeStrokeSub = _einkRefresh.nativeStrokes.listen((stroke) {
       unawaited(_saveInkStroke(stroke, rebuild: false));
     });
+    _ttsPlayerSub = _ttsPlayer.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      unawaited(_onConnectivity(results));
+    });
+    unawaited(_bootstrapListenGate());
     _open();
   }
 
   void _onChromeChanged() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _bootstrapListenGate() async {
+    final results = await Connectivity().checkConnectivity();
+    await _onConnectivity(results);
+  }
+
+  Future<void> _onConnectivity(List<ConnectivityResult> results) async {
+    final online = connectivityLooksOnline(results);
+    if (!mounted) return;
+    if (!online) {
+      if (_ttsPlayer.active) await _ttsPlayer.stop();
+      setState(() {
+        _online = false;
+        _ttsProvidersOk = false;
+        _ttsVoices = [];
+      });
+      return;
+    }
+    setState(() => _online = true);
+    if (!widget.book.isEpub) return;
+    try {
+      final providers = await widget.api.listTtsProviders();
+      if (!mounted) return;
+      if (providers.isEmpty) {
+        if (_ttsPlayer.active) await _ttsPlayer.stop();
+        setState(() {
+          _ttsProvidersOk = false;
+          _ttsVoices = [];
+        });
+        return;
+      }
+      final voices = await widget.api.listTtsVoices();
+      if (!mounted) return;
+      final prefs = await SharedPreferences.getInstance();
+      final savedVoice = prefs.getString('shelf.tts.voiceId');
+      final savedProvider = prefs.getString('shelf.tts.providerId');
+      TtsVoiceInfo? selected;
+      for (final voice in voices) {
+        if (voice.id == savedVoice && voice.providerId == savedProvider) {
+          selected = voice;
+          break;
+        }
+      }
+      selected ??= voices.isEmpty ? null : voices.first;
+      setState(() {
+        _ttsProvidersOk = voices.isNotEmpty;
+        _ttsVoices = voices;
+        _selectedVoice = selected;
+      });
+    } on Exception {
+      if (!mounted) return;
+      if (_ttsPlayer.active) await _ttsPlayer.stop();
+      setState(() {
+        _ttsProvidersOk = false;
+        _ttsVoices = [];
+      });
+    }
   }
 
   Future<void> _open() async {
@@ -598,16 +682,88 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     );
   }
 
+  Future<void> _pickVoiceAndStart() async {
+    if (!_showListen || _ttsBusy || _ttsVoices.isEmpty) return;
+    final chosen = await showModalBottomSheet<TtsVoiceInfo>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            children: [
+              const ListTile(
+                title: Text('Choose a voice'),
+                subtitle: Text('Speech is synthesized by your Shelf server.'),
+              ),
+              for (final voice in _ttsVoices)
+                ListTile(
+                  title: Text(voice.name),
+                  subtitle: Text(
+                    voice.providerName.isEmpty
+                        ? voice.providerId
+                        : voice.providerName,
+                  ),
+                  selected:
+                      _selectedVoice?.id == voice.id &&
+                      _selectedVoice?.providerId == voice.providerId,
+                  onTap: () => Navigator.pop(context, voice),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (chosen == null || !mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('shelf.tts.voiceId', chosen.id);
+    await prefs.setString('shelf.tts.providerId', chosen.providerId);
+    setState(() => _selectedVoice = chosen);
+    await _startServerTts(chosen);
+  }
+
+  Future<void> _startServerTts(TtsVoiceInfo voice) async {
+    final publication = _publication;
+    if (publication == null || !_showListen) return;
+    setState(() => _ttsBusy = true);
+    final hrefs = [for (final link in publication.readingOrder) link.href];
+    final chapter = shelfTtsChapterIndex(
+      readingOrderHrefs: hrefs,
+      locatorHref: _currentLocator?.href,
+    );
+    try {
+      await _ttsPlayer.start(
+        bookId: widget.book.id,
+        chapterIndex: chapter,
+        voice: voice,
+      );
+    } finally {
+      if (mounted) setState(() => _ttsBusy = false);
+    }
+  }
+
+  Future<void> _toggleListenPlayback() async {
+    if (!_ttsPlayer.active || _ttsBusy) return;
+    if (_ttsPlayer.playing) {
+      await _ttsPlayer.pause();
+    } else {
+      await _ttsPlayer.resume();
+    }
+  }
+
+  Future<void> _stopListen() => _ttsPlayer.stop();
+
   @override
   void dispose() {
     _locatorSub?.cancel();
     _nativeStrokeSub?.cancel();
+    _connectivitySub?.cancel();
+    _ttsPlayerSub?.cancel();
     _showControls.removeListener(_onChromeChanged);
     _showControls.dispose();
     if (_inkMode) unawaited(_einkRefresh.endInk());
     unawaited(_einkRefresh.dispose());
     final locator = _currentLocator;
     if (locator != null) unawaited(_persist(locator));
+    unawaited(_ttsPlayer.dispose());
     unawaited(_readium.closePublication());
     super.dispose();
   }
@@ -745,6 +901,27 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                                     color: ink,
                                   ),
                                 ),
+                              if (_showListen)
+                                IconButton(
+                                  tooltip: _ttsPlayer.active
+                                      ? 'Stop listening'
+                                      : 'Listen',
+                                  onPressed: _ttsBusy
+                                      ? null
+                                      : () {
+                                          if (_ttsPlayer.active) {
+                                            unawaited(_stopListen());
+                                          } else {
+                                            unawaited(_pickVoiceAndStart());
+                                          }
+                                        },
+                                  icon: Icon(
+                                    _ttsPlayer.active
+                                        ? Icons.headphones
+                                        : Icons.headphones_outlined,
+                                    color: ink,
+                                  ),
+                                ),
                               IconButton(
                                 tooltip: 'Bookmarks and highlights',
                                 onPressed: _showMarksSheet,
@@ -781,14 +958,89 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                             horizontal: 16,
                             vertical: 12,
                           ),
-                          child: Text(
-                            _progressLabel,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: ink,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_ttsPlayer.active) ...[
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Previous sentence',
+                                      onPressed: () => unawaited(
+                                        _ttsPlayer.previousBlock(
+                                          widget.book.id,
+                                        ),
+                                      ),
+                                      icon: const Icon(
+                                        Icons.skip_previous,
+                                        color: ink,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: _ttsPlayer.playing
+                                          ? 'Pause'
+                                          : 'Play',
+                                      onPressed: () =>
+                                          unawaited(_toggleListenPlayback()),
+                                      icon: Icon(
+                                        _ttsPlayer.playing
+                                            ? Icons.pause
+                                            : Icons.play_arrow,
+                                        color: ink,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Next sentence',
+                                      onPressed: () => unawaited(
+                                        _ttsPlayer.nextBlock(widget.book.id),
+                                      ),
+                                      icon: const Icon(
+                                        Icons.skip_next,
+                                        color: ink,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Change voice',
+                                      onPressed: _ttsBusy
+                                          ? null
+                                          : () =>
+                                                unawaited(_pickVoiceAndStart()),
+                                      icon: const Icon(
+                                        Icons.record_voice_over_outlined,
+                                        color: ink,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Stop listening',
+                                      onPressed: () => unawaited(_stopListen()),
+                                      icon: const Icon(Icons.close, color: ink),
+                                    ),
+                                  ],
+                                ),
+                                if (_ttsPlayer.error != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Text(
+                                      _ttsPlayer.error!,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: ink,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                              Text(
+                                _progressLabel,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: ink,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),

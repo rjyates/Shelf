@@ -32,11 +32,11 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
 | PDF reading | **M9 web + mobile PDF** — ingest + BO `pdf-v4`; mobile Readium PDF open/cache with shared `pdfpage(N)`, fit-to-page, tap-to-hide chrome, page/progress footer — `docs/research/m9-pdf-comics-leverage.md` |
 | Comic archive reading | **M9 web + mobile CBZ/CBR/CB7/DjVu** — CBZ as ZIP; CBR/CB7/DjVu → ZIP-of-images at ingest (labels preserved; original on `/source`); shared page API + `cbzpage(N)`; DjVu embedded text sheet; web BO comic reader; mobile Readium ZIP path with scroll/RTL/spread prefs — same leverage doc |
-| Audiobook playback and background media controls | Planned |
+| Audiobook playback and background media controls | Planned (later M10 slice — standalone audio, not EPUB narration) |
 | EPUB Media Overlay read-along and alignment | **Web usable** — Foliate plays embedded narration; Shelf playlist API for resume; streaming package files and mobile MO still Planned |
 | Web OpenAI-compatible / Kokoro TTS | **Usable when configured** — Settings `#settings` providers; reader listen hidden until an enabled provider exists; synthesize proxied by Shelf; see `docs/research/m10-tts-listen-leverage.md` |
 | Browser SpeechSynthesis | Dropped for web (not BO’s path); system voices not required |
-| Mobile / e-ink listen | Planned (M10 slice 4) |
+| Mobile / e-ink listen | **In progress (M10 slice 4)** — EPUB headphones when online + enabled Shelf TTS provider; voice select + server synthesize stream; hidden offline / no providers |
 | Annotations, highlights, searchable/exportable notes | Persisted on Shelf; BO + e-ink Readium UI; export/search still Planned |
 | Bookmarks | Persisted on Shelf; BO + e-ink Readium UI |
 | Reader preference sync across devices | Per-book + account defaults on Shelf; chrome pin stays local |
@@ -76,7 +76,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 9. **PDF and comic readers** — web PDF + mobile Readium PDF done; web + mobile CBZ/CBR/CB7/DjVu done (ZIP-normalized ingest, `/source` originals, DjVu text sheet, mobile comic view prefs). **Leverage map:** [`docs/research/m9-pdf-comics-leverage.md`](research/m9-pdf-comics-leverage.md).
 
-10. **TTS and media overlays** — fly path in [`docs/research/m10-tts-listen-leverage.md`](research/m10-tts-listen-leverage.md): (1) web browser TTS, (2) optional self-hosted OpenAI-compatible/Kokoro, (3) EPUB media overlays, (4) mobile/e-ink listen, (5) Storyteller extras (sleep timer, sync offset, PiP, audiobook alignment).
+10. **TTS and media overlays** — fly path in [`docs/research/m10-tts-listen-leverage.md`](research/m10-tts-listen-leverage.md): (1) dropped browser SpeechSynthesis, (2) OpenAI-compatible/Kokoro, (3) web media overlays, (4) mobile server TTS, (5) mobile media overlays, (6) standalone audiobook player, (7) Storyteller extras (sleep timer, sync offset, PiP, alignment).
 
 11. **Library scale and organization** — folder scanning, editable metadata, authors/series/scopes/collections, storage/performance.
 

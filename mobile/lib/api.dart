@@ -11,6 +11,53 @@ class ShelfException implements Exception {
   String toString() => message;
 }
 
+class TtsProviderInfo {
+  TtsProviderInfo({required this.id, required this.name});
+  factory TtsProviderInfo.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final name = json['name'];
+    if (id is! String || id.isEmpty || name is! String || name.isEmpty) {
+      throw ShelfException('Invalid TTS provider entry.');
+    }
+    return TtsProviderInfo(id: id, name: name);
+  }
+  final String id;
+  final String name;
+}
+
+class TtsVoiceInfo {
+  TtsVoiceInfo({
+    required this.id,
+    required this.name,
+    required this.providerId,
+    required this.providerName,
+  });
+  factory TtsVoiceInfo.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final name = json['name'] ?? json['shortName'] ?? id;
+    final providerId = json['providerId'];
+    final providerName = json['providerName'] ?? '';
+    if (id is! String ||
+        id.isEmpty ||
+        name is! String ||
+        name.isEmpty ||
+        providerId is! String ||
+        providerId.isEmpty) {
+      throw ShelfException('Invalid TTS voice entry.');
+    }
+    return TtsVoiceInfo(
+      id: id,
+      name: name,
+      providerId: providerId,
+      providerName: providerName is String ? providerName : '',
+    );
+  }
+  final String id;
+  final String name;
+  final String providerId;
+  final String providerName;
+}
+
 class Book {
   Book({
     required this.id,
@@ -442,6 +489,114 @@ class ShelfApi {
 
   Future<void> deleteAnnotation(int bookId, int annotationId) async {
     await request('books/$bookId/annotations/$annotationId', method: 'DELETE');
+  }
+
+  /// Enabled OpenAI-compatible TTS providers (empty ⇒ hide synthesize listen).
+  Future<List<TtsProviderInfo>> listTtsProviders() async {
+    final data = await request('tts/providers');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid TTS provider list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) TtsProviderInfo.fromJson(item),
+    ];
+  }
+
+  Future<List<TtsVoiceInfo>> listTtsVoices({String? providerId}) async {
+    final path = providerId == null
+        ? 'tts/voices'
+        : 'tts/voices?providerId=${Uri.encodeQueryComponent(providerId)}';
+    final data = await request(path);
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid TTS voice list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) TtsVoiceInfo.fromJson(item),
+    ];
+  }
+
+  Future<List<String>> ttsChapterBlocks(int bookId, int chapterIndex) async {
+    final data = await request('tts/text/$bookId/$chapterIndex');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not load chapter text for listening.');
+    }
+    final sentences = data['sentences'];
+    if (sentences is! List) return [];
+    return [
+      for (final item in sentences)
+        if (item is Map &&
+            item['text'] is String &&
+            (item['text'] as String).trim().isNotEmpty)
+          (item['text'] as String).trim(),
+    ];
+  }
+
+  /// MP3 (or provider format) bytes from Shelf's synthesize proxy.
+  Future<List<int>> synthesizeTts({
+    required String text,
+    required String voiceId,
+    required String providerId,
+    double speed = 1.0,
+  }) async {
+    try {
+      final request = await _client.postUrl(
+        base.resolve('/api/v1/tts/synthesize'),
+      );
+      request.followRedirects = false;
+      request.persistentConnection = false;
+      request.headers.contentType = ContentType.json;
+      if (_token != null) {
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      }
+      request.write(
+        jsonEncode({
+          'text': text,
+          'voiceId': voiceId,
+          'providerId': providerId,
+          'speed': speed,
+          'format': 'mp3',
+        }),
+      );
+      final response = await request.close().timeout(
+        const Duration(seconds: 90),
+      );
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        await response.drain<void>();
+        throw ShelfException(
+          'Enter the final HTTPS server address; redirects are not followed.',
+        );
+      }
+      final bytes = await response.fold<List<int>>(
+        <int>[],
+        (out, chunk) => out..addAll(chunk),
+      );
+      if (response.statusCode >= 400) {
+        String message = 'Could not synthesize speech.';
+        try {
+          final decoded = jsonDecode(utf8.decode(bytes));
+          if (decoded is Map && decoded['error'] is String) {
+            message = decoded['error'] as String;
+          }
+        } catch (_) {}
+        throw ShelfException(message, statusCode: response.statusCode);
+      }
+      if (bytes.isEmpty) {
+        throw ShelfException('TTS provider returned empty audio.');
+      }
+      return bytes;
+    } on ShelfException {
+      rethrow;
+    } on Exception {
+      throw ShelfException(
+        'Could not reach your server. Check the address and connection.',
+      );
+    }
   }
 
   /// Authenticated EPUB/PDF/CBZ bytes for offline storage / Readium open.
