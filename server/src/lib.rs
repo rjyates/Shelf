@@ -1,5 +1,6 @@
 mod epub;
 mod reader_data;
+mod tts;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -8,7 +9,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{get, patch, post, put},
     Json, Router,
 };
 use rand::{rngs::OsRng, RngCore};
@@ -174,6 +175,34 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/djvu/files/{id}/pages/{page}/text",
             get(epub::djvu_page_text),
+        )
+        .route(
+            "/api/v1/tts/text/{id}/{chapter}",
+            get(tts::chapter_text),
+        )
+        .route("/api/v1/tts/providers", get(tts::list_providers))
+        .route("/api/v1/tts/voices", get(tts::list_voices))
+        .route("/api/v1/tts/synthesize", post(tts::synthesize))
+        .route("/api/v1/tts/preview", post(tts::preview))
+        .route(
+            "/api/v1/tts/admin/providers",
+            get(tts::admin_list_providers).post(tts::admin_add_provider),
+        )
+        .route(
+            "/api/v1/tts/admin/providers/order",
+            put(tts::admin_reorder_providers),
+        )
+        .route(
+            "/api/v1/tts/admin/providers/{id}",
+            put(tts::admin_update_provider).delete(tts::admin_delete_provider),
+        )
+        .route(
+            "/api/v1/tts/admin/providers/{id}/test",
+            post(tts::admin_test_provider),
+        )
+        .route(
+            "/api/v1/tts/admin/providers/{id}/voices/discover",
+            get(tts::admin_discover_voices),
         )
         .route("/api/v1/books/{id}/location", post(epub::location))
         .route(

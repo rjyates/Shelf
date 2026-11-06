@@ -44,10 +44,21 @@ let synthesisAbort = new AbortController()
 // The block playback is waiting for, until its audio is scheduled.
 let awaitedBlockIdx: number | null = null
 let settingsResyncTimer: ReturnType<typeof setTimeout> | null = null
+/** Invalidates in-flight `speechSynthesis` utterances (browser provider). */
+let browserGeneration = 0
 
 const positionComposable = useTtsPosition()
 const mediaSession = useTtsMediaSession()
 const readingSession = useTtsReadingSession()
+
+function isBrowserProvider(): boolean {
+  return currentProviderId.value === 'browser'
+}
+
+function cancelBrowserSpeech(): void {
+  browserGeneration++
+  if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
+}
 
 function queueCurrentPositionSave(blockIdx = currentBlockIndex.value) {
   if (!currentBook.value) return
@@ -130,6 +141,7 @@ function stopSource(source: AudioBufferSourceNode): void {
 }
 
 function stopAllSources(): void {
+  cancelBrowserSpeech()
   for (const { source } of scheduledSources) stopSource(source)
   scheduledSources = []
   decodedQueue.clear()
@@ -162,7 +174,11 @@ function stopScheduledAfter(currentIdx: number): void {
 }
 
 function pausePlayback() {
-  void audioCtx?.suspend()
+  if (isBrowserProvider() && typeof speechSynthesis !== 'undefined') {
+    speechSynthesis.pause()
+  } else {
+    void audioCtx?.suspend()
+  }
   playbackState.value = 'paused'
   mediaSession.setPlaybackState('paused')
   flushCurrentPositionSave()
@@ -264,6 +280,62 @@ export function useTtsPlayer() {
     }
   }
 
+  function speakBrowserBlock(blockIdx: number, { keepPaused = false } = {}) {
+    if (typeof speechSynthesis === 'undefined') {
+      handleError(new Error('Browser speech is not available in this window.'))
+      return
+    }
+    const text = chapterBlocks[blockIdx]
+    if (!text) {
+      void advanceChapter()
+      return
+    }
+    const gen = ++browserGeneration
+    speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = Math.min(2, Math.max(0.5, speed.value))
+    // `browser:default` (and missing URI) leave voice unset → engine default.
+    if (currentVoiceId.value && currentVoiceId.value !== 'browser:default') {
+      const match = speechSynthesis
+        .getVoices()
+        .find((voice, index) => (voice.voiceURI || `browser:${index}`) === currentVoiceId.value)
+      if (match) utterance.voice = match
+    }
+    currentBlockIndex.value = blockIdx
+    queueCurrentPositionSave(blockIdx)
+    if (keepPaused || playbackState.value === 'paused') {
+      playbackState.value = 'paused'
+      mediaSession.setPlaybackState('paused')
+    } else {
+      playbackState.value = 'playing'
+      mediaSession.setPlaybackState('playing')
+    }
+    // Chromium on Linux often reports success with no audio when speech-dispatcher /
+    // espeak-ng are missing; onend then fires almost immediately. Treat that as failure.
+    const startedAt = performance.now()
+    const minMs = Math.min(900, Math.max(200, text.length * 12))
+    utterance.onend = () => {
+      if (gen !== browserGeneration) return
+      if (playbackState.value !== 'playing') return
+      if (performance.now() - startedAt < minMs) {
+        handleError(
+          new Error(
+            'Browser speech produced no audible output. On Linux, install and start speech-dispatcher with espeak-ng, then reload.',
+          ),
+        )
+        return
+      }
+      void onBlockEnded(blockIdx)
+    }
+    utterance.onerror = () => {
+      if (gen !== browserGeneration) return
+      if (playbackState.value === 'paused') return
+      handleError(new Error('Browser speech failed for this passage.'))
+    }
+    speechSynthesis.speak(utterance)
+    if (keepPaused || playbackState.value === 'paused') speechSynthesis.pause()
+  }
+
   async function fetchAndPlay(blockIdx: number, { keepPaused = false } = {}) {
     if (!currentBook.value) return
     cancelSettingsResync()
@@ -271,6 +343,10 @@ export function useTtsPlayer() {
     const text = chapterBlocks[blockIdx]
     if (!text) {
       await advanceChapter()
+      return
+    }
+    if (isBrowserProvider()) {
+      speakBrowserBlock(blockIdx, { keepPaused })
       return
     }
     const gen = prefetchGeneration
@@ -328,6 +404,7 @@ export function useTtsPlayer() {
   }
 
   function prefetchAhead(currentIdx: number) {
+    if (isBrowserProvider()) return
     const gen = prefetchGeneration
     const { signal } = synthesisAbort
     for (let i = 1; i <= PREFETCH_AHEAD; i++) {
@@ -382,7 +459,16 @@ export function useTtsPlayer() {
   function resumePlayback() {
     if (playbackState.value !== 'paused') return
     requestAudioFocus('tts')
-    if (audioCtx) void audioCtx.resume()
+    if (isBrowserProvider() && typeof speechSynthesis !== 'undefined') {
+      // Some engines ignore resume(); re-speak the current block if still paused.
+      speechSynthesis.resume()
+      if (!speechSynthesis.speaking && !speechSynthesis.pending) {
+        speakBrowserBlock(currentBlockIndex.value)
+        return
+      }
+    } else if (audioCtx) {
+      void audioCtx.resume()
+    }
     playbackState.value = 'playing'
     mediaSession.setPlaybackState('playing')
   }
@@ -438,6 +524,11 @@ export function useTtsPlayer() {
    */
   function applySynthesisSettings() {
     if (!isActive.value) return
+    if (isBrowserProvider()) {
+      const paused = playbackState.value === 'paused'
+      speakBrowserBlock(currentBlockIndex.value, { keepPaused: paused })
+      return
+    }
     invalidateSynthesis()
     stopScheduledAfter(currentBlockIndex.value)
     settingsResyncTimer = setTimeout(resyncAfterSettingsChange, SETTINGS_RESYNC_DELAY_MS)

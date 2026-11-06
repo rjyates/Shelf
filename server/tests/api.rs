@@ -188,6 +188,131 @@ async fn accepts_books_above_fifty_mib_and_rejects_extreme_compression() {
 }
 
 #[tokio::test]
+async fn tts_chapter_text_from_epub_spine() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("tts.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let (status, text) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/tts/text/{id}/0"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(text["chapterIndex"], 0);
+    let sentences = text["sentences"].as_array().unwrap();
+    assert!(sentences.len() >= 2, "{text}");
+    assert_eq!(sentences[0]["text"], "A test chapter");
+    assert_eq!(sentences[1]["text"], "Original synthetic test text.");
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("/api/v1/tts/text/{id}/9"),
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn tts_providers_gate_reader_until_enabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("tts-providers.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, providers) = call(
+        &app,
+        "GET",
+        "/api/v1/tts/providers",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{providers}");
+    assert_eq!(providers, json!([]));
+
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/tts/admin/providers",
+        json!({
+            "name": "Kokoro",
+            "baseUrl": "http://127.0.0.1:8880/v1",
+            "defaultModel": "kokoro",
+            "staticVoices": [{"id":"af_heart","name":"Heart","shortName":"af_heart","language":"English","locale":"en-US","gender":"Female"}]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_i64().unwrap();
+
+    let (status, providers) = call(
+        &app,
+        "GET",
+        "/api/v1/tts/providers",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{providers}");
+    assert_eq!(providers.as_array().unwrap().len(), 1);
+    assert_eq!(providers[0]["id"], id.to_string());
+    assert_eq!(providers[0]["type"], "openai-compatible");
+
+    let (status, voices) = call(&app, "GET", "/api/v1/tts/voices", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{voices}");
+    assert_eq!(voices[0]["id"], "af_heart");
+    assert_eq!(voices[0]["providerId"], id.to_string());
+
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            &format!("/api/v1/tts/admin/providers/{id}"),
+            json!({"enabled": false}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, providers) = call(
+        &app,
+        "GET",
+        "/api/v1/tts/providers",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{providers}");
+    assert_eq!(providers, json!([]));
+}
+
+#[tokio::test]
 async fn epub_import_duplicate_access_and_saved_position_survive_restart() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("epub.db");
