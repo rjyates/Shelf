@@ -36,8 +36,12 @@ class Book {
     final read = json['pages_read'];
     final format = json['format'];
     final epub = format == 'epub';
-    final comic = format == 'cbz' || format == 'cbr' || format == 'djvu';
-    // PDF/comics are imported like EPUB (null page count + %). CBR/DjVu arrive as ZIP-backed comics.
+    final comic =
+        format == 'cbz' ||
+        format == 'cbr' ||
+        format == 'cb7' ||
+        format == 'djvu';
+    // PDF/comics are imported like EPUB (null page count + %). CBR/CB7/DjVu arrive as ZIP-backed comics.
     final imported = epub || format == 'pdf' || comic;
     final percentage = json['percentage'];
     final position = json['position'];
@@ -106,8 +110,10 @@ class Book {
   final bool isEpub;
   final bool isPdf;
   final bool isCbz;
-  /// Server format string for imported books (`epub` / `pdf` / `cbz` / `cbr` / `djvu`).
+
+  /// Server format string for imported books (`epub` / `pdf` / `cbz` / `cbr` / `cb7` / `djvu`).
   final String? format;
+
   /// SHA-256 hex of the uploaded file; offline cache key.
   final String? digest;
   final bool hasCover;

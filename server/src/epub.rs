@@ -65,7 +65,14 @@ static IMPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 fn invalid() -> ApiError {
     ApiError(
         StatusCode::BAD_REQUEST,
-        "Not a supported book file. Use an unencrypted EPUB, PDF, CBZ, CBR, or DjVu.",
+        "Not a supported book file. Use an unencrypted EPUB, PDF, CBZ, CBR, CB7, or DjVu.",
+    )
+}
+
+fn encrypted_archive() -> ApiError {
+    ApiError(
+        StatusCode::BAD_REQUEST,
+        "Encrypted comic archives are not supported. Remove the password and try again.",
     )
 }
 
@@ -82,6 +89,11 @@ fn is_rar(bytes: &[u8]) -> bool {
     bytes.starts_with(b"Rar!\x1a\x07")
 }
 
+/// 7z signature (`7z\xBC\xAF\x27\x1C`).
+fn is_7z(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])
+}
+
 /// Bundled DjVu (`AT&TFORM` + IFF size + `DJVM`/`DJVU`).
 fn is_djvu(bytes: &[u8]) -> bool {
     bytes.len() >= 16
@@ -90,7 +102,7 @@ fn is_djvu(bytes: &[u8]) -> bool {
 }
 
 fn is_comic_format(format: &str) -> bool {
-    matches!(format, "cbz" | "cbr" | "djvu")
+    matches!(format, "cbz" | "cbr" | "cb7" | "djvu")
 }
 
 fn image_mime(path: &str) -> Option<&'static str> {
@@ -180,8 +192,11 @@ fn cbr_to_zip(bytes: &[u8]) -> ApiResult<Vec<u8>> {
     let archive = rars::ArchiveReader::read_with_options(bytes, options).map_err(|_| invalid())?;
     let mut wanted: Vec<(String, Vec<u8>)> = Vec::new();
     for member in archive.members() {
-        if member.meta.is_directory || member.meta.is_redirection || member.meta.is_encrypted {
+        if member.meta.is_directory || member.meta.is_redirection {
             continue;
+        }
+        if member.meta.is_encrypted {
+            return Err(encrypted_archive());
         }
         let name = String::from_utf8_lossy(&member.meta.name).replace('\\', "/");
         if !is_comic_image_path(&name) {
@@ -205,6 +220,62 @@ fn cbr_to_zip(bytes: &[u8]) -> ApiResult<Vec<u8>> {
             continue;
         }
         pages.push((display, data));
+    }
+    pack_comic_zip(pages)
+}
+
+fn sevenz_err(err: sevenz_rust2::Error) -> ApiError {
+    match err {
+        sevenz_rust2::Error::PasswordRequired | sevenz_rust2::Error::MaybeBadPassword(_) => {
+            encrypted_archive()
+        }
+        other => {
+            let msg = other.to_string().to_ascii_lowercase();
+            if msg.contains("password") || msg.contains("encrypt") {
+                encrypted_archive()
+            } else {
+                invalid()
+            }
+        }
+    }
+}
+
+/// Extract a CB7 (7z of images) into a ZIP of the same pages.
+fn cb7_to_zip(bytes: &[u8]) -> ApiResult<Vec<u8>> {
+    if bytes.len() > 500 * 1024 * 1024 {
+        return Err(invalid());
+    }
+    let cursor = Cursor::new(bytes);
+    let mut archive = sevenz_rust2::ArchiveReader::new(cursor, sevenz_rust2::Password::empty())
+        .map_err(sevenz_err)?;
+    let mut pages: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut too_many = false;
+    archive
+        .for_each_entries(|entry, reader| {
+            if entry.is_directory() {
+                return Ok(true);
+            }
+            let name = entry.name().replace('\\', "/");
+            if !is_comic_image_path(&name) {
+                return Ok(true);
+            }
+            if entry.size() > 50 * 1024 * 1024 {
+                return Err(sevenz_rust2::Error::Unsupported("page too large".into()));
+            }
+            let mut data = Vec::new();
+            std::io::Read::read_to_end(reader, &mut data)?;
+            if !data.is_empty() {
+                pages.push((name, data));
+            }
+            if pages.len() > 10_000 {
+                too_many = true;
+                return Ok(false);
+            }
+            Ok(true)
+        })
+        .map_err(sevenz_err)?;
+    if too_many {
+        return Err(invalid());
     }
     pack_comic_zip(pages)
 }
@@ -446,7 +517,8 @@ fn import_pdf(
     Ok(id)
 }
 
-/// Store a ZIP-of-images comic under `format` (`cbz` / `cbr` / `djvu`).
+/// Store a ZIP-of-images comic under `format` (`cbz` / `cbr` / `cb7` / `djvu`).
+/// `source` keeps the original upload when content is a converted ZIP.
 fn import_comic_zip(
     tx: &rusqlite::Transaction<'_>,
     user: i64,
@@ -454,6 +526,7 @@ fn import_comic_zip(
     digest: &str,
     filename: Option<&str>,
     format: &str,
+    source: Option<&[u8]>,
 ) -> ApiResult<i64> {
     if !is_comic_format(format) || !is_zip(zip_bytes) || is_epub_zip(zip_bytes) {
         return Err(invalid());
@@ -473,8 +546,8 @@ fn import_comic_zip(
     )?;
     let id = tx.last_insert_rowid();
     tx.execute(
-        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format) VALUES (?,?,?,?,?,?)",
-        params![id, digest, zip_bytes, cover, cover_mime, format],
+        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format,source) VALUES (?,?,?,?,?,?,?)",
+        params![id, digest, zip_bytes, cover, cover_mime, format, source],
     )?;
     Ok(id)
 }
@@ -520,12 +593,15 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
             } else if is_rar(&bytes) {
                 // CBR → ZIP at ingest so page API + Readium CBZ path stay shared.
                 let zip = cbr_to_zip(&bytes)?;
-                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cbr")?
+                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cbr", Some(&bytes))?
+            } else if is_7z(&bytes) {
+                let zip = cb7_to_zip(&bytes)?;
+                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cb7", Some(&bytes))?
             } else if is_djvu(&bytes) {
                 let zip = djvu_to_zip(&bytes)?;
-                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "djvu")?
+                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "djvu", Some(&bytes))?
             } else if is_zip(&bytes) && !is_epub_zip(&bytes) {
-                import_comic_zip(&tx, user, &bytes, &digest, filename.as_deref(), "cbz")?
+                import_comic_zip(&tx, user, &bytes, &digest, filename.as_deref(), "cbz", None)?
             } else {
                 import_epub(&tx, user, &bytes, &digest)?
             };
@@ -591,10 +667,10 @@ pub(super) async fn file(
                 )
                 .optional()?
                 .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
-            // CBR/DjVu are stored as ZIP-of-images after ingest; serve as CBZ for Readium.
+            // Converted comics keep ZIP in content; /file stays the reader path (Readium CBZ).
             let (mime, disposition) = match format.as_str() {
                 "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
-                "cbz" | "cbr" | "djvu" => (
+                "cbz" | "cbr" | "cb7" | "djvu" => (
                     "application/vnd.comicbook+zip",
                     "attachment; filename=book.cbz",
                 ),
@@ -608,6 +684,94 @@ pub(super) async fn file(
                 content,
             )
                 .into_response())
+        })
+        .await
+}
+
+/// Original upload bytes for converted comics (`source`), else same as `/file`.
+pub(super) async fn source_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> ApiResult<Response> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            let (content, source, format): (Vec<u8>, Option<Vec<u8>>, String) = db
+                .query_row(
+                    "SELECT f.content,f.source,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
+                    params![id, user],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?
+                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+            let bytes = source.unwrap_or(content);
+            let (mime, disposition) = match format.as_str() {
+                "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
+                "cbz" => (
+                    "application/vnd.comicbook+zip",
+                    "attachment; filename=book.cbz",
+                ),
+                "cbr" => (
+                    "application/vnd.comicbook-rar",
+                    "attachment; filename=book.cbr",
+                ),
+                "cb7" => ("application/x-7z-compressed", "attachment; filename=book.cb7"),
+                "djvu" => ("image/vnd.djvu", "attachment; filename=book.djvu"),
+                _ => ("application/epub+zip", "attachment; filename=book.epub"),
+            };
+            Ok((
+                [
+                    (header::CONTENT_TYPE, mime),
+                    (header::CONTENT_DISPOSITION, disposition),
+                ],
+                bytes,
+            )
+                .into_response())
+        })
+        .await
+}
+
+/// `GET /api/v1/djvu/files/{id}/pages/{page}/text` — embedded TXTz/TXTa text (0-based page).
+pub(super) async fn djvu_page_text(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, page)): Path<(i64, u32)>,
+) -> ApiResult<Json<serde_json::Value>> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            let (content, source, format): (Vec<u8>, Option<Vec<u8>>, String) = db
+                .query_row(
+                    "SELECT f.content,f.source,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
+                    params![id, user],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?
+                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+            if format != "djvu" {
+                return Err(ApiError(
+                    StatusCode::BAD_REQUEST,
+                    "Page text is only available for DjVu documents.",
+                ));
+            }
+            let bytes = source.unwrap_or(content);
+            let doc = djvu_rs::Document::from_bytes(bytes).map_err(|_| invalid())?;
+            if page as usize >= doc.page_count() {
+                return Err(ApiError(StatusCode::NOT_FOUND, "Page not found."));
+            }
+            let text = doc
+                .page(page as usize)
+                .map_err(|_| invalid())?
+                .text()
+                .map_err(|_| {
+                    ApiError(
+                        StatusCode::BAD_REQUEST,
+                        "Could not read embedded text for this page.",
+                    )
+                })?
+                .unwrap_or_default();
+            Ok(Json(serde_json::json!({ "text": text })))
         })
         .await
 }

@@ -12,6 +12,8 @@ zip = { version = "3", default-features = false, features = ["deflate"] }
 rars = { version = "0.12", default-features = false, features = ["write"] }
 # DjVu → ZIP of page PNGs at ingest (MIT; avoid GPL `djvu` 0.1).
 djvu-rs = { version = "0.44", default-features = false, features = ["cbz"] }
+# CB7 (7z comic) → ZIP at ingest; compress feature builds test fixtures.
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["util", "compress"] }
 axum = "0.8"
 rand = "0.8"
 rusqlite = { version = "0.37", features = ["bundled"] }

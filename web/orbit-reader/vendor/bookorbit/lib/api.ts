@@ -228,7 +228,7 @@ type ShelfBookRow = {
 
 /** Resolve imported-file progress/cover from a Shelf book row (flat or nested). */
 export function shelfEpubFields(book: ShelfBookRow): {
-  format: 'epub' | 'pdf' | 'cbz' | 'cbr' | 'djvu'
+  format: 'epub' | 'pdf' | 'cbz' | 'cbr' | 'cb7' | 'djvu'
   percentage: number
   position: string | null
   has_cover: boolean
@@ -236,12 +236,15 @@ export function shelfEpubFields(book: ShelfBookRow): {
   const nested = book.epub
   const raw = book.format ?? nested?.format
   const format =
-    raw === 'pdf' || raw === 'cbz' || raw === 'cbr' || raw === 'djvu' ? raw : 'epub'
+    raw === 'pdf' || raw === 'cbz' || raw === 'cbr' || raw === 'cb7' || raw === 'djvu'
+      ? raw
+      : 'epub'
   const isImported =
     book.format === 'epub' ||
     book.format === 'pdf' ||
     book.format === 'cbz' ||
     book.format === 'cbr' ||
+    book.format === 'cb7' ||
     book.format === 'djvu' ||
     nested != null ||
     typeof book.percentage === 'number' ||
@@ -371,7 +374,9 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
         const books = (await list.json()) as ShelfBookRow[]
         const book = books.find((item) => item.id === write.fileId)
         const comic = shelfEpubFields(book ?? { id: 0 })?.format
-        if (comic === 'cbz' || comic === 'cbr' || comic === 'djvu') pageToken = 'cbzpage'
+        if (comic === 'cbz' || comic === 'cbr' || comic === 'cb7' || comic === 'djvu') {
+          pageToken = 'cbzpage'
+        }
       }
     }
     const position =

@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS epub_files (
   cover_mime TEXT,
   position TEXT,
   percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
-  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','djvu'))
+  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu')),
+  -- Original upload for converted comics (CBR/CB7/DjVu); NULL when content is the source.
+  source BLOB
 );
 CREATE INDEX IF NOT EXISTS epub_digest ON epub_files(digest);
 CREATE TABLE IF NOT EXISTS bookmarks (

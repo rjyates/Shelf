@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_readium/flutter_readium.dart';
 
 import 'api.dart';
+import 'comic_prefs.dart';
 import 'eink_refresh.dart';
 import 'epub_store.dart';
 import 'ink_overlay.dart';
@@ -48,6 +49,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   StreamSubscription<Locator>? _locatorSub;
   StreamSubscription<InkStroke>? _nativeStrokeSub;
   final _inkLayerKey = GlobalKey();
+  ComicViewPrefs _comicPrefs = const ComicViewPrefs();
 
   ShelfPagedFormat? get _pagedFormat {
     if (widget.book.isPdf) return ShelfPagedFormat.pdf;
@@ -92,6 +94,9 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
             spread: PDFSpread.never,
           ),
         );
+      } else if (widget.book.isCbz) {
+        _comicPrefs = await ComicViewPrefs.load(widget.book.id);
+        _readium.setDefaultPreferences(_comicPrefs.toReadium());
       } else {
         _readium.setDefaultPreferences(
           const EPUBPreferences(
@@ -426,6 +431,61 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     }
   }
 
+  Future<void> _applyComicPrefs(ComicViewPrefs prefs) async {
+    _comicPrefs = prefs;
+    await prefs.save(widget.book.id);
+    await _readium.setEPUBPreferences(prefs.toReadium());
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _showComicPrefsSheet() async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: StatefulBuilder(
+            builder: (context, setSheet) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const ListTile(title: Text('Comic view')),
+                  SwitchListTile(
+                    title: const Text('Vertical scroll'),
+                    value: _comicPrefs.scroll,
+                    onChanged: (value) {
+                      final next = _comicPrefs.copyWith(scroll: value);
+                      setSheet(() => _comicPrefs = next);
+                      unawaited(_applyComicPrefs(next));
+                    },
+                  ),
+                  SwitchListTile(
+                    title: const Text('Right-to-left'),
+                    value: _comicPrefs.rtl,
+                    onChanged: (value) {
+                      final next = _comicPrefs.copyWith(rtl: value);
+                      setSheet(() => _comicPrefs = next);
+                      unawaited(_applyComicPrefs(next));
+                    },
+                  ),
+                  SwitchListTile(
+                    title: const Text('Two-page spread'),
+                    value: _comicPrefs.spread,
+                    onChanged: (value) {
+                      final next = _comicPrefs.copyWith(spread: value);
+                      setSheet(() => _comicPrefs = next);
+                      unawaited(_applyComicPrefs(next));
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _showMarksSheet() async {
     if (!mounted) return;
     await showModalBottomSheet<void>(
@@ -676,6 +736,15 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                                   color: ink,
                                 ),
                               ),
+                              if (widget.book.isCbz)
+                                IconButton(
+                                  tooltip: 'Comic view',
+                                  onPressed: _showComicPrefsSheet,
+                                  icon: const Icon(
+                                    Icons.view_carousel_outlined,
+                                    color: ink,
+                                  ),
+                                ),
                               IconButton(
                                 tooltip: 'Bookmarks and highlights',
                                 onPressed: _showMarksSheet,

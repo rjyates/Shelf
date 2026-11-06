@@ -21,11 +21,8 @@ class EpubStore {
     return File('${_dir.path}/$name');
   }
 
-  Future<bool> has(
-    int bookId, {
-    String extension = 'epub',
-    String? digest,
-  }) => fileFor(bookId, extension: extension, digest: digest).exists();
+  Future<bool> has(int bookId, {String extension = 'epub', String? digest}) =>
+      fileFor(bookId, extension: extension, digest: digest).exists();
 
   Future<void> save(
     int bookId,

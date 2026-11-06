@@ -1184,15 +1184,17 @@ class _BookTile extends StatelessWidget {
       'pdf' => 'PDF',
       'cbz' => 'CBZ',
       'cbr' => 'CBR',
+      'cb7' => 'CB7',
       'djvu' => 'DjVu',
       'epub' => 'EPUB',
-      _ => book.isPdf
-          ? 'PDF'
-          : book.isCbz
-          ? 'CBZ'
-          : book.isEpub
-          ? 'EPUB'
-          : null,
+      _ =>
+        book.isPdf
+            ? 'PDF'
+            : book.isCbz
+            ? 'CBZ'
+            : book.isEpub
+            ? 'EPUB'
+            : null,
     };
     final progressLabel = formatLabel != null
         ? '${(book.percentage * 100).round()}% read · $formatLabel'

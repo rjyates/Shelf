@@ -90,7 +90,8 @@ fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
         [],
         |r| r.get(0),
     )?;
-    if sql.contains("'cbr'") && sql.contains("'djvu'") {
+    if sql.contains("'cb7'") {
+        let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source BLOB");
         return Ok(());
     }
     db.execute_batch(
@@ -104,7 +105,8 @@ fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
            cover_mime TEXT,
            position TEXT,
            percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
-           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','djvu'))
+           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu')),
+           source BLOB
          );
          INSERT INTO epub_files_new
            (book_id,digest,content,cover,cover_mime,position,percentage,format)
@@ -164,9 +166,15 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/books/{id}/rereading", post(mark_rereading))
         .route("/api/v1/books/import", post(epub::import).layer(DefaultBodyLimit::disable()))
         .route("/api/v1/books/{id}/file", get(epub::file))
+        .route("/api/v1/books/{id}/source", get(epub::source_file))
         .route("/api/v1/books/{id}/cover", get(epub::cover))
         .route("/api/v1/books/{id}/pages", get(epub::comic_page_count))
         .route("/api/v1/books/{id}/pages/{page}", get(epub::comic_page))
+        // Book Orbit DjVu text sheet path.
+        .route(
+            "/api/v1/djvu/files/{id}/pages/{page}/text",
+            get(epub::djvu_page_text),
+        )
         .route("/api/v1/books/{id}/location", post(epub::location))
         .route(
             "/api/v1/books/{id}/bookmarks",
@@ -427,6 +435,7 @@ async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<J
                             Some("pdf") => "pdf",
                             Some("cbz") => "cbz",
                             Some("cbr") => "cbr",
+                            Some("cb7") => "cb7",
                             Some("djvu") => "djvu",
                             _ => "epub",
                         },

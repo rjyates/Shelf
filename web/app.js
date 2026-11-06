@@ -27,6 +27,7 @@ function isImported(book) {
     book.format === "pdf" ||
     book.format === "cbz" ||
     book.format === "cbr" ||
+    book.format === "cb7" ||
     book.format === "djvu"
   );
 }
@@ -207,6 +208,7 @@ function render() {
               book.format === "pdf" ||
               book.format === "cbz" ||
               book.format === "cbr" ||
+              book.format === "cb7" ||
               book.format === "djvu"
                 ? `&format=${book.format}`
                 : ""
@@ -262,9 +264,11 @@ function render() {
                   ? "CBZ"
                   : book.format === "cbr"
                     ? "CBR"
-                    : book.format === "djvu"
-                      ? "DjVu"
-                      : "EPUB"
+                    : book.format === "cb7"
+                      ? "CB7"
+                      : book.format === "djvu"
+                        ? "DjVu"
+                        : "EPUB"
             }`
           : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`,
         "fine",
@@ -445,6 +449,8 @@ $("epub-files").addEventListener("change", async () => {
           : file.type === "application/vnd.comicbook+zip" || name.endsWith(".cbz")
             ? "application/vnd.comicbook+zip"
             : name.endsWith(".cbr") ||
+                name.endsWith(".cb7") ||
+                name.endsWith(".7z") ||
                 name.endsWith(".djvu") ||
                 name.endsWith(".djv")
               ? "application/octet-stream"

@@ -93,6 +93,16 @@ fn sample_djvu() -> Vec<u8> {
     ]
 }
 
+fn sample_cb7() -> Vec<u8> {
+    use std::io::Cursor;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("002.png"), tiny_png()).unwrap();
+    std::fs::write(dir.path().join("001.png"), tiny_png()).unwrap();
+    sevenz_rust2::compress(dir.path(), Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner()
+}
+
 async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCode, Value) {
     upload_named(app, bytes, token, None).await
 }
@@ -105,7 +115,10 @@ async fn upload_named(
 ) -> (StatusCode, Value) {
     let content_type = if bytes.starts_with(b"%PDF") {
         "application/pdf"
-    } else if bytes.starts_with(b"Rar!") || bytes.starts_with(b"AT&TFORM") {
+    } else if bytes.starts_with(b"Rar!")
+        || bytes.starts_with(b"AT&TFORM")
+        || bytes.starts_with(&[0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])
+    {
         "application/octet-stream"
     } else if bytes.starts_with(b"PK") && !bytes.windows(19).any(|w| w == b"application/epub+zi") {
         // CBZ (or other ZIP) — EPUB fixtures always embed the mimetype string.
@@ -652,6 +665,62 @@ async fn cbr_and_djvu_import_normalize_to_comic_pages() {
         .await
         .unwrap()
         .starts_with(b"PK"));
+    let source = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/books/{cbr_id}/source"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(source.status(), StatusCode::OK);
+    assert_eq!(
+        source.headers()["content-type"],
+        "application/vnd.comicbook-rar"
+    );
+    assert!(to_bytes(source.into_body(), 1024 * 1024)
+        .await
+        .unwrap()
+        .starts_with(b"Rar!"));
+
+    let (status, book) = upload_named(
+        &app,
+        sample_cb7(),
+        Some(&token),
+        Some("Night_City_Issue_3.cb7"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let cb7_id = book["id"].as_i64().unwrap();
+    let pages = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{cb7_id}/pages"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(pages.0, StatusCode::OK, "{}", pages.1);
+    assert_eq!(pages.1["pageCount"], 2);
+    let cb7_source = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/books/{cb7_id}/source"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cb7_source.status(), StatusCode::OK);
+    assert!(to_bytes(cb7_source.into_body(), 1024 * 1024)
+        .await
+        .unwrap()
+        .starts_with(&[0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]));
 
     let (status, book) = upload_named(
         &app,
@@ -703,6 +772,16 @@ async fn cbr_and_djvu_import_normalize_to_comic_pages() {
             .len()
             > 8
     );
+    let text = call(
+        &app,
+        "GET",
+        &format!("/api/v1/djvu/files/{djvu_id}/pages/0/text"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(text.0, StatusCode::OK, "{}", text.1);
+    assert_eq!(text.1["text"], "");
 }
 
 async fn call(
