@@ -140,17 +140,11 @@ pub(super) async fn chapter_text(
     headers: HeaderMap,
     Path((id, chapter)): Path<(i64, u32)>,
 ) -> ApiResult<Json<Value>> {
+    let data_dir = state.data_dir.clone();
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
-            let (content, format): (Vec<u8>, String) = db
-                .query_row(
-                    "SELECT f.content,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
-                    params![id, user],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?
-                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+            let (content, format) = load_owned_book_file(db, &data_dir, user, id)?;
             if format != "epub" {
                 return Err(ApiError(
                     StatusCode::BAD_REQUEST,

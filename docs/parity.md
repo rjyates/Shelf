@@ -33,7 +33,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | PDF reading | **M9 web + mobile PDF** — ingest + BO `pdf-v4`; mobile Readium PDF open/cache with shared `pdfpage(N)`, fit-to-page, tap-to-hide chrome, page/progress footer — `docs/research/m9-pdf-comics-leverage.md` |
 | Comic archive reading | **M9 web + mobile CBZ/CBR/CB7/DjVu** — CBZ as ZIP; CBR/CB7/DjVu → ZIP-of-images at ingest (labels preserved; original on `/source`); shared page API + `cbzpage(N)`; DjVu embedded text sheet; web BO comic reader; mobile Readium ZIP path with scroll/RTL/spread prefs — same leverage doc |
 | Audiobook playback and background media controls | Planned |
-| EPUB Media Overlay read-along and alignment | Planned (M10 slice 3); BO media-overlay UI is present, Shelf audio serving is not |
+| EPUB Media Overlay read-along and alignment | **Web usable** — Foliate plays embedded narration; Shelf playlist API for resume; streaming package files and mobile MO still Planned |
 | Web OpenAI-compatible / Kokoro TTS | **Usable when configured** — Settings `#settings` providers; reader listen hidden until an enabled provider exists; synthesize proxied by Shelf; see `docs/research/m10-tts-listen-leverage.md` |
 | Browser SpeechSynthesis | Dropped for web (not BO’s path); system voices not required |
 | Mobile / e-ink listen | Planned (M10 slice 4) |

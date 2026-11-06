@@ -427,6 +427,31 @@
         }
       }
     },
+    "/epub/{id}/media-overlay": {
+      "get": {
+        "description": "EPUB3 media-overlay playlist (SMIL timing) for resume and chapter lengths.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1 }
+          },
+          {
+            "in": "query",
+            "name": "fileId",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1 }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Playlist (empty items when the EPUB has no media overlays)" },
+          "400": { "description": "Not an EPUB" },
+          "401": { "description": "No valid session" },
+          "404": { "description": "Book not found" }
+        }
+      }
+    },
     "/tts/providers": {
       "get": {
         "description": "Enabled OpenAI-compatible TTS providers (no secrets). Empty means the reader hides synthesize-listen.",
