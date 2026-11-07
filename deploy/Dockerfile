@@ -24,7 +24,7 @@ RUN find server/src server/schema.sql web -type f -exec touch {} + \
 FROM debian:bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/rjyates/Shelf"
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 shelf \
     && useradd --system --uid 10001 --gid 10001 --create-home shelf \

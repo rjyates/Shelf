@@ -2,10 +2,10 @@ package app.shelf.shelf_mobile
 
 import android.os.Bundle
 import android.view.MotionEvent
-import io.flutter.embedding.android.FlutterFragmentActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 
-class MainActivity : FlutterFragmentActivity() {
+class MainActivity : AudioServiceFragmentActivity() {
   private val einkRefresh = EinkRefreshPlugin()
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

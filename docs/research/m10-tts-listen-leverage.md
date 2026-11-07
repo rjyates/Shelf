@@ -14,6 +14,7 @@ Reference: Book Orbit TTS UI under `web/orbit-reader/vendor/bookorbit/features/t
 | Prefs / position | Browser localStorage stubs until SQLite TTS prefs |
 | EPUB media overlays | **Web shipped** — Foliate plays embedded SMIL/audio from the whole-file EPUB; Shelf serves `GET /api/v1/epub/{id}/media-overlay` for resume timing. Streaming package files still deferred. |
 | Mobile listen | **Shipped (slices 4–5)** — server TTS when online + providers; MO read-along from local EPUB (playlist disk cache, continuous same-file clips, highlight + page sync, volume); large `/file` download streams to disk |
+| Standalone audiobooks | **Shipped (slice 6)** — `mp3`/`m4b`/`opus`/`ogg`/`flac` + `audiozip`; BO manifest + asset content + playback-state; web/mobile players; Range on spilled `/file` |
 
 ## Recommended M10 slice order (fly path)
 
@@ -22,8 +23,8 @@ Reference: Book Orbit TTS UI under `web/orbit-reader/vendor/bookorbit/features/t
 3. **EPUB media overlays** — **shipped (web)**: playlist API + Foliate MO from the EPUB blob; BO UI prefers MO over TTS when present.
 4. **Mobile / e-ink server TTS** — **shipped**: headphones gated on connectivity + enabled providers; voice select; stream `POST /tts/synthesize` like web.
 5. ~~**Mobile media overlays**~~ — **shipped**: local SMIL from the EPUB package; prefers MO over TTS; e-ink-friendly highlight/page sync.
-6. **Standalone audiobook ingest + player UI** — pure audio books (not narration inside an EPUB); background media controls. **← next**
-7. **Storyteller-shaped extras** — sleep timer (BO already has UI), sync offset, PiP; EPUB↔audiobook alignment once standalone audiobook ingest exists.
+6. ~~**Standalone audiobook ingest + player UI**~~ — **shipped**: single-file MP3/M4B; web + mobile players; background/media controls.
+7. **Storyteller-shaped extras** — sleep timer (BO already has UI), sync offset, PiP; EPUB↔audiobook alignment. **← next**
 
 ## Do not reinvent
 

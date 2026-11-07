@@ -44,6 +44,14 @@ void main() {
     expect(store.fileFor(3, extension: 'cbz').path.endsWith('3.cbz'), isTrue);
   });
 
+  test('audiobook formats map to cache extensions', () {
+    expect(EpubStore.extensionFor(format: 'm4b'), 'm4b');
+    expect(EpubStore.extensionFor(format: 'mp3'), 'mp3');
+    expect(EpubStore.extensionFor(format: 'opus'), 'opus');
+    expect(EpubStore.extensionFor(format: 'flac'), 'flac');
+    expect(EpubStore.extensionFor(format: 'audiozip'), 'zip');
+  });
+
   test('digest keys prevent stale bytes when a book id is reused', () async {
     final store = EpubStore(temp);
     const oldDigest =

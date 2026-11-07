@@ -122,6 +122,61 @@ fn sample_cb7() -> Vec<u8> {
         .into_inner()
 }
 
+fn sample_mp3() -> Vec<u8> {
+    let mut bytes = b"ID3".to_vec();
+    bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]);
+    bytes.extend_from_slice(&[0xff, 0xfb, 0x90, 0x00]);
+    bytes.extend_from_slice(b"shelf-mp3-fixture");
+    bytes
+}
+
+/// Minimal AAX-shaped buffer: ftyp + checksum region at offset 653 (audible-tools).
+fn sample_aax() -> Vec<u8> {
+    let mut bytes = vec![0u8; 700];
+    bytes[4..8].copy_from_slice(b"ftyp");
+    bytes[8..12].copy_from_slice(b"aavd");
+    for i in 0..20 {
+        bytes[653 + i] = (i as u8).wrapping_add(0x10);
+    }
+    bytes
+}
+
+fn sample_converted_m4b() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&20u32.to_be_bytes());
+    bytes.extend_from_slice(b"ftyp");
+    bytes.extend_from_slice(b"M4B ");
+    bytes.extend_from_slice(b"shelf-aax-converted");
+    bytes
+}
+
+fn sample_m4b() -> Vec<u8> {
+    let mut bytes = vec![0, 0, 0, 24];
+    bytes.extend_from_slice(b"ftyp");
+    bytes.extend_from_slice(b"M4B ");
+    bytes.extend_from_slice(&[0, 0, 0, 0]);
+    bytes.extend_from_slice(b"M4B ");
+    bytes.extend_from_slice(b"shelf-m4b-fixture!!!!");
+    bytes
+}
+
+fn sample_flac() -> Vec<u8> {
+    let mut bytes = b"fLaC".to_vec();
+    bytes.extend_from_slice(b"shelf-flac-fixture");
+    bytes
+}
+
+fn sample_audio_zip() -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, content) in [("02-b.mp3", b"ID3two" as &[u8]), ("01-a.mp3", b"ID3one")] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(content).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
 async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCode, Value) {
     upload_named(app, bytes, token, None).await
 }
@@ -1498,4 +1553,416 @@ async fn bookmarks_annotations_and_reader_prefs_persist() {
         .0,
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn mp3_m4b_import_serve_audioms_and_range() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("audio.db")).unwrap();
+    let credentials = json!({"username":"listener","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, book) =
+        upload_named(&app, sample_mp3(), Some(&token), Some("Night Watch.mp3")).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let mp3_id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["format"], "mp3");
+    assert_eq!(catalogue[0]["title"], "Night Watch");
+
+    let location = format!("/api/v1/books/{mp3_id}/location");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &location,
+            json!({"position":"audioms(-1)","percentage":0.1}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &location,
+            json!({"position":"audioms(1500)","percentage":0.25}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["position"], "audioms(1500)");
+    assert_eq!(catalogue[0]["percentage"], 0.25);
+
+    let file = format!("/api/v1/books/{mp3_id}/file");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&file)
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.headers()["content-type"], "audio/mpeg");
+    assert_eq!(response.headers()["accept-ranges"], "bytes");
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap(),
+        sample_mp3()
+    );
+
+    let (status, book) =
+        upload_named(&app, sample_m4b(), Some(&token), Some("The_Hobbit.m4b")).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let m4b_id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let m4b = catalogue
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == m4b_id)
+        .unwrap();
+    assert_eq!(m4b["format"], "m4b");
+    assert_eq!(m4b["title"], "The Hobbit");
+
+    std::fs::create_dir_all(temp.path().join("files")).unwrap();
+    let payload: Vec<u8> = (0u8..64).collect();
+    let spill_rel = "files/range-fixture-digest.m4b".to_string();
+    std::fs::write(temp.path().join(&spill_rel), &payload).unwrap();
+    {
+        use rusqlite::params;
+        let db = rusqlite::Connection::open(temp.path().join("audio.db")).unwrap();
+        db.execute(
+            "UPDATE epub_files SET content=X'', storage_path=? WHERE book_id=?",
+            params![spill_rel, m4b_id],
+        )
+        .unwrap();
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/books/{m4b_id}/file"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("range", "bytes=10-19")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()["content-type"], "audio/mp4");
+    assert_eq!(response.headers()["content-range"], "bytes 10-19/64");
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+        &payload[10..20]
+    );
+}
+
+#[tokio::test]
+async fn audiobook_manifest_playback_and_zip_tracks() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("ab.db")).unwrap();
+    let credentials = json!({"username":"listener","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, book) = upload_named(&app, sample_flac(), Some(&token), Some("River.flac")).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let flac_id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["format"], "flac");
+
+    let (status, manifest) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/audiobooks/{flac_id}/manifest"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{manifest}");
+    assert_eq!(manifest["schema"], "bookorbit.audiobook-manifest");
+    assert_eq!(manifest["schemaVersion"], 2);
+    assert_eq!(manifest["assets"].as_array().unwrap().len(), 1);
+    assert_eq!(manifest["assets"][0]["assetId"], "0");
+    assert_eq!(manifest["assets"][0]["format"], "flac");
+    let revision = manifest["revision"].as_str().unwrap().to_owned();
+
+    let missing = call(
+        &app,
+        "GET",
+        &format!("/api/v1/audiobooks/{flac_id}/playback-state"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(missing.0, StatusCode::NOT_FOUND);
+
+    let (status, state) = call(
+        &app,
+        "PUT",
+        &format!("/api/v1/audiobooks/{flac_id}/playback-state"),
+        json!({
+            "assetId": "0",
+            "positionMs": 1200,
+            "capturedAt": "2026-01-01T00:00:00Z",
+            "operationId": "op-1",
+            "baseRevision": 0,
+            "manifestRevision": revision,
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{state}");
+    assert_eq!(state["revision"], 1);
+    assert_eq!(state["positionMs"], 1200);
+
+    let (status, asset) = {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/audiobooks/{flac_id}/assets/0/content"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let ctype = response.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        (status, (ctype, body))
+    };
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(asset.0, "audio/flac");
+    assert_eq!(asset.1, sample_flac());
+
+    let (status, book) =
+        upload_named(&app, sample_audio_zip(), Some(&token), Some("Dune.zip")).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let zip_id = book["id"].as_i64().unwrap();
+    let (status, manifest) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/audiobooks/{zip_id}/manifest"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{manifest}");
+    assert_eq!(manifest["assets"].as_array().unwrap().len(), 2);
+    assert_eq!(manifest["assets"][0]["assetId"], "0");
+    assert_eq!(manifest["chapters"][0]["title"], "01-a");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/audiobooks/{zip_id}/assets/1/content"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap(),
+        b"ID3two".as_slice()
+    );
+
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/audiobooks/{flac_id}/playback-state"),
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn aax_import_converts_to_m4b_keeping_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let tables = temp.path().join("tables");
+    std::fs::create_dir_all(&tables).unwrap();
+    let m4b_fixture = temp.path().join("out.m4b");
+    std::fs::write(&m4b_fixture, sample_converted_m4b()).unwrap();
+
+    let rcrack = bin.join("rcrack");
+    std::fs::write(&rcrack, "#!/bin/sh\necho 'result'\necho 'hex:cafed00d'\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&rcrack, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let ffmpeg = bin.join("ffmpeg");
+    let fixture_path = m4b_fixture.display().to_string();
+    std::fs::write(
+        &ffmpeg,
+        format!("#!/bin/sh\nout=\"${{@: -1}}\"\ncp \"{fixture_path}\" \"$out\"\n"),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&ffmpeg, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // SAFETY: test-only env for stubbed converter binaries.
+    unsafe {
+        std::env::set_var("SHELF_AAX_TABLES", &tables);
+        std::env::set_var("SHELF_AAX_RCRACK", &rcrack);
+        std::env::set_var("SHELF_AAX_FFMPEG", &ffmpeg);
+    }
+
+    let app = shelf_server::app(temp.path().join("aax.db")).unwrap();
+    let credentials = json!({"username":"aaxuser","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, book) =
+        upload_named(&app, sample_aax(), Some(&token), Some("Silent_Planet.aax")).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["format"], "aax");
+    assert_eq!(catalogue[0]["title"], "Silent Planet");
+    assert!(
+        catalogue[0]["conversion_status"] == "pending"
+            || catalogue[0]["conversion_status"] == "running"
+            || catalogue[0]["conversion_status"] == "ready"
+            || catalogue[0]["conversion_status"] == "failed",
+        "{catalogue}"
+    );
+
+    let file_while = {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/books/{id}/file"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 8 * 1024).await.unwrap();
+        assert!(
+            status == StatusCode::CONFLICT || status == StatusCode::OK,
+            "{status} {}",
+            String::from_utf8_lossy(&body)
+        );
+        status
+    };
+    let _ = file_while;
+
+    let mut ready = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+            .await
+            .1;
+        if catalogue[0]["format"] == "m4b" && catalogue[0]["conversion_status"] == "ready" {
+            ready = true;
+            break;
+        }
+        if catalogue[0]["conversion_status"] == "failed" {
+            panic!("conversion failed: {catalogue}");
+        }
+    }
+    assert!(ready, "AAX did not convert to M4B in time");
+
+    let source = {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/books/{id}/source"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        to_bytes(response.into_body(), 8 * 1024).await.unwrap()
+    };
+    assert_eq!(source.as_ref(), sample_aax().as_slice());
+
+    let playable = {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/books/{id}/file"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "audio/mp4");
+        to_bytes(response.into_body(), 8 * 1024).await.unwrap()
+    };
+    assert_eq!(playable.as_ref(), sample_converted_m4b().as_slice());
+
+    let (status, manifest) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/audiobooks/{id}/manifest"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{manifest}");
+    assert_eq!(manifest["assets"][0]["format"], "m4b");
 }
