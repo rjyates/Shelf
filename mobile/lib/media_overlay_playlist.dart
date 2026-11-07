@@ -108,8 +108,9 @@ bool _moHrefMatch(String a, String b) {
 
 double _moItemDuration(MediaOverlayItem item) {
   final end = item.clipEndSeconds;
-  if (end != null && end > item.clipBeginSeconds)
+  if (end != null && end > item.clipBeginSeconds) {
     return end - item.clipBeginSeconds;
+  }
   return 0.25;
 }
 
