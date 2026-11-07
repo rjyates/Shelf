@@ -1,4 +1,5 @@
 mod epub;
+mod media_overlay;
 mod reader_data;
 mod tts;
 use argon2::{
@@ -26,6 +27,8 @@ use std::{
 #[derive(Clone)]
 struct AppState {
     database: PathBuf,
+    /// Parent of `shelf.db`; large book blobs spill under `{data_dir}/files/`.
+    data_dir: PathBuf,
     login_attempts: Arc<Mutex<VecDeque<Instant>>>,
 }
 
@@ -37,7 +40,15 @@ impl IntoResponse for ApiError {
     }
 }
 impl From<rusqlite::Error> for ApiError {
-    fn from(_: rusqlite::Error) -> Self {
+    fn from(err: rusqlite::Error) -> Self {
+        if let rusqlite::Error::SqliteFailure(code, _) = &err {
+            if code.extended_code == rusqlite::ffi::SQLITE_TOOBIG {
+                return Self(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "This book is too large for the library database.",
+                );
+            }
+        }
         Self(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Database operation failed.",
@@ -75,13 +86,167 @@ impl AppState {
         let path = self.database.clone();
         tokio::task::spawn_blocking(move || {
             let mut db = Connection::open(path)?;
-            db.busy_timeout(std::time::Duration::from_secs(5))?;
-            db.pragma_update(None, "foreign_keys", "ON")?;
+            configure_connection(&db)?;
             action(&mut db)
         })
         .await
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Request failed."))?
     }
+}
+
+fn configure_connection(db: &Connection) -> rusqlite::Result<()> {
+    // Large read-along imports can hold the write lock while hashing/spilling to disk.
+    db.busy_timeout(std::time::Duration::from_secs(60))?;
+    db.pragma_update(None, "foreign_keys", "ON")?;
+    Ok(())
+}
+
+/// Bundled SQLite caps any BLOB at 1e9 bytes; spill before that so 1.5 GiB read-alongs import.
+const INLINE_BLOB_MAX: usize = 900_000_000;
+
+/// `content`, `storage_path`, `source`, `source_path`, `format` from `epub_files`.
+type BookFileRow = (
+    Vec<u8>,
+    Option<String>,
+    Option<Vec<u8>>,
+    Option<String>,
+    String,
+);
+
+fn store_book_bytes(
+    data_dir: &std::path::Path,
+    digest: &str,
+    kind: &str,
+    bytes: &[u8],
+) -> ApiResult<(Vec<u8>, Option<String>)> {
+    store_book_bytes_limited(data_dir, digest, kind, bytes, INLINE_BLOB_MAX)
+}
+
+fn store_book_bytes_limited(
+    data_dir: &std::path::Path,
+    digest: &str,
+    kind: &str,
+    bytes: &[u8],
+    inline_max: usize,
+) -> ApiResult<(Vec<u8>, Option<String>)> {
+    if bytes.len() <= inline_max {
+        return Ok((bytes.to_vec(), None));
+    }
+    let dir = data_dir.join("files");
+    std::fs::create_dir_all(&dir).map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not create on-disk book storage.",
+        )
+    })?;
+    let relative = format!("files/{digest}.{kind}");
+    let absolute = data_dir.join(&relative);
+    std::fs::write(&absolute, bytes).map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not write the book to disk.",
+        )
+    })?;
+    // Empty BLOB satisfies NOT NULL while the bytes live on disk.
+    Ok((Vec::new(), Some(relative)))
+}
+
+fn load_book_bytes(
+    data_dir: &std::path::Path,
+    inline: Vec<u8>,
+    relative: Option<String>,
+) -> ApiResult<Vec<u8>> {
+    let Some(relative) = relative.filter(|p| !p.is_empty()) else {
+        return Ok(inline);
+    };
+    if relative.contains("..") || PathBuf::from(&relative).is_absolute() {
+        return Err(ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Invalid on-disk book path.",
+        ));
+    }
+    std::fs::read(data_dir.join(&relative)).map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not read the on-disk book file.",
+        )
+    })
+}
+
+fn remove_book_file(data_dir: &std::path::Path, relative: Option<&str>) {
+    let Some(relative) = relative.filter(|p| !p.is_empty()) else {
+        return;
+    };
+    if relative.contains("..") || PathBuf::from(relative).is_absolute() {
+        return;
+    }
+    let _ = std::fs::remove_file(data_dir.join(relative));
+}
+
+fn load_owned_book_file(
+    db: &Connection,
+    data_dir: &std::path::Path,
+    user: i64,
+    id: i64,
+) -> ApiResult<(Vec<u8>, String)> {
+    let (inline, storage_path, format) = owned_book_file_row(db, user, id)?;
+    Ok((load_book_bytes(data_dir, inline, storage_path)?, format))
+}
+
+fn owned_book_file_row(
+    db: &Connection,
+    user: i64,
+    id: i64,
+) -> ApiResult<(Vec<u8>, Option<String>, String)> {
+    db.query_row(
+        "SELECT f.content,f.storage_path,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
+        params![id, user],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .optional()?
+    .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))
+}
+
+fn book_file_mime(format: &str) -> (&'static str, &'static str) {
+    match format {
+        "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
+        "cbz" | "cbr" | "cb7" | "djvu" => (
+            "application/vnd.comicbook+zip",
+            "attachment; filename=book.cbz",
+        ),
+        _ => ("application/epub+zip", "attachment; filename=book.epub"),
+    }
+}
+
+/// Stream a spilled on-disk book without loading the whole file into RAM.
+async fn stream_book_file(
+    absolute: PathBuf,
+    mime: &'static str,
+    disposition: &'static str,
+) -> ApiResult<Response> {
+    let file = tokio::fs::File::open(&absolute).await.map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not read the on-disk book file.",
+        )
+    })?;
+    let len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
+    let mut response = (
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        body,
+    )
+        .into_response();
+    // Clients need a length for a determinate download progress bar.
+    if len > 0 {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_LENGTH, header::HeaderValue::from(len));
+    }
+    Ok(response)
 }
 
 /// SQLite cannot ALTER a CHECK; rebuild epub_files when comic formats are missing.
@@ -93,6 +258,8 @@ fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
     )?;
     if sql.contains("'cb7'") {
         let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source BLOB");
+        let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN storage_path TEXT");
+        let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source_path TEXT");
         return Ok(());
     }
     db.execute_batch(
@@ -107,7 +274,9 @@ fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
            position TEXT,
            percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
            format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu')),
-           source BLOB
+           source BLOB,
+           storage_path TEXT,
+           source_path TEXT
          );
          INSERT INTO epub_files_new
            (book_id,digest,content,cover,cover_mime,position,percentage,format)
@@ -125,6 +294,7 @@ fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
 pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let db = Connection::open(&database)?;
     db.pragma_update(None, "journal_mode", "WAL")?;
+    configure_connection(&db)?;
     db.execute_batch(include_str!("../schema.sql"))?;
     // Existing libraries created before PDF / reading-status support lack these columns.
     let _ =
@@ -179,6 +349,10 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/tts/text/{id}/{chapter}",
             get(tts::chapter_text),
+        )
+        .route(
+            "/api/v1/epub/{id}/media-overlay",
+            get(media_overlay::media_overlay_playlist),
         )
         .route("/api/v1/tts/providers", get(tts::list_providers))
         .route("/api/v1/tts/voices", get(tts::list_voices))
@@ -255,7 +429,14 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             if !headers.contains_key(header::CONTENT_SECURITY_POLICY) { headers.insert(header::CONTENT_SECURITY_POLICY, "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap()); }
             response
         }))
-        .with_state(AppState { database, login_attempts: Arc::new(Mutex::new(VecDeque::new())) }))
+        .with_state(AppState {
+            data_dir: database
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf(),
+            database,
+            login_attempts: Arc::new(Mutex::new(VecDeque::new())),
+        }))
 }
 
 async fn setup_status(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
@@ -694,9 +875,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn large_book_bytes_spill_to_disk_under_data_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let digest = "abc123";
+        let payload = vec![7u8; 64];
+        let (inline, path) =
+            store_book_bytes_limited(&data_dir, digest, "epub", &payload, 32).unwrap();
+        assert!(inline.is_empty());
+        let relative = path.expect("spilled path");
+        assert_eq!(relative, format!("files/{digest}.epub"));
+        assert_eq!(
+            load_book_bytes(&data_dir, inline, Some(relative.clone())).unwrap(),
+            payload
+        );
+        remove_book_file(&data_dir, Some(relative.as_str()));
+        assert!(!data_dir.join(&relative).exists());
+    }
+
+    #[test]
     fn sign_in_limit_rejects_bursts_and_expires_old_attempts() {
         let state = AppState {
             database: PathBuf::new(),
+            data_dir: PathBuf::new(),
             login_attempts: Arc::new(Mutex::new(VecDeque::new())),
         };
         for _ in 0..20 {

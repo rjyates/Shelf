@@ -9,8 +9,9 @@ use std::io::{Cursor, Write};
 struct OrbitReaderAssets;
 
 fn orbit_reader_csp() -> header::HeaderValue {
-    // Foliate: blob iframes + Vue inline styles. EmbedPDF Pdfium: wasm + worker.
-    "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' blob: 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self'; frame-src blob:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
+    // Foliate: blob iframes + MO audio object URLs; Vue inline styles; EmbedPDF Pdfium wasm/worker.
+    // media-src must allow blob: — default-src 'none' would block Speech/Media Overlay playback.
+    "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' blob: 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-src blob:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
         .parse()
         .expect("reader CSP")
 }
@@ -414,6 +415,7 @@ fn import_epub(
     user: i64,
     bytes: &[u8],
     digest: &str,
+    data_dir: &std::path::Path,
 ) -> ApiResult<i64> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| invalid())?;
     if archive.len() > 4096 {
@@ -471,14 +473,16 @@ fn import_epub(
         params![user, title, author],
     )?;
     let id = tx.last_insert_rowid();
+    let (content, storage_path) = store_book_bytes(data_dir, digest, "epub", bytes)?;
     tx.execute(
-        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format) VALUES (?,?,?,?,?,'epub')",
+        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format,storage_path) VALUES (?,?,?,?,?,'epub',?)",
         params![
             id,
             digest,
-            bytes,
+            content,
             cover.as_ref().map(|v| &v.0),
-            cover.as_ref().map(|v| v.1)
+            cover.as_ref().map(|v| v.1),
+            storage_path,
         ],
     )?;
     Ok(id)
@@ -490,6 +494,7 @@ fn import_pdf(
     bytes: &[u8],
     digest: &str,
     filename: Option<&str>,
+    data_dir: &std::path::Path,
 ) -> ApiResult<i64> {
     if bytes.len() < 5 || !is_pdf(bytes) {
         return Err(invalid());
@@ -510,15 +515,17 @@ fn import_pdf(
         params![user, title, ""],
     )?;
     let id = tx.last_insert_rowid();
+    let (content, storage_path) = store_book_bytes(data_dir, digest, "pdf", bytes)?;
     tx.execute(
-        "INSERT INTO epub_files(book_id,digest,content,format) VALUES (?,?,?,'pdf')",
-        params![id, digest, bytes],
+        "INSERT INTO epub_files(book_id,digest,content,format,storage_path) VALUES (?,?,?,'pdf',?)",
+        params![id, digest, content, storage_path],
     )?;
     Ok(id)
 }
 
 /// Store a ZIP-of-images comic under `format` (`cbz` / `cbr` / `cb7` / `djvu`).
 /// `source` keeps the original upload when content is a converted ZIP.
+#[allow(clippy::too_many_arguments)]
 fn import_comic_zip(
     tx: &rusqlite::Transaction<'_>,
     user: i64,
@@ -527,6 +534,7 @@ fn import_comic_zip(
     filename: Option<&str>,
     format: &str,
     source: Option<&[u8]>,
+    data_dir: &std::path::Path,
 ) -> ApiResult<i64> {
     if !is_comic_format(format) || !is_zip(zip_bytes) || is_epub_zip(zip_bytes) {
         return Err(invalid());
@@ -545,9 +553,28 @@ fn import_comic_zip(
         params![user, title, ""],
     )?;
     let id = tx.last_insert_rowid();
+    let (content, storage_path) = store_book_bytes(data_dir, digest, format, zip_bytes)?;
+    let (source_blob, source_path) = match source {
+        Some(raw) => {
+            let (blob, path) =
+                store_book_bytes(data_dir, digest, &format!("{format}-source"), raw)?;
+            (Some(blob), path)
+        }
+        None => (None, None),
+    };
     tx.execute(
-        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format,source) VALUES (?,?,?,?,?,?,?)",
-        params![id, digest, zip_bytes, cover, cover_mime, format, source],
+        "INSERT INTO epub_files(book_id,digest,content,cover,cover_mime,format,source,storage_path,source_path) VALUES (?,?,?,?,?,?,?,?,?)",
+        params![
+            id,
+            digest,
+            content,
+            cover,
+            cover_mime,
+            format,
+            source_blob,
+            storage_path,
+            source_path
+        ],
     )?;
     Ok(id)
 }
@@ -574,6 +601,7 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
             )
         })?
         .to_vec();
+    let data_dir = state.data_dir.clone();
     state
         .db(move |db| {
             let digest = format!("{:x}", Sha256::digest(&bytes));
@@ -589,21 +617,21 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
                 return Ok((StatusCode::OK, Json(serde_json::json!({"id":id,"duplicate":true}))).into_response());
             }
             let id = if is_pdf(&bytes) {
-                import_pdf(&tx, user, &bytes, &digest, filename.as_deref())?
+                import_pdf(&tx, user, &bytes, &digest, filename.as_deref(), &data_dir)?
             } else if is_rar(&bytes) {
                 // CBR → ZIP at ingest so page API + Readium CBZ path stay shared.
                 let zip = cbr_to_zip(&bytes)?;
-                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cbr", Some(&bytes))?
+                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cbr", Some(&bytes), &data_dir)?
             } else if is_7z(&bytes) {
                 let zip = cb7_to_zip(&bytes)?;
-                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cb7", Some(&bytes))?
+                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cb7", Some(&bytes), &data_dir)?
             } else if is_djvu(&bytes) {
                 let zip = djvu_to_zip(&bytes)?;
-                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "djvu", Some(&bytes))?
+                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "djvu", Some(&bytes), &data_dir)?
             } else if is_zip(&bytes) && !is_epub_zip(&bytes) {
-                import_comic_zip(&tx, user, &bytes, &digest, filename.as_deref(), "cbz", None)?
+                import_comic_zip(&tx, user, &bytes, &digest, filename.as_deref(), "cbz", None, &data_dir)?
             } else {
-                import_epub(&tx, user, &bytes, &digest)?
+                import_epub(&tx, user, &bytes, &digest, &data_dir)?
             };
             tx.commit()?;
             Ok((StatusCode::CREATED, Json(serde_json::json!({"id":id,"duplicate":false}))).into_response())
@@ -616,6 +644,7 @@ pub(super) async fn delete_book(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> ApiResult<StatusCode> {
+    let data_dir = state.data_dir.clone();
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
@@ -628,6 +657,14 @@ pub(super) async fn delete_book(
             if !owned {
                 return Err(ApiError(StatusCode::NOT_FOUND, "Book not found."));
             }
+            let paths: (Option<String>, Option<String>) = tx
+                .query_row(
+                    "SELECT storage_path,source_path FROM epub_files WHERE book_id=?",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?
+                .unwrap_or((None, None));
             tx.execute(
                 "DELETE FROM bookmarks WHERE book_id=? AND user_id=?",
                 params![id, user],
@@ -646,6 +683,8 @@ pub(super) async fn delete_book(
                 params![id, user],
             )?;
             tx.commit()?;
+            remove_book_file(&data_dir, paths.0.as_deref());
+            remove_book_file(&data_dir, paths.1.as_deref());
             Ok(StatusCode::NO_CONTENT)
         })
         .await
@@ -656,36 +695,35 @@ pub(super) async fn file(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> ApiResult<Response> {
-    state
-        .db(move |db| {
-            let user = authenticate(db, &headers)?;
-            let (content, format): (Vec<u8>, String) = db
-                .query_row(
-                    "SELECT f.content,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
-                    params![id, user],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?
-                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
-            // Converted comics keep ZIP in content; /file stays the reader path (Readium CBZ).
-            let (mime, disposition) = match format.as_str() {
-                "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
-                "cbz" | "cbr" | "cb7" | "djvu" => (
-                    "application/vnd.comicbook+zip",
-                    "attachment; filename=book.cbz",
-                ),
-                _ => ("application/epub+zip", "attachment; filename=book.epub"),
-            };
-            Ok((
-                [
-                    (header::CONTENT_TYPE, mime),
-                    (header::CONTENT_DISPOSITION, disposition),
-                ],
-                content,
-            )
-                .into_response())
+    let data_dir = state.data_dir.clone();
+    let (inline, storage_path, format) = state
+        .db({
+            let headers = headers.clone();
+            move |db| {
+                let user = authenticate(db, &headers)?;
+                owned_book_file_row(db, user, id)
+            }
         })
-        .await
+        .await?;
+    let (mime, disposition) = book_file_mime(&format);
+    // Large spilled books stream from disk — loading 1.5 GiB into RAM OOMs clients.
+    if let Some(relative) = storage_path.filter(|p| !p.is_empty()) {
+        if relative.contains("..") || PathBuf::from(&relative).is_absolute() {
+            return Err(ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid on-disk book path.",
+            ));
+        }
+        return stream_book_file(data_dir.join(relative), mime, disposition).await;
+    }
+    Ok((
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        inline,
+    )
+        .into_response())
 }
 
 /// Original upload bytes for converted comics (`source`), else same as `/file`.
@@ -694,18 +732,24 @@ pub(super) async fn source_file(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> ApiResult<Response> {
+    let data_dir = state.data_dir.clone();
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
-            let (content, source, format): (Vec<u8>, Option<Vec<u8>>, String) = db
+            let (inline, storage_path, source, source_path, format): BookFileRow = db
                 .query_row(
-                    "SELECT f.content,f.source,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
+                    "SELECT f.content,f.storage_path,f.source,f.source_path,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
                     params![id, user],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )
                 .optional()?
                 .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
-            let bytes = source.unwrap_or(content);
+            let content = load_book_bytes(&data_dir, inline, storage_path)?;
+            let bytes = if source_path.is_some() || source.as_ref().is_some_and(|s| !s.is_empty()) {
+                load_book_bytes(&data_dir, source.unwrap_or_default(), source_path)?
+            } else {
+                content
+            };
             let (mime, disposition) = match format.as_str() {
                 "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
                 "cbz" => (
@@ -738,14 +782,15 @@ pub(super) async fn djvu_page_text(
     headers: HeaderMap,
     Path((id, page)): Path<(i64, u32)>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let data_dir = state.data_dir.clone();
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
-            let (content, source, format): (Vec<u8>, Option<Vec<u8>>, String) = db
+            let (inline, storage_path, source, source_path, format): BookFileRow = db
                 .query_row(
-                    "SELECT f.content,f.source,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
+                    "SELECT f.content,f.storage_path,f.source,f.source_path,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
                     params![id, user],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )
                 .optional()?
                 .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
@@ -755,7 +800,12 @@ pub(super) async fn djvu_page_text(
                     "Page text is only available for DjVu documents.",
                 ));
             }
-            let bytes = source.unwrap_or(content);
+            let content = load_book_bytes(&data_dir, inline, storage_path)?;
+            let bytes = if source_path.is_some() || source.as_ref().is_some_and(|s| !s.is_empty()) {
+                load_book_bytes(&data_dir, source.unwrap_or_default(), source_path)?
+            } else {
+                content
+            };
             let doc = djvu_rs::Document::from_bytes(bytes).map_err(|_| invalid())?;
             if page as usize >= doc.page_count() {
                 return Err(ApiError(StatusCode::NOT_FOUND, "Page not found."));
@@ -794,17 +844,11 @@ pub(super) async fn comic_page_count(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let data_dir = state.data_dir.clone();
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
-            let (content, format): (Vec<u8>, String) = db
-                .query_row(
-                    "SELECT f.content,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
-                    params![id, user],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?
-                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+            let (content, format) = load_owned_book_file(db, &data_dir, user, id)?;
             if !is_comic_format(&format) {
                 return Err(ApiError(
                     StatusCode::BAD_REQUEST,
@@ -823,17 +867,11 @@ pub(super) async fn comic_page(
     headers: HeaderMap,
     Path((id, page)): Path<(i64, u32)>,
 ) -> ApiResult<Response> {
+    let data_dir = state.data_dir.clone();
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
-            let (content, format): (Vec<u8>, String) = db
-                .query_row(
-                    "SELECT f.content,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
-                    params![id, user],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?
-                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+            let (content, format) = load_owned_book_file(db, &data_dir, user, id)?;
             if !is_comic_format(&format) {
                 return Err(ApiError(
                     StatusCode::BAD_REQUEST,
@@ -841,10 +879,9 @@ pub(super) async fn comic_page(
                 ));
             }
             let names = comic_page_names(&content)?;
-            let name = names.get(page as usize).ok_or(ApiError(
-                StatusCode::NOT_FOUND,
-                "Page not found.",
-            ))?;
+            let name = names
+                .get(page as usize)
+                .ok_or(ApiError(StatusCode::NOT_FOUND, "Page not found."))?;
             let mime = image_mime(name).ok_or_else(invalid)?;
             let mut archive = zip::ZipArchive::new(Cursor::new(content)).map_err(|_| invalid())?;
             let mut file = archive

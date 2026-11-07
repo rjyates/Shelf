@@ -6,6 +6,25 @@ use axum::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
+fn sample_epub_with_media_overlay() -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, content) in [
+        ("mimetype", "application/epub+zip".as_bytes()),
+        ("META-INF/container.xml", br#"<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#),
+        ("package.opf", br#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">shelf-mo</dc:identifier><dc:title>Read aloud</dc:title><dc:creator>Shelf tests</dc:creator><dc:language>en</dc:language></metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" media-overlay="mo1"/><item id="mo1" href="chapter.smil" media-type="application/smil+xml"/><item id="audio" href="audio.mp3" media-type="audio/mpeg"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine><itemref idref="chapter"/></spine></package>"#),
+        ("chapter.xhtml", br#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter</title></head><body><p id="s1">Hello there.</p><p id="s2">Second sentence.</p></body></html>"#),
+        ("chapter.smil", br#"<?xml version="1.0"?><smil xmlns="http://www.w3.org/ns/SMIL" version="3.0"><body><par id="p1"><text src="chapter.xhtml#s1"/><audio src="audio.mp3" clipBegin="0s" clipEnd="1.5s"/></par><par id="p2"><text src="chapter.xhtml#s2"/><audio src="audio.mp3" clipBegin="1.5s" clipEnd="3s"/></par></body></smil>"#),
+        ("audio.mp3", b"ID3fake-audio"),
+        ("nav.xhtml", br#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol><li><a href="chapter.xhtml">Chapter</a></li></ol></nav></body></html>"#),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(content).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
 fn sample_epub(unsafe_path: bool) -> Vec<u8> {
     use std::io::{Cursor, Write};
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -318,6 +337,56 @@ async fn tts_providers_gate_reader_until_enabled() {
     .await;
     assert_eq!(status, StatusCode::OK, "{providers}");
     assert_eq!(providers, json!([]));
+}
+
+#[tokio::test]
+async fn media_overlay_playlist_from_epub_smil() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("mo.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, book) = upload(&app, sample_epub_with_media_overlay(), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let (status, playlist) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/epub/{id}/media-overlay?fileId={id}"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{playlist}");
+    assert_eq!(playlist["bookId"], id);
+    assert_eq!(playlist["items"].as_array().unwrap().len(), 2);
+    assert_eq!(playlist["items"][0]["textFragment"], "s1");
+    assert_eq!(playlist["items"][0]["audioHref"], "audio.mp3");
+    assert_eq!(playlist["items"][0]["clipBeginSeconds"], 0.0);
+    assert_eq!(playlist["items"][0]["clipEndSeconds"], 1.5);
+    assert_eq!(playlist["items"][1]["textFragment"], "s2");
+    assert_eq!(playlist["sections"].as_array().unwrap().len(), 1);
+    assert_eq!(playlist["durationSeconds"], 3.0);
+    assert_eq!(playlist["resources"][0]["href"], "audio.mp3");
+
+    let (status, empty) = call(
+        &app,
+        "GET",
+        &format!(
+            "/api/v1/epub/{}/media-overlay",
+            upload(&app, sample_epub(false), Some(&token)).await.1["id"]
+        ),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["items"], json!([]));
 }
 
 #[tokio::test]

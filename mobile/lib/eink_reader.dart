@@ -1,15 +1,25 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_readium/flutter_readium.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
 import 'comic_prefs.dart';
+import 'connectivity.dart';
 import 'eink_refresh.dart';
 import 'epub_store.dart';
 import 'ink_overlay.dart';
 import 'ink_stroke.dart';
+import 'listen_mode.dart';
+import 'media_overlay_cache.dart';
+import 'media_overlay_locator.dart';
+import 'media_overlay_player.dart';
+import 'media_overlay_playlist.dart';
 import 'readium_position.dart';
+import 'screensaver_prefs.dart';
+import 'server_tts_player.dart';
 import 'sync_outbox.dart';
 
 /// Readium-backed local EPUB/PDF reader (Shelf bookmarks/annotations).
@@ -48,8 +58,31 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   DateTime? _openedAt;
   StreamSubscription<Locator>? _locatorSub;
   StreamSubscription<InkStroke>? _nativeStrokeSub;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  StreamSubscription<void>? _ttsPlayerSub;
+  StreamSubscription<void>? _moPlayerSub;
   final _inkLayerKey = GlobalKey();
   ComicViewPrefs _comicPrefs = const ComicViewPrefs();
+  late final ServerTtsPlayer _ttsPlayer = ServerTtsPlayer(widget.api);
+  final _moPlayer = MediaOverlayPlayer();
+  late final MediaOverlayCache _moCache = MediaOverlayCache(widget.epubs.root);
+  var _online = false;
+  var _ttsProvidersOk = false;
+  List<TtsVoiceInfo> _ttsVoices = [];
+  TtsVoiceInfo? _selectedVoice;
+  var _ttsBusy = false;
+  MediaOverlayPlaylist? _moPlaylist;
+  String? _moHighlightHref;
+  String? _moPaintTextHref;
+  var _moSecondsSincePaint = 0.0;
+  var _listenVolume = 1.0;
+
+  /// Last SMIL cue when listen stopped — resume here on the same HTML page.
+  int? _moResumeIndex;
+  String? _moResumeTextHref;
+  Timer? _idleTimer;
+  var _screensaverMinutes = 5;
+  var _screensaverVisible = false;
 
   ShelfPagedFormat? get _pagedFormat {
     if (widget.book.isPdf) return ShelfPagedFormat.pdf;
@@ -68,6 +101,23 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     return null;
   }
 
+  bool get _hasMediaOverlay => _moPlaylist?.hasNarration ?? false;
+
+  bool get _showListen => shelfListenChromeAvailable(
+    isEpub: widget.book.isEpub,
+    online: _online,
+    hasEnabledProviders: _ttsProvidersOk,
+    hasMediaOverlay: _hasMediaOverlay,
+  );
+
+  bool get _listenActive => _ttsPlayer.active || _moPlayer.active;
+
+  bool get _listenPlaying =>
+      (_ttsPlayer.active && _ttsPlayer.playing) ||
+      (_moPlayer.active && _moPlayer.playing);
+
+  String? get _listenError => _ttsPlayer.error ?? _moPlayer.error;
+
   @override
   void initState() {
     super.initState();
@@ -75,10 +125,224 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     _nativeStrokeSub = _einkRefresh.nativeStrokes.listen((stroke) {
       unawaited(_saveInkStroke(stroke, rebuild: false));
     });
+    _ttsPlayerSub = _ttsPlayer.changes.listen((_) {
+      if (mounted) setState(() {});
+      _armIdleTimer();
+    });
+    _moPlayerSub = _moPlayer.changes.listen((_) {
+      if (mounted) setState(() {});
+      unawaited(_syncMediaOverlayHighlight());
+      _armIdleTimer();
+    });
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      unawaited(_onConnectivity(results));
+    });
+    unawaited(_bootstrapListenGate());
+    unawaited(_loadScreensaverPrefs());
     _open();
   }
 
+  Future<void> _loadScreensaverPrefs() async {
+    final minutes = await loadScreensaverIdleMinutes();
+    if (!mounted) return;
+    _screensaverMinutes = minutes;
+    _armIdleTimer();
+  }
+
+  void _noteActivity() {
+    if (_screensaverVisible) {
+      setState(() => _screensaverVisible = false);
+    }
+    _armIdleTimer();
+  }
+
+  void _armIdleTimer() {
+    _idleTimer?.cancel();
+    if (!mounted || _screensaverMinutes < 1 || _screensaverVisible) return;
+    // Keep the page awake while narration or TTS is actually playing.
+    if (_listenPlaying) return;
+    _idleTimer = Timer(Duration(minutes: _screensaverMinutes), () {
+      if (!mounted || _listenPlaying) return;
+      setState(() => _screensaverVisible = true);
+    });
+  }
+
   void _onChromeChanged() {
+    if (mounted) setState(() {});
+    _noteActivity();
+  }
+
+  Future<void> _bootstrapListenGate() async {
+    final results = await Connectivity().checkConnectivity();
+    await _onConnectivity(results);
+  }
+
+  Future<void> _onConnectivity(List<ConnectivityResult> results) async {
+    final online = connectivityLooksOnline(results);
+    if (!mounted) return;
+    if (!online) {
+      if (_ttsPlayer.active) await _ttsPlayer.stop();
+      setState(() {
+        _online = false;
+        _ttsProvidersOk = false;
+        _ttsVoices = [];
+      });
+      // Keep/load cached MO playlist so read-along still works offline.
+      if (widget.book.isEpub) await _loadCachedMediaOverlay();
+      return;
+    }
+    setState(() => _online = true);
+    if (!widget.book.isEpub) return;
+    await Future.wait([_refreshTtsGate(), _refreshMediaOverlayGate()]);
+  }
+
+  Future<void> _loadCachedMediaOverlay() async {
+    final cached = await _moCache.load(widget.book.id);
+    if (!mounted) return;
+    if (cached != null) {
+      setState(() => _moPlaylist = cached);
+    }
+  }
+
+  Future<void> _refreshTtsGate() async {
+    try {
+      final providers = await widget.api.listTtsProviders();
+      if (!mounted) return;
+      if (providers.isEmpty) {
+        if (_ttsPlayer.active) await _ttsPlayer.stop();
+        setState(() {
+          _ttsProvidersOk = false;
+          _ttsVoices = [];
+        });
+        return;
+      }
+      final voices = await widget.api.listTtsVoices();
+      if (!mounted) return;
+      final prefs = await SharedPreferences.getInstance();
+      final savedVoice = prefs.getString('shelf.tts.voiceId');
+      final savedProvider = prefs.getString('shelf.tts.providerId');
+      TtsVoiceInfo? selected;
+      for (final voice in voices) {
+        if (voice.id == savedVoice && voice.providerId == savedProvider) {
+          selected = voice;
+          break;
+        }
+      }
+      selected ??= voices.isEmpty ? null : voices.first;
+      setState(() {
+        _ttsProvidersOk = voices.isNotEmpty;
+        _ttsVoices = voices;
+        _selectedVoice = selected;
+      });
+    } on Exception {
+      if (!mounted) return;
+      if (_ttsPlayer.active) await _ttsPlayer.stop();
+      setState(() {
+        _ttsProvidersOk = false;
+        _ttsVoices = [];
+      });
+    }
+  }
+
+  Future<void> _refreshMediaOverlayGate() async {
+    try {
+      final playlist = await widget.api.mediaOverlayPlaylist(widget.book.id);
+      if (!mounted) return;
+      setState(() => _moPlaylist = playlist);
+      unawaited(_moCache.save(widget.book.id, playlist));
+    } on Exception {
+      await _loadCachedMediaOverlay();
+    }
+  }
+
+  Future<void> _syncMediaOverlayHighlight() async {
+    final publication = _publication;
+    if (!_moPlayer.active || publication == null) {
+      await _clearMediaOverlayHighlight();
+      return;
+    }
+    final item = _moPlayer.currentItem;
+    if (item == null) {
+      await _clearMediaOverlayHighlight();
+      return;
+    }
+    final duration = mediaOverlayItemDuration(item);
+    final refresh = shouldRefreshMediaOverlayHighlight(
+      paintedTextHref: _moPaintTextHref,
+      currentTextHref: item.textHref,
+      secondsSincePaint: _moSecondsSincePaint,
+    );
+    if (!refresh) {
+      _moSecondsSincePaint += duration;
+      return;
+    }
+    final locator = locatorForMediaOverlayItem(
+      item: item,
+      publication: publication,
+    );
+    if (locator == null) return;
+    final nextItem =
+        _moPlaylist == null || item.index + 1 >= _moPlaylist!.items.length
+        ? null
+        : _moPlaylist!.items[item.index + 1];
+    final nextLocator = nextItem != null && nextItem.textHref == item.textHref
+        ? locatorForMediaOverlayItem(item: nextItem, publication: publication)
+        : null;
+    final cueKey =
+        '${locator.href}#${item.textFragment ?? ''}+${nextItem?.textFragment ?? ''}';
+    if (_moHighlightHref == cueKey) {
+      _moSecondsSincePaint = 0;
+      return;
+    }
+    _moHighlightHref = cueKey;
+    _moPaintTextHref = item.textHref;
+    _moSecondsSincePaint = 0;
+    try {
+      // Navigate first; decorations can miss if applied before the fragment is on-screen.
+      await _readium.goToLocator(locator);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      const dullGrey = Color(0xffdcdcdc);
+      final decorations = <ReaderDecoration>[
+        ReaderDecoration(
+          id: 'mo-active',
+          locator: locator,
+          style: const ReaderDecorationStyle(
+            style: DecorationStyle.highlight,
+            tint: dullGrey,
+          ),
+        ),
+      ];
+      if (nextLocator != null) {
+        decorations.add(
+          ReaderDecoration(
+            id: 'mo-ahead',
+            locator: nextLocator,
+            style: const ReaderDecorationStyle(
+              style: DecorationStyle.highlight,
+              tint: dullGrey,
+            ),
+          ),
+        );
+      }
+      await _readium.applyDecorations('shelf-media-overlay', decorations);
+    } catch (_) {
+      // Highlight/navigation is best-effort on e-ink builds.
+    }
+  }
+
+  Future<void> _clearMediaOverlayHighlight() async {
+    _moHighlightHref = null;
+    _moPaintTextHref = null;
+    _moSecondsSincePaint = 0;
+    try {
+      await _readium.applyDecorations('shelf-media-overlay', const []);
+    } catch (_) {}
+  }
+
+  Future<void> _setListenVolume(double value) async {
+    _listenVolume = value.clamp(0.0, 1.0);
+    await _moPlayer.setVolume(_listenVolume);
+    await _ttsPlayer.setVolume(_listenVolume);
     if (mounted) setState(() {});
   }
 
@@ -133,6 +397,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         if (!mounted) return;
         setState(() => _currentLocator = locator);
         unawaited(_persist(locator));
+        _noteActivity();
         // Clear the native ink overlay on page turns (no PixelCopy — unsafe).
         if (_inkMode && _einkRefresh.isAccelerated) {
           unawaited(_einkRefresh.clearInkLayer());
@@ -598,18 +863,235 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     );
   }
 
+  Future<void> _onListenPressed() async {
+    if (_listenActive) {
+      await _stopListen();
+      return;
+    }
+    if (_hasMediaOverlay) {
+      await _startMediaOverlay();
+      return;
+    }
+    await _pickVoiceAndStart();
+  }
+
+  Future<void> _startMediaOverlay() async {
+    final playlist = _moPlaylist;
+    if (playlist == null || !playlist.hasNarration || _ttsBusy) return;
+    setState(() => _ttsBusy = true);
+    try {
+      await _ttsPlayer.stop();
+      final file = widget.epubs.fileFor(
+        widget.book.id,
+        digest: widget.book.digest,
+      );
+      final publication = _publication;
+      var startIndex = 0;
+      if (publication != null) {
+        final hrefs = [for (final link in publication.readingOrder) link.href];
+        final chapter = shelfTtsChapterIndex(
+          readingOrderHrefs: hrefs,
+          locatorHref: _currentLocator?.href,
+        );
+        final locator = _currentLocator;
+        final frags = locator?.locations?.fragments ?? const <String>[];
+        final frag = frags.isEmpty ? null : frags.first;
+        final hasResume = mediaOverlayResumeApplies(
+          items: playlist.items,
+          resumeIndex: _moResumeIndex,
+          resumeTextHref: _moResumeTextHref,
+          textHref: locator?.href,
+        );
+        final hasFragment = frag != null && frag.isNotEmpty;
+        startIndex = mediaOverlayStartIndex(
+          items: playlist.items,
+          sectionIndex: chapter,
+          textFragment: frag,
+          textHref: locator?.href,
+          resourceProgression: locator?.locations?.progression,
+          totalProgression:
+              locator?.locations?.totalProgression ?? widget.book.percentage,
+          resumeIndex: _moResumeIndex,
+          resumeTextHref: _moResumeTextHref,
+          // Mid-viewport → page top only for cold starts on this page.
+          biasToVisiblePageTop: !hasResume && !hasFragment,
+        );
+      }
+      // Reset paint gate so the first cue always gets a highlight.
+      _moHighlightHref = null;
+      _moPaintTextHref = null;
+      _moSecondsSincePaint = 99;
+      await _moPlayer.start(
+        playlist: playlist,
+        epubFile: file,
+        startIndex: startIndex,
+      );
+      if (mounted) await _syncMediaOverlayHighlight();
+    } finally {
+      if (mounted) setState(() => _ttsBusy = false);
+    }
+  }
+
+  Future<void> _pickVoiceAndStart() async {
+    if (!_showListen || _ttsBusy || _ttsVoices.isEmpty) return;
+    final chosen = await showModalBottomSheet<TtsVoiceInfo>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            children: [
+              const ListTile(
+                title: Text('Choose a voice'),
+                subtitle: Text('Speech is synthesized by your Shelf server.'),
+              ),
+              for (final voice in _ttsVoices)
+                ListTile(
+                  title: Text(voice.name),
+                  subtitle: Text(
+                    voice.providerName.isEmpty
+                        ? voice.providerId
+                        : voice.providerName,
+                  ),
+                  selected:
+                      _selectedVoice?.id == voice.id &&
+                      _selectedVoice?.providerId == voice.providerId,
+                  onTap: () => Navigator.pop(context, voice),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (chosen == null || !mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('shelf.tts.voiceId', chosen.id);
+    await prefs.setString('shelf.tts.providerId', chosen.providerId);
+    setState(() => _selectedVoice = chosen);
+    await _startServerTts(chosen);
+  }
+
+  Future<void> _startServerTts(TtsVoiceInfo voice) async {
+    final publication = _publication;
+    if (publication == null || !_showListen) return;
+    setState(() => _ttsBusy = true);
+    final hrefs = [for (final link in publication.readingOrder) link.href];
+    final chapter = shelfTtsChapterIndex(
+      readingOrderHrefs: hrefs,
+      locatorHref: _currentLocator?.href,
+    );
+    try {
+      await _moPlayer.stop();
+      await _ttsPlayer.start(
+        bookId: widget.book.id,
+        chapterIndex: chapter,
+        voice: voice,
+      );
+    } finally {
+      if (mounted) setState(() => _ttsBusy = false);
+    }
+  }
+
+  Future<void> _toggleListenPlayback() async {
+    // Pause must work even while start()/skip is between awaits (_ttsBusy).
+    if (_moPlayer.active) {
+      if (_moPlayer.playing) {
+        await _moPlayer.pause();
+      } else {
+        await _moPlayer.resume();
+      }
+      return;
+    }
+    if (_ttsBusy) return;
+    if (!_ttsPlayer.active) return;
+    if (_ttsPlayer.playing) {
+      await _ttsPlayer.pause();
+    } else {
+      await _ttsPlayer.resume();
+    }
+  }
+
+  Future<void> _skipListen({required bool forward}) async {
+    if (_moPlayer.active) {
+      if (forward) {
+        await _moPlayer.next();
+      } else {
+        await _moPlayer.previous();
+      }
+      return;
+    }
+    if (_ttsPlayer.active) {
+      if (forward) {
+        await _ttsPlayer.nextBlock(widget.book.id);
+      } else {
+        await _ttsPlayer.previousBlock(widget.book.id);
+      }
+    }
+  }
+
+  Future<void> _stopListen() async {
+    final item = _moPlayer.currentItem;
+    if (item != null) {
+      _moResumeIndex = item.index;
+      _moResumeTextHref = item.textHref;
+    }
+    await _ttsPlayer.stop();
+    await _moPlayer.stop();
+    await _clearMediaOverlayHighlight();
+  }
+
   @override
   void dispose() {
+    _idleTimer?.cancel();
     _locatorSub?.cancel();
     _nativeStrokeSub?.cancel();
+    _connectivitySub?.cancel();
+    _ttsPlayerSub?.cancel();
+    _moPlayerSub?.cancel();
     _showControls.removeListener(_onChromeChanged);
     _showControls.dispose();
     if (_inkMode) unawaited(_einkRefresh.endInk());
     unawaited(_einkRefresh.dispose());
     final locator = _currentLocator;
     if (locator != null) unawaited(_persist(locator));
+    unawaited(_ttsPlayer.dispose());
+    unawaited(_moPlayer.dispose());
     unawaited(_readium.closePublication());
     super.dispose();
+  }
+
+  Widget _coverScreensaver(Color paper, Color ink) {
+    final book = widget.book;
+    final cover = book.hasCover
+        ? Image.network(
+            widget.api.base
+                .resolve('/api/v1/books/${book.id}/cover')
+                .toString(),
+            headers: widget.api.readerHeaders,
+            fit: BoxFit.contain,
+            errorBuilder: (_, error, stack) => const SizedBox.shrink(),
+          )
+        : null;
+    return Material(
+      color: paper,
+      child: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child:
+                cover ??
+                Text(
+                  book.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: ink,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+          ),
+        ),
+      ),
+    );
   }
 
   String get _progressLabel => readerProgressLabel(
@@ -648,153 +1130,278 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                 child: CircularProgressIndicator(strokeWidth: 3, color: ink),
               ),
             )
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                ReadiumReaderWidget(
-                  publication: publication,
-                  initialLocator: _initialLocator,
-                  shouldShowControls: _showControls,
-                  selectionActions: const [
-                    SelectionAction(id: 'highlight', title: 'Highlight'),
-                    SelectionAction(id: 'bookmark', title: 'Bookmark'),
-                  ],
-                  onSelectionAction: (event) {
-                    if (event.actionId == 'highlight') {
-                      unawaited(_addHighlight(event));
-                    } else if (event.actionId == 'bookmark') {
-                      _currentLocator = event.locator;
-                      unawaited(_addBookmark());
-                    }
-                  },
-                  loadingWidget: const ColoredBox(
-                    color: paper,
-                    child: Center(
-                      child: SizedBox(
-                        width: 36,
-                        height: 36,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          color: ink,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                InkOverlay(
-                  key: _inkLayerKey,
-                  enabled: _inkMode,
-                  refresh: _einkRefresh,
-                  strokes: inkStrokesForPage(
-                    _inkStrokes,
-                    _currentLocator == null
-                        ? null
-                        : shelfPositionFromLocator(
-                            _currentLocator!,
-                            paged: _pagedFormat,
-                            publication: _publication,
-                          ),
-                  ),
-                  onStrokeComplete: (stroke) =>
-                      unawaited(_saveInkStroke(stroke)),
-                ),
-                if (chrome)
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: Material(
+          : Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (_) => _noteActivity(),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ReadiumReaderWidget(
+                    publication: publication,
+                    initialLocator: _initialLocator,
+                    shouldShowControls: _showControls,
+                    selectionActions: const [
+                      SelectionAction(id: 'highlight', title: 'Highlight'),
+                      SelectionAction(id: 'bookmark', title: 'Bookmark'),
+                    ],
+                    onSelectionAction: (event) {
+                      if (event.actionId == 'highlight') {
+                        unawaited(_addHighlight(event));
+                      } else if (event.actionId == 'bookmark') {
+                        _currentLocator = event.locator;
+                        unawaited(_addBookmark());
+                      }
+                    },
+                    loadingWidget: const ColoredBox(
                       color: paper,
-                      child: SafeArea(
-                        bottom: false,
+                      child: Center(
                         child: SizedBox(
-                          height: kToolbarHeight,
-                          child: Row(
-                            children: [
-                              IconButton(
-                                tooltip: 'Back',
-                                onPressed: () =>
-                                    Navigator.of(context).maybePop(),
-                                icon: const Icon(Icons.arrow_back, color: ink),
-                              ),
-                              Expanded(
-                                child: Text(
-                                  widget.book.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: ink,
-                                    fontSize: 18,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: _inkModeTooltip,
-                                onPressed: _toggleInkMode,
-                                icon: Icon(
-                                  _inkMode ? Icons.edit_off : Icons.edit,
-                                  color: ink,
-                                ),
-                              ),
-                              if (widget.book.isCbz)
-                                IconButton(
-                                  tooltip: 'Comic view',
-                                  onPressed: _showComicPrefsSheet,
-                                  icon: const Icon(
-                                    Icons.view_carousel_outlined,
-                                    color: ink,
-                                  ),
-                                ),
-                              IconButton(
-                                tooltip: 'Bookmarks and highlights',
-                                onPressed: _showMarksSheet,
-                                icon: const Icon(
-                                  Icons.bookmarks_outlined,
-                                  color: ink,
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: 'Add bookmark',
-                                onPressed: _addBookmark,
-                                icon: const Icon(
-                                  Icons.bookmark_add_outlined,
-                                  color: ink,
-                                ),
-                              ),
-                            ],
+                          width: 36,
+                          height: 36,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 3,
+                            color: ink,
                           ),
                         ),
                       ),
                     ),
                   ),
-                if (chrome)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Material(
-                      color: paper,
-                      child: SafeArea(
-                        top: false,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          child: Text(
-                            _progressLabel,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: ink,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
+                  InkOverlay(
+                    key: _inkLayerKey,
+                    enabled: _inkMode,
+                    refresh: _einkRefresh,
+                    strokes: inkStrokesForPage(
+                      _inkStrokes,
+                      _currentLocator == null
+                          ? null
+                          : shelfPositionFromLocator(
+                              _currentLocator!,
+                              paged: _pagedFormat,
+                              publication: _publication,
+                            ),
+                    ),
+                    onStrokeComplete: (stroke) =>
+                        unawaited(_saveInkStroke(stroke)),
+                  ),
+                  if (chrome)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: Material(
+                        color: paper,
+                        child: SafeArea(
+                          bottom: false,
+                          child: SizedBox(
+                            height: kToolbarHeight,
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  tooltip: 'Back',
+                                  onPressed: () =>
+                                      Navigator.of(context).maybePop(),
+                                  icon: const Icon(
+                                    Icons.arrow_back,
+                                    color: ink,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    widget.book.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: _inkModeTooltip,
+                                  onPressed: _toggleInkMode,
+                                  icon: Icon(
+                                    _inkMode ? Icons.edit_off : Icons.edit,
+                                    color: ink,
+                                  ),
+                                ),
+                                if (widget.book.isCbz)
+                                  IconButton(
+                                    tooltip: 'Comic view',
+                                    onPressed: _showComicPrefsSheet,
+                                    icon: const Icon(
+                                      Icons.view_carousel_outlined,
+                                      color: ink,
+                                    ),
+                                  ),
+                                if (_showListen)
+                                  IconButton(
+                                    tooltip: _listenActive
+                                        ? 'Stop listening'
+                                        : (_hasMediaOverlay
+                                              ? 'Listen (read-along)'
+                                              : 'Listen'),
+                                    onPressed: _ttsBusy
+                                        ? null
+                                        : () => unawaited(_onListenPressed()),
+                                    icon: Icon(
+                                      _listenActive
+                                          ? Icons.headphones
+                                          : Icons.headphones_outlined,
+                                      color: ink,
+                                    ),
+                                  ),
+                                IconButton(
+                                  tooltip: 'Bookmarks and highlights',
+                                  onPressed: _showMarksSheet,
+                                  icon: const Icon(
+                                    Icons.bookmarks_outlined,
+                                    color: ink,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Add bookmark',
+                                  onPressed: _addBookmark,
+                                  icon: const Icon(
+                                    Icons.bookmark_add_outlined,
+                                    color: ink,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                  if (chrome)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Material(
+                        color: paper,
+                        child: SafeArea(
+                          top: false,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_listenActive) ...[
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      IconButton(
+                                        tooltip: 'Previous',
+                                        onPressed: () => unawaited(
+                                          _skipListen(forward: false),
+                                        ),
+                                        icon: const Icon(
+                                          Icons.skip_previous,
+                                          color: ink,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: _listenPlaying
+                                            ? 'Pause'
+                                            : 'Play',
+                                        onPressed: () =>
+                                            unawaited(_toggleListenPlayback()),
+                                        icon: Icon(
+                                          _listenPlaying
+                                              ? Icons.pause
+                                              : Icons.play_arrow,
+                                          color: ink,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Next',
+                                        onPressed: () => unawaited(
+                                          _skipListen(forward: true),
+                                        ),
+                                        icon: const Icon(
+                                          Icons.skip_next,
+                                          color: ink,
+                                        ),
+                                      ),
+                                      if (_ttsPlayer.active)
+                                        IconButton(
+                                          tooltip: 'Change voice',
+                                          onPressed: _ttsBusy
+                                              ? null
+                                              : () => unawaited(
+                                                  _pickVoiceAndStart(),
+                                                ),
+                                          icon: const Icon(
+                                            Icons.record_voice_over_outlined,
+                                            color: ink,
+                                          ),
+                                        ),
+                                      IconButton(
+                                        tooltip: 'Stop listening',
+                                        onPressed: () =>
+                                            unawaited(_stopListen()),
+                                        icon: const Icon(
+                                          Icons.close,
+                                          color: ink,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.volume_mute, color: ink),
+                                      Expanded(
+                                        child: Slider(
+                                          value: _listenVolume,
+                                          onChanged: (value) => unawaited(
+                                            _setListenVolume(value),
+                                          ),
+                                        ),
+                                      ),
+                                      const Icon(Icons.volume_up, color: ink),
+                                    ],
+                                  ),
+                                  if (_listenError != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: Text(
+                                        _listenError!,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          color: ink,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                                Text(
+                                  _progressLabel,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: ink,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (_screensaverVisible)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _noteActivity,
+                        child: _coverScreensaver(paper, ink),
+                      ),
+                    ),
+                ],
+              ),
             ),
     );
   }

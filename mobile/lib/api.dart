@@ -3,12 +3,84 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'media_overlay_playlist.dart';
+
 class ShelfException implements Exception {
   ShelfException(this.message, {this.statusCode});
   final String message;
   final int? statusCode;
   @override
   String toString() => message;
+}
+
+/// Human-readable download status for the open/download dialog.
+String formatDownloadProgress(int received, int? total) {
+  if (total != null && total > 0) {
+    final pct = ((received / total) * 100).clamp(0, 100).floor();
+    return 'Downloading… ${_formatBytes(received)} / ${_formatBytes(total)} ($pct%)';
+  }
+  if (received > 0) return 'Downloading… ${_formatBytes(received)}';
+  return 'Downloading…';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) {
+    return '${(bytes / 1024).toStringAsFixed(bytes < 10 * 1024 ? 1 : 0)} KB';
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    final mb = bytes / (1024 * 1024);
+    return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
+  }
+  final gb = bytes / (1024 * 1024 * 1024);
+  return '${gb.toStringAsFixed(2)} GB';
+}
+
+class TtsProviderInfo {
+  TtsProviderInfo({required this.id, required this.name});
+  factory TtsProviderInfo.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final name = json['name'];
+    if (id is! String || id.isEmpty || name is! String || name.isEmpty) {
+      throw ShelfException('Invalid TTS provider entry.');
+    }
+    return TtsProviderInfo(id: id, name: name);
+  }
+  final String id;
+  final String name;
+}
+
+class TtsVoiceInfo {
+  TtsVoiceInfo({
+    required this.id,
+    required this.name,
+    required this.providerId,
+    required this.providerName,
+  });
+  factory TtsVoiceInfo.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final name = json['name'] ?? json['shortName'] ?? id;
+    final providerId = json['providerId'];
+    final providerName = json['providerName'] ?? '';
+    if (id is! String ||
+        id.isEmpty ||
+        name is! String ||
+        name.isEmpty ||
+        providerId is! String ||
+        providerId.isEmpty) {
+      throw ShelfException('Invalid TTS voice entry.');
+    }
+    return TtsVoiceInfo(
+      id: id,
+      name: name,
+      providerId: providerId,
+      providerName: providerName is String ? providerName : '',
+    );
+  }
+  final String id;
+  final String name;
+  final String providerId;
+  final String providerName;
 }
 
 class Book {
@@ -444,17 +516,103 @@ class ShelfApi {
     await request('books/$bookId/annotations/$annotationId', method: 'DELETE');
   }
 
-  /// Authenticated EPUB/PDF/CBZ bytes for offline storage / Readium open.
-  Future<List<int>> downloadEpub(int bookId) async {
+  /// EPUB3 SMIL playlist for read-along (empty items when the book has none).
+  Future<MediaOverlayPlaylist> mediaOverlayPlaylist(int bookId) async {
+    // Large read-alongs need more than the default 15s API timeout while SMIL is parsed.
     try {
-      final request = await _client.getUrl(
-        base.resolve('/api/v1/books/$bookId/file'),
+      final data = await _request(
+        'epub/$bookId/media-overlay?fileId=$bookId',
+        'GET',
+        null,
+      ).timeout(const Duration(seconds: 90));
+      if (data is! Map<String, dynamic>) {
+        throw ShelfException('Could not load media-overlay playlist.');
+      }
+      return MediaOverlayPlaylist.fromJson(data);
+    } on ShelfException {
+      rethrow;
+    } on FormatException {
+      throw ShelfException('Could not load media-overlay playlist.');
+    } on Exception catch (error) {
+      final detail = kDebugMode ? ' ($error)' : '';
+      throw ShelfException(
+        'Could not reach your server. Check the address and connection.$detail',
+      );
+    }
+  }
+
+  /// Enabled OpenAI-compatible TTS providers (empty ⇒ hide synthesize listen).
+  Future<List<TtsProviderInfo>> listTtsProviders() async {
+    final data = await request('tts/providers');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid TTS provider list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) TtsProviderInfo.fromJson(item),
+    ];
+  }
+
+  Future<List<TtsVoiceInfo>> listTtsVoices({String? providerId}) async {
+    final path = providerId == null
+        ? 'tts/voices'
+        : 'tts/voices?providerId=${Uri.encodeQueryComponent(providerId)}';
+    final data = await request(path);
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid TTS voice list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) TtsVoiceInfo.fromJson(item),
+    ];
+  }
+
+  Future<List<String>> ttsChapterBlocks(int bookId, int chapterIndex) async {
+    final data = await request('tts/text/$bookId/$chapterIndex');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not load chapter text for listening.');
+    }
+    final sentences = data['sentences'];
+    if (sentences is! List) return [];
+    return [
+      for (final item in sentences)
+        if (item is Map &&
+            item['text'] is String &&
+            (item['text'] as String).trim().isNotEmpty)
+          (item['text'] as String).trim(),
+    ];
+  }
+
+  /// MP3 (or provider format) bytes from Shelf's synthesize proxy.
+  Future<List<int>> synthesizeTts({
+    required String text,
+    required String voiceId,
+    required String providerId,
+    double speed = 1.0,
+  }) async {
+    try {
+      final request = await _client.postUrl(
+        base.resolve('/api/v1/tts/synthesize'),
       );
       request.followRedirects = false;
       request.persistentConnection = false;
+      request.headers.contentType = ContentType.json;
       if (_token != null) {
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       }
+      request.write(
+        jsonEncode({
+          'text': text,
+          'voiceId': voiceId,
+          'providerId': providerId,
+          'speed': speed,
+          'format': 'mp3',
+        }),
+      );
       final response = await request.close().timeout(
         const Duration(seconds: 90),
       );
@@ -469,14 +627,17 @@ class ShelfApi {
         (out, chunk) => out..addAll(chunk),
       );
       if (response.statusCode >= 400) {
-        throw ShelfException(
-          response.statusCode == 404
-              ? 'Book not found.'
-              : 'Could not download this book file.',
-        );
+        String message = 'Could not synthesize speech.';
+        try {
+          final decoded = jsonDecode(utf8.decode(bytes));
+          if (decoded is Map && decoded['error'] is String) {
+            message = decoded['error'] as String;
+          }
+        } catch (_) {}
+        throw ShelfException(message, statusCode: response.statusCode);
       }
       if (bytes.isEmpty) {
-        throw ShelfException('Could not download this book file.');
+        throw ShelfException('TTS provider returned empty audio.');
       }
       return bytes;
     } on ShelfException {
@@ -485,6 +646,84 @@ class ShelfApi {
       throw ShelfException(
         'Could not reach your server. Check the address and connection.',
       );
+    }
+  }
+
+  /// Stream an authenticated book file to [dest] (avoids buffering multi‑GB EPUBs in RAM).
+  ///
+  /// [onProgress] receives bytes written so far and Content-Length when the server sent one.
+  Future<void> downloadBookToFile(
+    int bookId,
+    File dest, {
+    void Function(int received, int? total)? onProgress,
+  }) async {
+    IOSink? sink;
+    try {
+      await dest.parent.create(recursive: true);
+      final temp = File('${dest.path}.partial');
+      sink = temp.openWrite();
+      final request = await _client.getUrl(
+        base.resolve('/api/v1/books/$bookId/file'),
+      );
+      request.followRedirects = false;
+      request.persistentConnection = false;
+      if (_token != null) {
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      }
+      final response = await request.close().timeout(
+        const Duration(seconds: 120),
+      );
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        await response.drain<void>();
+        throw ShelfException(
+          'Enter the final HTTPS server address; redirects are not followed.',
+        );
+      }
+      if (response.statusCode >= 400) {
+        await response.drain<void>();
+        throw ShelfException(
+          response.statusCode == 404
+              ? 'Book not found.'
+              : 'Could not download this book file.',
+          statusCode: response.statusCode,
+        );
+      }
+      final total = response.contentLength >= 0 ? response.contentLength : null;
+      var wrote = 0;
+      var lastReportMs = 0;
+      void report({bool force = false}) {
+        if (onProgress == null) return;
+        final now = DateTime.now().millisecondsSinceEpoch;
+        // E-ink: avoid rebuilding the dialog on every TCP chunk.
+        if (!force && now - lastReportMs < 250) return;
+        lastReportMs = now;
+        onProgress(wrote, total);
+      }
+
+      report(force: true);
+      await for (final chunk in response) {
+        sink.add(chunk);
+        wrote += chunk.length;
+        report();
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (wrote < 1) {
+        await temp.delete().catchError((_) => temp);
+        throw ShelfException('Could not download this book file.');
+      }
+      report(force: true);
+      if (await dest.exists()) await dest.delete();
+      await temp.rename(dest.path);
+    } on ShelfException {
+      rethrow;
+    } on Exception {
+      throw ShelfException(
+        'Could not reach your server. Check the address and connection.',
+      );
+    } finally {
+      await sink?.close().catchError((_) {});
     }
   }
 

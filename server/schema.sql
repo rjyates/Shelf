@@ -29,7 +29,11 @@ CREATE TABLE IF NOT EXISTS epub_files (
   percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
   format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu')),
   -- Original upload for converted comics (CBR/CB7/DjVu); NULL when content is the source.
-  source BLOB
+  source BLOB,
+  -- When set, book bytes live under $SHELF_DATA/{storage_path} and `content` is empty.
+  storage_path TEXT,
+  -- Same for oversized `source` blobs (converted comics).
+  source_path TEXT
 );
 CREATE INDEX IF NOT EXISTS epub_digest ON epub_files(digest);
 CREATE TABLE IF NOT EXISTS bookmarks (
