@@ -214,23 +214,114 @@ fn book_file_mime(format: &str) -> (&'static str, &'static str) {
             "application/vnd.comicbook+zip",
             "attachment; filename=book.cbz",
         ),
+        "mp3" => ("audio/mpeg", "inline; filename=book.mp3"),
+        "m4b" => ("audio/mp4", "inline; filename=book.m4b"),
         _ => ("application/epub+zip", "attachment; filename=book.epub"),
     }
 }
 
+/// Parse `Range: bytes=start-end` (inclusive). Unsatisfiable ranges return None.
+fn parse_bytes_range(header: &str, len: u64) -> Option<(u64, u64)> {
+    let spec = header.strip_prefix("bytes=")?;
+    if spec.contains(',') {
+        return None;
+    }
+    let (start_s, end_s) = spec.split_once('-')?;
+    if start_s.is_empty() {
+        let suffix: u64 = end_s.parse().ok()?;
+        if suffix == 0 || len == 0 {
+            return None;
+        }
+        let start = len.saturating_sub(suffix);
+        return Some((start, len - 1));
+    }
+    let start: u64 = start_s.parse().ok()?;
+    if start >= len {
+        return None;
+    }
+    let end = if end_s.is_empty() {
+        len - 1
+    } else {
+        end_s.parse::<u64>().ok()?.min(len - 1)
+    };
+    if end < start {
+        return None;
+    }
+    Some((start, end))
+}
+
 /// Stream a spilled on-disk book without loading the whole file into RAM.
+/// Honors `Range` so audiobook players can seek large M4Bs.
 async fn stream_book_file(
     absolute: PathBuf,
     mime: &'static str,
     disposition: &'static str,
+    range_header: Option<&header::HeaderValue>,
 ) -> ApiResult<Response> {
-    let file = tokio::fs::File::open(&absolute).await.map_err(|_| {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let mut file = tokio::fs::File::open(&absolute).await.map_err(|_| {
         ApiError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Could not read the on-disk book file.",
         )
     })?;
     let len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let range = range_header
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| parse_bytes_range(s, len));
+
+    if let Some((start, end)) = range {
+        let take = end - start + 1;
+        file.seek(std::io::SeekFrom::Start(start))
+            .await
+            .map_err(|_| {
+                ApiError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Could not seek the on-disk book file.",
+                )
+            })?;
+        let body =
+            axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file.take(take)));
+        let mut response = body.into_response();
+        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+        let headers = response.headers_mut();
+        headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(mime));
+        headers.insert(
+            header::CONTENT_DISPOSITION,
+            header::HeaderValue::from_static(disposition),
+        );
+        headers.insert(
+            header::ACCEPT_RANGES,
+            header::HeaderValue::from_static("bytes"),
+        );
+        headers.insert(header::CONTENT_LENGTH, header::HeaderValue::from(take));
+        headers.insert(
+            header::CONTENT_RANGE,
+            header::HeaderValue::from_str(&format!("bytes {start}-{end}/{len}")).map_err(|_| {
+                ApiError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Could not build Content-Range.",
+                )
+            })?,
+        );
+        return Ok(response);
+    }
+
+    if range_header.is_some() && len > 0 {
+        let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+        response.headers_mut().insert(
+            header::CONTENT_RANGE,
+            header::HeaderValue::from_str(&format!("bytes */{len}")).map_err(|_| {
+                ApiError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Could not build Content-Range.",
+                )
+            })?,
+        );
+        return Ok(response);
+    }
+
     let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
     let mut response = (
         [
@@ -240,7 +331,10 @@ async fn stream_book_file(
         body,
     )
         .into_response();
-    // Clients need a length for a determinate download progress bar.
+    response.headers_mut().insert(
+        header::ACCEPT_RANGES,
+        header::HeaderValue::from_static("bytes"),
+    );
     if len > 0 {
         response
             .headers_mut()
@@ -249,14 +343,14 @@ async fn stream_book_file(
     Ok(response)
 }
 
-/// SQLite cannot ALTER a CHECK; rebuild epub_files when comic formats are missing.
+/// SQLite cannot ALTER a CHECK; rebuild epub_files when formats are missing.
 fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
     let sql: String = db.query_row(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='epub_files'",
         [],
         |r| r.get(0),
     )?;
-    if sql.contains("'cb7'") {
+    if sql.contains("'mp3'") {
         let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source BLOB");
         let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN storage_path TEXT");
         let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source_path TEXT");
@@ -273,7 +367,7 @@ fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
            cover_mime TEXT,
            position TEXT,
            percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
-           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu')),
+           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu','mp3','m4b')),
            source BLOB,
            storage_path TEXT,
            source_path TEXT
@@ -647,6 +741,8 @@ async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<J
                             Some("cbr") => "cbr",
                             Some("cb7") => "cb7",
                             Some("djvu") => "djvu",
+                            Some("mp3") => "mp3",
+                            Some("m4b") => "m4b",
                             _ => "epub",
                         },
                         digest: digest.unwrap_or_default(),
@@ -891,6 +987,37 @@ mod tests {
         );
         remove_book_file(&data_dir, Some(relative.as_str()));
         assert!(!data_dir.join(&relative).exists());
+    }
+
+    #[test]
+    fn parse_bytes_range_accepts_start_end_and_suffix() {
+        assert_eq!(parse_bytes_range("bytes=0-0", 10), Some((0, 0)));
+        assert_eq!(parse_bytes_range("bytes=2-5", 10), Some((2, 5)));
+        assert_eq!(parse_bytes_range("bytes=8-", 10), Some((8, 9)));
+        assert_eq!(parse_bytes_range("bytes=-3", 10), Some((7, 9)));
+        assert_eq!(parse_bytes_range("bytes=10-12", 10), None);
+        assert_eq!(parse_bytes_range("bytes=0-1,2-3", 10), None);
+    }
+
+    #[tokio::test]
+    async fn stream_book_file_returns_partial_content_for_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("book.m4b");
+        std::fs::write(&path, b"0123456789ABCDEF").unwrap();
+        let range = header::HeaderValue::from_static("bytes=4-7");
+        let response =
+            stream_book_file(path, "audio/mp4", "inline; filename=book.m4b", Some(&range))
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 4-7/16"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"4567");
     }
 
     #[test]

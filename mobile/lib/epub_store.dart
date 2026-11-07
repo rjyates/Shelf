@@ -7,7 +7,12 @@ class EpubStore {
 
   Directory get _dir => Directory('${root.path}/epubs');
 
-  static String extensionFor({bool isPdf = false, bool isCbz = false}) {
+  static String extensionFor({
+    bool isPdf = false,
+    bool isCbz = false,
+    String? format,
+  }) {
+    if (format == 'mp3' || format == 'm4b') return format!;
     if (isCbz) return 'cbz';
     if (isPdf) return 'pdf';
     return 'epub';

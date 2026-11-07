@@ -122,6 +122,24 @@ fn sample_cb7() -> Vec<u8> {
         .into_inner()
 }
 
+fn sample_mp3() -> Vec<u8> {
+    let mut bytes = b"ID3".to_vec();
+    bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]);
+    bytes.extend_from_slice(&[0xff, 0xfb, 0x90, 0x00]);
+    bytes.extend_from_slice(b"shelf-mp3-fixture");
+    bytes
+}
+
+fn sample_m4b() -> Vec<u8> {
+    let mut bytes = vec![0, 0, 0, 24];
+    bytes.extend_from_slice(b"ftyp");
+    bytes.extend_from_slice(b"M4B ");
+    bytes.extend_from_slice(&[0, 0, 0, 0]);
+    bytes.extend_from_slice(b"M4B ");
+    bytes.extend_from_slice(b"shelf-m4b-fixture!!!!");
+    bytes
+}
+
 async fn upload(app: &Router, bytes: Vec<u8>, token: Option<&str>) -> (StatusCode, Value) {
     upload_named(app, bytes, token, None).await
 }
@@ -1497,5 +1515,128 @@ async fn bookmarks_annotations_and_reader_prefs_persist() {
         .await
         .0,
         StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn mp3_m4b_import_serve_audioms_and_range() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("audio.db")).unwrap();
+    let credentials = json!({"username":"listener","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, book) =
+        upload_named(&app, sample_mp3(), Some(&token), Some("Night Watch.mp3")).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let mp3_id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["format"], "mp3");
+    assert_eq!(catalogue[0]["title"], "Night Watch");
+
+    let location = format!("/api/v1/books/{mp3_id}/location");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &location,
+            json!({"position":"audioms(-1)","percentage":0.1}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &location,
+            json!({"position":"audioms(1500)","percentage":0.25}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["position"], "audioms(1500)");
+    assert_eq!(catalogue[0]["percentage"], 0.25);
+
+    let file = format!("/api/v1/books/{mp3_id}/file");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&file)
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.headers()["content-type"], "audio/mpeg");
+    assert_eq!(response.headers()["accept-ranges"], "bytes");
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap(),
+        sample_mp3()
+    );
+
+    let (status, book) =
+        upload_named(&app, sample_m4b(), Some(&token), Some("The_Hobbit.m4b")).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let m4b_id = book["id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let m4b = catalogue
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == m4b_id)
+        .unwrap();
+    assert_eq!(m4b["format"], "m4b");
+    assert_eq!(m4b["title"], "The Hobbit");
+
+    std::fs::create_dir_all(temp.path().join("files")).unwrap();
+    let payload: Vec<u8> = (0u8..64).collect();
+    let spill_rel = "files/range-fixture-digest.m4b".to_string();
+    std::fs::write(temp.path().join(&spill_rel), &payload).unwrap();
+    {
+        use rusqlite::params;
+        let db = rusqlite::Connection::open(temp.path().join("audio.db")).unwrap();
+        db.execute(
+            "UPDATE epub_files SET content=X'', storage_path=? WHERE book_id=?",
+            params![spill_rel, m4b_id],
+        )
+        .unwrap();
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/books/{m4b_id}/file"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("range", "bytes=10-19")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()["content-type"], "audio/mp4");
+    assert_eq!(response.headers()["content-range"], "bytes 10-19/64");
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+        &payload[10..20]
     );
 }

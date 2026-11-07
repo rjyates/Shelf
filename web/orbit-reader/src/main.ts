@@ -19,7 +19,13 @@ const router = createRouter({
         const raw =
           typeof to.query.format === 'string' ? to.query.format.toLowerCase() : 'epub'
         const format =
-          raw === 'pdf' || raw === 'cbz' || raw === 'cbr' || raw === 'cb7' || raw === 'djvu'
+          raw === 'pdf' ||
+          raw === 'cbz' ||
+          raw === 'cbr' ||
+          raw === 'cb7' ||
+          raw === 'djvu' ||
+          raw === 'mp3' ||
+          raw === 'm4b'
             ? raw
             : 'epub'
         if (Number.isFinite(id) && id > 0) {

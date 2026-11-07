@@ -113,8 +113,9 @@ class Book {
         format == 'cbr' ||
         format == 'cb7' ||
         format == 'djvu';
-    // PDF/comics are imported like EPUB (null page count + %). CBR/CB7/DjVu arrive as ZIP-backed comics.
-    final imported = epub || format == 'pdf' || comic;
+    final audio = format == 'mp3' || format == 'm4b';
+    // PDF/comics/audio are imported like EPUB (null page count + %). CBR/CB7/DjVu arrive as ZIP-backed comics.
+    final imported = epub || format == 'pdf' || comic || audio;
     final percentage = json['percentage'];
     final position = json['position'];
     final status = json['reading_status'] ?? 'open';
@@ -183,7 +184,7 @@ class Book {
   final bool isPdf;
   final bool isCbz;
 
-  /// Server format string for imported books (`epub` / `pdf` / `cbz` / `cbr` / `cb7` / `djvu`).
+  /// Server format string for imported books (`epub` / `pdf` / comics / `mp3` / `m4b`).
   final String? format;
 
   /// SHA-256 hex of the uploaded file; offline cache key.
@@ -194,10 +195,15 @@ class Book {
   final int pagesRead;
   final String readingStatus;
 
-  bool get isImported => isEpub || isPdf || isCbz;
+  bool get isAudio => format == 'mp3' || format == 'm4b';
 
-  /// Formats opened in the Readium reader (not manual page progress).
+  bool get isImported => isEpub || isPdf || isCbz || isAudio;
+
+  /// Formats opened in the Readium reader (not manual page progress or audiobooks).
   bool get opensInReader => isEpub || isPdf || isCbz;
+
+  /// Standalone audiobook player (not Readium).
+  bool get opensAsAudiobook => isAudio;
 
   /// Fraction complete for catalogue math (imported % or manual pages).
   double get progressFraction =>
@@ -321,7 +327,7 @@ class ShelfApi {
 
   Future<bool> importEpub(List<int> bytes, {String? filename}) async {
     if (bytes.isEmpty) {
-      throw ShelfException('Choose a non-empty EPUB file.');
+      throw ShelfException('Choose a non-empty book file.');
     }
     try {
       final request = await _client.postUrl(
@@ -329,7 +335,12 @@ class ShelfApi {
       );
       request.followRedirects = false;
       request.persistentConnection = false;
-      request.headers.contentType = ContentType('application', 'epub+zip');
+      final lower = filename?.trim().toLowerCase() ?? '';
+      request.headers.contentType = lower.endsWith('.mp3')
+          ? ContentType('audio', 'mpeg')
+          : lower.endsWith('.m4b')
+          ? ContentType('audio', 'mp4')
+          : ContentType('application', 'epub+zip');
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       if (filename != null && filename.trim().isNotEmpty) {
         request.headers.set('x-shelf-filename', filename.trim());

@@ -66,7 +66,7 @@ static IMPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 fn invalid() -> ApiError {
     ApiError(
         StatusCode::BAD_REQUEST,
-        "Not a supported book file. Use an unencrypted EPUB, PDF, CBZ, CBR, CB7, or DjVu.",
+        "Not a supported book file. Use an unencrypted EPUB, PDF, CBZ, CBR, CB7, DjVu, MP3, or M4B.",
     )
 }
 
@@ -104,6 +104,38 @@ fn is_djvu(bytes: &[u8]) -> bool {
 
 fn is_comic_format(format: &str) -> bool {
     matches!(format, "cbz" | "cbr" | "cb7" | "djvu")
+}
+
+fn is_mp3(bytes: &[u8]) -> bool {
+    if bytes.len() < 3 {
+        return false;
+    }
+    if bytes.starts_with(b"ID3") {
+        return true;
+    }
+    bytes[0] == 0xff && (bytes[1] & 0xe0) == 0xe0
+}
+
+fn is_mp4_ftyp(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && &bytes[4..8] == b"ftyp"
+}
+
+fn detect_audio(bytes: &[u8], filename: Option<&str>) -> Option<&'static str> {
+    let ext = filename
+        .and_then(|n| std::path::Path::new(n).extension())
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    if is_mp3(bytes) && matches!(ext.as_deref(), None | Some("mp3")) {
+        return Some("mp3");
+    }
+    if is_mp4_ftyp(bytes) {
+        let brand = &bytes[8..12];
+        let audiobook_brand = matches!(brand, b"M4B " | b"M4A ");
+        if ext.as_deref() == Some("m4b") || (ext.is_none() && audiobook_brand) {
+            return Some("m4b");
+        }
+    }
+    None
 }
 
 fn image_mime(path: &str) -> Option<&'static str> {
@@ -399,6 +431,16 @@ fn valid_page_token(position: &str, prefix: &str) -> bool {
         && inner.parse::<u32>().is_ok_and(|n| n >= 1)
 }
 
+fn valid_audioms(position: &str) -> bool {
+    let Some(inner) = position
+        .strip_prefix("audioms(")
+        .and_then(|s| s.strip_suffix(')'))
+    else {
+        return false;
+    };
+    !inner.is_empty() && inner.bytes().all(|b| b.is_ascii_digit()) && inner.parse::<u64>().is_ok()
+}
+
 fn valid_position(position: &str) -> bool {
     if position.len() > 4096 || position.chars().any(char::is_control) {
         return false;
@@ -406,8 +448,9 @@ fn valid_position(position: &str) -> bool {
     if position.starts_with("epubcfi(") && position.ends_with(')') {
         return true;
     }
-    // pdfpage(N) / cbzpage(N) — 1-based page indexes for EmbedPDF / comic readers.
-    valid_page_token(position, "pdfpage(") || valid_page_token(position, "cbzpage(")
+    valid_page_token(position, "pdfpage(")
+        || valid_page_token(position, "cbzpage(")
+        || valid_audioms(position)
 }
 
 fn import_epub(
@@ -484,6 +527,38 @@ fn import_epub(
             cover.as_ref().map(|v| v.1),
             storage_path,
         ],
+    )?;
+    Ok(id)
+}
+
+fn import_audio(
+    tx: &rusqlite::Transaction<'_>,
+    user: i64,
+    bytes: &[u8],
+    digest: &str,
+    filename: Option<&str>,
+    format: &str,
+    data_dir: &std::path::Path,
+) -> ApiResult<i64> {
+    if !matches!(format, "mp3" | "m4b") || detect_audio(bytes, filename) != Some(format) {
+        return Err(invalid());
+    }
+    let title = title_from_filename(filename).unwrap_or_else(|| {
+        if format == "m4b" {
+            "Untitled audiobook".into()
+        } else {
+            "Untitled audio".into()
+        }
+    });
+    tx.execute(
+        "INSERT INTO books(user_id,title,author,total_pages) VALUES (?,?,?,1)",
+        params![user, title, ""],
+    )?;
+    let id = tx.last_insert_rowid();
+    let (content, storage_path) = store_book_bytes(data_dir, digest, format, bytes)?;
+    tx.execute(
+        "INSERT INTO epub_files(book_id,digest,content,format,storage_path) VALUES (?,?,?,?,?)",
+        params![id, digest, content, format, storage_path],
     )?;
     Ok(id)
 }
@@ -628,6 +703,8 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
             } else if is_djvu(&bytes) {
                 let zip = djvu_to_zip(&bytes)?;
                 import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "djvu", Some(&bytes), &data_dir)?
+            } else if let Some(audio_format) = detect_audio(&bytes, filename.as_deref()) {
+                import_audio(&tx, user, &bytes, &digest, filename.as_deref(), audio_format, &data_dir)?
             } else if is_zip(&bytes) && !is_epub_zip(&bytes) {
                 import_comic_zip(&tx, user, &bytes, &digest, filename.as_deref(), "cbz", None, &data_dir)?
             } else {
@@ -714,16 +791,29 @@ pub(super) async fn file(
                 "Invalid on-disk book path.",
             ));
         }
-        return stream_book_file(data_dir.join(relative), mime, disposition).await;
+        return stream_book_file(
+            data_dir.join(relative),
+            mime,
+            disposition,
+            headers.get(header::RANGE),
+        )
+        .await;
     }
-    Ok((
+    let mut response = (
         [
             (header::CONTENT_TYPE, mime),
             (header::CONTENT_DISPOSITION, disposition),
         ],
         inline,
     )
-        .into_response())
+        .into_response();
+    if matches!(format.as_str(), "mp3" | "m4b") {
+        response.headers_mut().insert(
+            header::ACCEPT_RANGES,
+            header::HeaderValue::from_static("bytes"),
+        );
+    }
+    Ok(response)
 }
 
 /// Original upload bytes for converted comics (`source`), else same as `/file`.
@@ -762,6 +852,8 @@ pub(super) async fn source_file(
                 ),
                 "cb7" => ("application/x-7z-compressed", "attachment; filename=book.cb7"),
                 "djvu" => ("image/vnd.djvu", "attachment; filename=book.djvu"),
+                "mp3" => ("audio/mpeg", "inline; filename=book.mp3"),
+                "m4b" => ("audio/mp4", "inline; filename=book.m4b"),
                 _ => ("application/epub+zip", "attachment; filename=book.epub"),
             };
             Ok((

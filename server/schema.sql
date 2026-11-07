@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS epub_files (
   cover_mime TEXT,
   position TEXT,
   percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
-  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu')),
+  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu','mp3','m4b')),
   -- Original upload for converted comics (CBR/CB7/DjVu); NULL when content is the source.
   source BLOB,
   -- When set, book bytes live under $SHELF_DATA/{storage_path} and `content` is empty.
