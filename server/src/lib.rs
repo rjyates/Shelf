@@ -189,15 +189,69 @@ fn load_owned_book_file(
     user: i64,
     id: i64,
 ) -> ApiResult<(Vec<u8>, String)> {
-    let (inline, storage_path, format): (Vec<u8>, Option<String>, String) = db
-        .query_row(
-            "SELECT f.content,f.storage_path,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
-            params![id, user],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .optional()?
-        .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))?;
+    let (inline, storage_path, format) = owned_book_file_row(db, user, id)?;
     Ok((load_book_bytes(data_dir, inline, storage_path)?, format))
+}
+
+fn owned_book_file_row(
+    db: &Connection,
+    user: i64,
+    id: i64,
+) -> ApiResult<(Vec<u8>, Option<String>, String)> {
+    db.query_row(
+        "SELECT f.content,f.storage_path,f.format FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?",
+        params![id, user],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .optional()?
+    .ok_or(ApiError(StatusCode::NOT_FOUND, "Book file not found."))
+}
+
+fn book_file_mime(format: &str) -> (&'static str, &'static str) {
+    match format {
+        "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
+        "cbz" | "cbr" | "cb7" | "djvu" => (
+            "application/vnd.comicbook+zip",
+            "attachment; filename=book.cbz",
+        ),
+        _ => ("application/epub+zip", "attachment; filename=book.epub"),
+    }
+}
+
+/// Stream a spilled on-disk book without loading the whole file into RAM.
+async fn stream_book_file(
+    absolute: PathBuf,
+    mime: &'static str,
+    disposition: &'static str,
+) -> ApiResult<Response> {
+    let file = tokio::fs::File::open(&absolute).await.map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not read the on-disk book file.",
+        )
+    })?;
+    let len = file
+        .metadata()
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
+    let mut response = (
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        body,
+    )
+        .into_response();
+    // Clients need a length for a determinate download progress bar.
+    if len > 0 {
+        response.headers_mut().insert(
+            header::CONTENT_LENGTH,
+            header::HeaderValue::from(len),
+        );
+    }
+    Ok(response)
 }
 
 /// SQLite cannot ALTER a CHECK; rebuild epub_files when comic formats are missing.

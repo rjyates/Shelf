@@ -11,6 +11,7 @@ import 'connectivity.dart';
 import 'display_profile.dart';
 import 'eink_reader.dart';
 import 'epub_store.dart';
+import 'screensaver_prefs.dart';
 import 'session_store.dart';
 import 'sync_outbox.dart';
 
@@ -261,45 +262,96 @@ Future<void> showDisplayProfilePicker({
   required BuildContext context,
   required DisplayProfile current,
   required Future<void> Function(DisplayProfile profile) onChosen,
+}) => showShelfSettings(
+  context: context,
+  current: current,
+  onChosen: onChosen,
+);
+
+Future<void> showShelfSettings({
+  required BuildContext context,
+  required DisplayProfile current,
+  required Future<void> Function(DisplayProfile profile) onChosen,
 }) async {
-  final next = await showDialog<DisplayProfile>(
+  var idleMinutes = await loadScreensaverIdleMinutes();
+  var profile = current;
+  if (!context.mounted) return;
+  await showDialog<void>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Display'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Are you using an e-ink display?'),
-          const SizedBox(height: 16),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, DisplayProfile.eink),
-            child: Text(
-              current == DisplayProfile.eink
-                  ? 'Yes, e-ink (current)'
-                  : 'Yes, e-ink',
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setLocal) {
+          return AlertDialog(
+            title: const Text('Settings'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('E-ink display'),
+                    subtitle: const Text(
+                      'Turns motion off for clearer refreshes.',
+                    ),
+                    value: profile == DisplayProfile.eink,
+                    activeThumbColor: paper,
+                    activeTrackColor: ink,
+                    inactiveThumbColor: ink,
+                    inactiveTrackColor: paper,
+                    trackOutlineColor: const WidgetStatePropertyAll(ink),
+                    onChanged: (eink) async {
+                      final next = eink
+                          ? DisplayProfile.eink
+                          : DisplayProfile.lcd;
+                      await onChosen(next);
+                      profile = next;
+                      if (context.mounted) setLocal(() {});
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Cover screensaver',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Idle time in the reader before the book cover appears.',
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue: idleMinutes,
+                    decoration: const InputDecoration(
+                      labelText: 'Timeout',
+                    ),
+                    items: [
+                      for (final minutes in screensaverIdleChoices)
+                        DropdownMenuItem(
+                          value: minutes,
+                          child: Text(screensaverIdleLabel(minutes)),
+                        ),
+                    ],
+                    onChanged: (minutes) async {
+                      if (minutes == null) return;
+                      await saveScreensaverIdleMinutes(minutes);
+                      idleMinutes = minutes;
+                      setLocal(() {});
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, DisplayProfile.lcd),
-            child: Text(
-              current == DisplayProfile.lcd
-                  ? 'No, normal screen (current)'
-                  : 'No, normal screen',
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-      ],
-    ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      );
+    },
   );
-  if (next != null && next != current) await onChosen(next);
 }
 
 class ConnectScreen extends StatefulWidget {
@@ -555,7 +607,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         current: widget.profile,
                         onChosen: widget.onProfileChanged,
                       ),
-                      child: const Text('Display settings'),
+                      child: const Text('Settings'),
                     ),
                   ],
                 ),
@@ -595,7 +647,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// Book id while Read is downloading/opening — e-ink needs instant tap feedback.
   int? _openingBookId;
-  final ValueNotifier<String> _openingLabel = ValueNotifier('Opening…');
+  final ValueNotifier<_OpenProgress> _openingProgress = ValueNotifier(
+    const _OpenProgress(label: 'Opening…'),
+  );
   StreamSubscription<List<ConnectivityResult>>? _connectivity;
 
   @override
@@ -615,7 +669,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void dispose() {
     _connectivity?.cancel();
-    _openingLabel.dispose();
+    _openingProgress.dispose();
     widget.api.close();
     super.dispose();
   }
@@ -883,7 +937,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (_openingBookId != null) return;
     // Paint tap feedback before any await — e-ink refresh is slow enough that
     // a delayed spinner looks like a missed tap.
-    _openingLabel.value = 'Opening…';
+    _openingProgress.value = const _OpenProgress(label: 'Opening…');
     setState(() => _openingBookId = book.id);
     var prepareDialogOpen = true;
     unawaited(
@@ -894,9 +948,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
           return PopScope(
             canPop: false,
             child: AlertDialog(
-              content: ValueListenableBuilder<String>(
-                valueListenable: _openingLabel,
-                builder: (_, label, _) => Text(label),
+              content: ValueListenableBuilder<_OpenProgress>(
+                valueListenable: _openingProgress,
+                builder: (_, progress, _) => _OpenProgressBody(progress),
               ),
             ),
           );
@@ -937,11 +991,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
           }
           return;
         }
-        _openingLabel.value = 'Downloading…';
+        _openingProgress.value = const _OpenProgress(
+          label: 'Downloading…',
+          downloading: true,
+        );
         try {
-          await epubs.save(
+          await epubs.saveViaDownload(
             book.id,
-            await widget.api.downloadEpub(book.id),
+            (dest) => widget.api.downloadBookToFile(
+              book.id,
+              dest,
+              onProgress: (received, total) {
+                _openingProgress.value = _OpenProgress(
+                  label: formatDownloadProgress(received, total),
+                  downloading: true,
+                  received: received,
+                  total: total,
+                );
+              },
+            ),
             extension: ext,
             digest: book.digest,
           );
@@ -962,7 +1030,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         if (mounted) setState(() => _openingBookId = null);
         return;
       }
-      _openingLabel.value = 'Opening…';
+      _openingProgress.value = const _OpenProgress(label: 'Opening…');
       closePrepareDialog();
       if (mounted) setState(() => _openingBookId = null);
       await Navigator.of(context).push<void>(
@@ -1048,8 +1116,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
               current: _profile,
               onChosen: _changeProfile,
             ),
-            tooltip: 'Display settings',
-            icon: const Icon(Icons.display_settings_outlined, size: 28),
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined, size: 28),
           ),
           IconButton(
             onPressed: _signOut,
@@ -1151,6 +1219,61 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _OpenProgress {
+  const _OpenProgress({
+    required this.label,
+    this.downloading = false,
+    this.received = 0,
+    this.total,
+  });
+  final String label;
+  final bool downloading;
+  final int received;
+  final int? total;
+
+  double? get fraction {
+    final t = total;
+    if (t == null || t <= 0) return null;
+    return (received / t).clamp(0.0, 1.0);
+  }
+}
+
+class _OpenProgressBody extends StatelessWidget {
+  const _OpenProgressBody(this.progress);
+  final _OpenProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = progress.fraction;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(progress.label),
+        if (progress.downloading) ...[
+          const SizedBox(height: 16),
+          if (fraction != null)
+            LinearProgressIndicator(
+              value: fraction,
+              minHeight: 8,
+              backgroundColor: paper,
+              color: ink,
+              borderRadius: BorderRadius.zero,
+            )
+          else
+            const Center(
+              child: SizedBox(
+                width: 36,
+                height: 36,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+            ),
+        ],
+      ],
     );
   }
 }

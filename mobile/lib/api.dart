@@ -3,12 +3,37 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'media_overlay_playlist.dart';
+
 class ShelfException implements Exception {
   ShelfException(this.message, {this.statusCode});
   final String message;
   final int? statusCode;
   @override
   String toString() => message;
+}
+
+/// Human-readable download status for the open/download dialog.
+String formatDownloadProgress(int received, int? total) {
+  if (total != null && total > 0) {
+    final pct = ((received / total) * 100).clamp(0, 100).floor();
+    return 'Downloading… ${_formatBytes(received)} / ${_formatBytes(total)} ($pct%)';
+  }
+  if (received > 0) return 'Downloading… ${_formatBytes(received)}';
+  return 'Downloading…';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) {
+    return '${(bytes / 1024).toStringAsFixed(bytes < 10 * 1024 ? 1 : 0)} KB';
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    final mb = bytes / (1024 * 1024);
+    return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
+  }
+  final gb = bytes / (1024 * 1024 * 1024);
+  return '${gb.toStringAsFixed(2)} GB';
 }
 
 class TtsProviderInfo {
@@ -491,6 +516,31 @@ class ShelfApi {
     await request('books/$bookId/annotations/$annotationId', method: 'DELETE');
   }
 
+  /// EPUB3 SMIL playlist for read-along (empty items when the book has none).
+  Future<MediaOverlayPlaylist> mediaOverlayPlaylist(int bookId) async {
+    // Large read-alongs need more than the default 15s API timeout while SMIL is parsed.
+    try {
+      final data = await _request(
+        'epub/$bookId/media-overlay?fileId=$bookId',
+        'GET',
+        null,
+      ).timeout(const Duration(seconds: 90));
+      if (data is! Map<String, dynamic>) {
+        throw ShelfException('Could not load media-overlay playlist.');
+      }
+      return MediaOverlayPlaylist.fromJson(data);
+    } on ShelfException {
+      rethrow;
+    } on FormatException {
+      throw ShelfException('Could not load media-overlay playlist.');
+    } on Exception catch (error) {
+      final detail = kDebugMode ? ' ($error)' : '';
+      throw ShelfException(
+        'Could not reach your server. Check the address and connection.$detail',
+      );
+    }
+  }
+
   /// Enabled OpenAI-compatible TTS providers (empty ⇒ hide synthesize listen).
   Future<List<TtsProviderInfo>> listTtsProviders() async {
     final data = await request('tts/providers');
@@ -599,9 +649,19 @@ class ShelfApi {
     }
   }
 
-  /// Authenticated EPUB/PDF/CBZ bytes for offline storage / Readium open.
-  Future<List<int>> downloadEpub(int bookId) async {
+  /// Stream an authenticated book file to [dest] (avoids buffering multi‑GB EPUBs in RAM).
+  ///
+  /// [onProgress] receives bytes written so far and Content-Length when the server sent one.
+  Future<void> downloadBookToFile(
+    int bookId,
+    File dest, {
+    void Function(int received, int? total)? onProgress,
+  }) async {
+    IOSink? sink;
     try {
+      await dest.parent.create(recursive: true);
+      final temp = File('${dest.path}.partial');
+      sink = temp.openWrite();
       final request = await _client.getUrl(
         base.resolve('/api/v1/books/$bookId/file'),
       );
@@ -611,7 +671,7 @@ class ShelfApi {
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       }
       final response = await request.close().timeout(
-        const Duration(seconds: 90),
+        const Duration(seconds: 120),
       );
       if (response.statusCode >= 300 && response.statusCode < 400) {
         await response.drain<void>();
@@ -619,27 +679,51 @@ class ShelfApi {
           'Enter the final HTTPS server address; redirects are not followed.',
         );
       }
-      final bytes = await response.fold<List<int>>(
-        <int>[],
-        (out, chunk) => out..addAll(chunk),
-      );
       if (response.statusCode >= 400) {
+        await response.drain<void>();
         throw ShelfException(
           response.statusCode == 404
               ? 'Book not found.'
               : 'Could not download this book file.',
+          statusCode: response.statusCode,
         );
       }
-      if (bytes.isEmpty) {
+      final total = response.contentLength >= 0 ? response.contentLength : null;
+      var wrote = 0;
+      var lastReportMs = 0;
+      void report({bool force = false}) {
+        if (onProgress == null) return;
+        final now = DateTime.now().millisecondsSinceEpoch;
+        // E-ink: avoid rebuilding the dialog on every TCP chunk.
+        if (!force && now - lastReportMs < 250) return;
+        lastReportMs = now;
+        onProgress(wrote, total);
+      }
+
+      report(force: true);
+      await for (final chunk in response) {
+        sink.add(chunk);
+        wrote += chunk.length;
+        report();
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (wrote < 1) {
+        await temp.delete().catchError((_) => temp);
         throw ShelfException('Could not download this book file.');
       }
-      return bytes;
+      report(force: true);
+      if (await dest.exists()) await dest.delete();
+      await temp.rename(dest.path);
     } on ShelfException {
       rethrow;
     } on Exception {
       throw ShelfException(
         'Could not reach your server. Check the address and connection.',
       );
+    } finally {
+      await sink?.close().catchError((_) {});
     }
   }
 

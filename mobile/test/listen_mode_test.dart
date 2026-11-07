@@ -37,6 +37,31 @@ void main() {
     );
   });
 
+  test('media overlay listen works offline once playlist is known', () {
+    expect(
+      shelfMediaOverlayListenAvailable(isEpub: true, hasMediaOverlay: true),
+      isTrue,
+    );
+    expect(
+      shelfListenChromeAvailable(
+        isEpub: true,
+        online: false,
+        hasEnabledProviders: false,
+        hasMediaOverlay: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shelfListenChromeAvailable(
+        isEpub: true,
+        online: false,
+        hasEnabledProviders: false,
+        hasMediaOverlay: false,
+      ),
+      isFalse,
+    );
+  });
+
   test('chapter index matches reading-order href paths', () {
     const spine = [
       'OEBPS/cover.xhtml',

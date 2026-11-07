@@ -20,6 +20,7 @@ class ServerTtsPlayer {
   TtsVoiceInfo? _voice;
   var playing = false;
   var active = false;
+  var volume = 1.0;
   String? error;
 
   int get chapterIndex => _chapterIndex;
@@ -44,6 +45,7 @@ class ServerTtsPlayer {
     active = true;
     playing = true;
     error = null;
+    await _player.setVolume(volume);
     _notify();
     try {
       _blocks = await api.ttsChapterBlocks(bookId, chapterIndex);
@@ -74,6 +76,12 @@ class ServerTtsPlayer {
     playing = true;
     _notify();
     await _player.play();
+  }
+
+  Future<void> setVolume(double value) async {
+    volume = value.clamp(0.0, 1.0);
+    await _player.setVolume(volume);
+    _notify();
   }
 
   Future<void> nextBlock(int bookId) async {

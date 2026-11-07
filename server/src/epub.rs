@@ -696,29 +696,34 @@ pub(super) async fn file(
     Path(id): Path<i64>,
 ) -> ApiResult<Response> {
     let data_dir = state.data_dir.clone();
-    state
-        .db(move |db| {
-            let user = authenticate(db, &headers)?;
-            let (content, format) = load_owned_book_file(db, &data_dir, user, id)?;
-            // Converted comics keep ZIP in content; /file stays the reader path (Readium CBZ).
-            let (mime, disposition) = match format.as_str() {
-                "pdf" => ("application/pdf", "attachment; filename=book.pdf"),
-                "cbz" | "cbr" | "cb7" | "djvu" => (
-                    "application/vnd.comicbook+zip",
-                    "attachment; filename=book.cbz",
-                ),
-                _ => ("application/epub+zip", "attachment; filename=book.epub"),
-            };
-            Ok((
-                [
-                    (header::CONTENT_TYPE, mime),
-                    (header::CONTENT_DISPOSITION, disposition),
-                ],
-                content,
-            )
-                .into_response())
+    let (inline, storage_path, format) = state
+        .db({
+            let headers = headers.clone();
+            move |db| {
+                let user = authenticate(db, &headers)?;
+                owned_book_file_row(db, user, id)
+            }
         })
-        .await
+        .await?;
+    let (mime, disposition) = book_file_mime(&format);
+    // Large spilled books stream from disk — loading 1.5 GiB into RAM OOMs clients.
+    if let Some(relative) = storage_path.filter(|p| !p.is_empty()) {
+        if relative.contains("..") || PathBuf::from(&relative).is_absolute() {
+            return Err(ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid on-disk book path.",
+            ));
+        }
+        return stream_book_file(data_dir.join(relative), mime, disposition).await;
+    }
+    Ok((
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        inline,
+    )
+        .into_response())
 }
 
 /// Original upload bytes for converted comics (`source`), else same as `/file`.

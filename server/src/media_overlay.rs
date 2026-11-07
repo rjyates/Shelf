@@ -4,11 +4,11 @@
 use super::*;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 use zip::ZipArchive;
 
-fn zip_entry_name(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> Option<String> {
+fn zip_entry_name<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Option<String> {
     if archive.by_name(name).is_ok() {
         return Some(name.to_string());
     }
@@ -20,7 +20,7 @@ fn zip_entry_name(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> Opti
     })
 }
 
-fn zip_bytes(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> ApiResult<Vec<u8>> {
+fn zip_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> ApiResult<Vec<u8>> {
     let entry_name = zip_entry_name(archive, name).ok_or(ApiError(
         StatusCode::BAD_REQUEST,
         "Could not read this EPUB.",
@@ -34,10 +34,21 @@ fn zip_bytes(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> ApiResult
     Ok(buf)
 }
 
-fn zip_string(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> ApiResult<String> {
+fn zip_string<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> ApiResult<String> {
     let bytes = zip_bytes(archive, name)?;
     String::from_utf8(bytes)
         .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "EPUB XML is not valid UTF-8."))
+}
+
+/// Uncompressed size from the central directory — do not inflate audio just for metadata.
+fn zip_size<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> u64 {
+    let Some(entry_name) = zip_entry_name(archive, name) else {
+        return 0;
+    };
+    archive
+        .by_name(&entry_name)
+        .map(|f| f.size())
+        .unwrap_or(0)
 }
 
 fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
@@ -244,19 +255,17 @@ fn opf_path_from_container(container: &str) -> Option<String> {
     None
 }
 
-pub(crate) fn playlist_from_epub(
-    content: &[u8],
+fn playlist_from_archive<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
     book_id: i64,
     file_id: Option<i64>,
 ) -> ApiResult<Value> {
-    let mut archive = ZipArchive::new(Cursor::new(content.to_vec()))
-        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Could not read this EPUB."))?;
-    let container = zip_string(&mut archive, "META-INF/container.xml")?;
+    let container = zip_string(archive, "META-INF/container.xml")?;
     let opf_path = opf_path_from_container(&container).ok_or(ApiError(
         StatusCode::BAD_REQUEST,
         "This EPUB is missing a package document.",
     ))?;
-    let opf = zip_string(&mut archive, &opf_path)?;
+    let opf = zip_string(archive, &opf_path)?;
     let (manifest, spine) = parse_manifest_and_spine(&opf);
     let by_id: BTreeMap<&str, &ManifestItem> = manifest
         .iter()
@@ -280,7 +289,7 @@ pub(crate) fn playlist_from_epub(
             continue;
         };
         let smil_href = resolve_href(&opf_path, &mo_item.href);
-        let Ok(smil) = zip_string(&mut archive, &smil_href) else {
+        let Ok(smil) = zip_string(archive, &smil_href) else {
             continue;
         };
         let pars = parse_smil_pars(&smil, &smil_href);
@@ -309,9 +318,10 @@ pub(crate) fn playlist_from_epub(
                         .filter(|m| !m.is_empty())
                         .unwrap_or_else(|| "audio/mpeg".to_string())
                 });
-            let size = zip_bytes(&mut archive, &par.audio_href)
-                .map(|b| b.len() as u64)
-                .unwrap_or(0);
+            let size = resources
+                .get(&par.audio_href)
+                .map(|(_, size)| *size)
+                .unwrap_or_else(|| zip_size(archive, &par.audio_href));
             resources.insert(par.audio_href.clone(), (audio_mime.clone(), size));
             items_out.push(json!({
                 "index": item_index,
@@ -360,6 +370,32 @@ pub(crate) fn playlist_from_epub(
     }))
 }
 
+pub(crate) fn playlist_from_epub(
+    content: &[u8],
+    book_id: i64,
+    file_id: Option<i64>,
+) -> ApiResult<Value> {
+    let mut archive = ZipArchive::new(Cursor::new(content))
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Could not read this EPUB."))?;
+    playlist_from_archive(&mut archive, book_id, file_id)
+}
+
+fn playlist_from_epub_path(
+    absolute: &Path,
+    book_id: i64,
+    file_id: Option<i64>,
+) -> ApiResult<Value> {
+    let file = std::fs::File::open(absolute).map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not read the on-disk book file.",
+        )
+    })?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Could not read this EPUB."))?;
+    playlist_from_archive(&mut archive, book_id, file_id)
+}
+
 /// `GET /api/v1/epub/{id}/media-overlay?fileId=`
 pub(super) async fn media_overlay_playlist(
     State(state): State<AppState>,
@@ -372,19 +408,39 @@ pub(super) async fn media_overlay_playlist(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(id);
     let data_dir = state.data_dir.clone();
-    state
-        .db(move |db| {
-            let user = authenticate(db, &headers)?;
-            let (content, format) = load_owned_book_file(db, &data_dir, user, id)?;
-            if format != "epub" {
-                return Err(ApiError(
-                    StatusCode::BAD_REQUEST,
-                    "Media overlays are only available for EPUB books.",
-                ));
+    let (inline, storage_path, format) = state
+        .db({
+            let headers = headers.clone();
+            move |db| {
+                let user = authenticate(db, &headers)?;
+                owned_book_file_row(db, user, id)
             }
-            Ok(Json(playlist_from_epub(&content, id, Some(file_id))?))
         })
-        .await
+        .await?;
+    if format != "epub" {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Media overlays are only available for EPUB books.",
+        ));
+    }
+    // Parse SMIL/OPF only — never inflate multi‑GB audio into RAM for the playlist.
+    let playlist = if let Some(relative) = storage_path.filter(|p| !p.is_empty()) {
+        if relative.contains("..") || PathBuf::from(&relative).is_absolute() {
+            return Err(ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid on-disk book path.",
+            ));
+        }
+        let absolute = data_dir.join(relative);
+        tokio::task::spawn_blocking(move || playlist_from_epub_path(&absolute, id, Some(file_id)))
+            .await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Request failed."))??
+    } else {
+        tokio::task::spawn_blocking(move || playlist_from_epub(&inline, id, Some(file_id)))
+            .await
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Request failed."))??
+    };
+    Ok(Json(playlist))
 }
 
 #[cfg(test)]

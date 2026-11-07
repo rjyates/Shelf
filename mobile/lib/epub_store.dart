@@ -44,6 +44,24 @@ class EpubStore {
     ).writeAsBytes(bytes, flush: true);
   }
 
+  /// Download [write] straight into the cache file (for multi‑GB books).
+  Future<void> saveViaDownload(
+    int bookId,
+    Future<void> Function(File dest) write, {
+    String extension = 'epub',
+    String? digest,
+  }) async {
+    if (bookId < 1) {
+      throw ArgumentError.value(bookId, 'bookId');
+    }
+    await _dir.create(recursive: true);
+    if (digest != null && digest.isNotEmpty) {
+      await _purgeStale(bookId, extension: extension, keepDigest: digest);
+    }
+    final dest = fileFor(bookId, extension: extension, digest: digest);
+    await write(dest);
+  }
+
   Future<void> remove(
     int bookId, {
     String extension = 'epub',

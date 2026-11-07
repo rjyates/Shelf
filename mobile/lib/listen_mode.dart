@@ -5,6 +5,28 @@ bool shelfServerTtsListenAvailable({
   required bool hasEnabledProviders,
 }) => isEpub && online && hasEnabledProviders;
 
+/// Embedded SMIL narration can play from the local EPUB even offline once playlist is known.
+bool shelfMediaOverlayListenAvailable({
+  required bool isEpub,
+  required bool hasMediaOverlay,
+}) => isEpub && hasMediaOverlay;
+
+bool shelfListenChromeAvailable({
+  required bool isEpub,
+  required bool online,
+  required bool hasEnabledProviders,
+  required bool hasMediaOverlay,
+}) =>
+    shelfMediaOverlayListenAvailable(
+      isEpub: isEpub,
+      hasMediaOverlay: hasMediaOverlay,
+    ) ||
+    shelfServerTtsListenAvailable(
+      isEpub: isEpub,
+      online: online,
+      hasEnabledProviders: hasEnabledProviders,
+    );
+
 /// Match a Readium locator href to a 0-based spine/chapter index for `/tts/text/{id}/{chapter}`.
 int shelfTtsChapterIndex({
   required List<String> readingOrderHrefs,

@@ -33,10 +33,10 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | PDF reading | **M9 web + mobile PDF** — ingest + BO `pdf-v4`; mobile Readium PDF open/cache with shared `pdfpage(N)`, fit-to-page, tap-to-hide chrome, page/progress footer — `docs/research/m9-pdf-comics-leverage.md` |
 | Comic archive reading | **M9 web + mobile CBZ/CBR/CB7/DjVu** — CBZ as ZIP; CBR/CB7/DjVu → ZIP-of-images at ingest (labels preserved; original on `/source`); shared page API + `cbzpage(N)`; DjVu embedded text sheet; web BO comic reader; mobile Readium ZIP path with scroll/RTL/spread prefs — same leverage doc |
 | Audiobook playback and background media controls | Planned (later M10 slice — standalone audio, not EPUB narration) |
-| EPUB Media Overlay read-along and alignment | **Web usable** — Foliate plays embedded narration; Shelf playlist API for resume; streaming package files and mobile MO still Planned |
+| EPUB Media Overlay read-along and alignment | **Web + mobile usable** — Foliate on web; mobile plays SMIL from the local EPUB (playlist API, disk cache, sentence highlight, page sync); spilled large books stream on `/file`; package-file streaming for web Foliate still deferred |
 | Web OpenAI-compatible / Kokoro TTS | **Usable when configured** — Settings `#settings` providers; reader listen hidden until an enabled provider exists; synthesize proxied by Shelf; see `docs/research/m10-tts-listen-leverage.md` |
 | Browser SpeechSynthesis | Dropped for web (not BO’s path); system voices not required |
-| Mobile / e-ink listen | **In progress (M10 slice 4)** — EPUB headphones when online + enabled Shelf TTS provider; voice select + server synthesize stream; hidden offline / no providers |
+| Mobile / e-ink listen | **Usable (M10 slices 4–5)** — server TTS when online + providers; MO read-along offline from cache; download progress; cover screensaver idle timeout in Settings |
 | Annotations, highlights, searchable/exportable notes | Persisted on Shelf; BO + e-ink Readium UI; export/search still Planned |
 | Bookmarks | Persisted on Shelf; BO + e-ink Readium UI |
 | Reader preference sync across devices | Per-book + account defaults on Shelf; chrome pin stays local |
