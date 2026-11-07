@@ -76,6 +76,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   String? _moPaintTextHref;
   var _moSecondsSincePaint = 0.0;
   var _listenVolume = 1.0;
+
   /// Last SMIL cue when listen stopped — resume here on the same HTML page.
   int? _moResumeIndex;
   String? _moResumeTextHref;
@@ -280,11 +281,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       publication: publication,
     );
     if (locator == null) return;
-    final nextItem = _moPlaylist == null || item.index + 1 >= _moPlaylist!.items.length
+    final nextItem =
+        _moPlaylist == null || item.index + 1 >= _moPlaylist!.items.length
         ? null
         : _moPlaylist!.items[item.index + 1];
-    final nextLocator =
-        nextItem != null && nextItem.textHref == item.textHref
+    final nextLocator = nextItem != null && nextItem.textHref == item.textHref
         ? locatorForMediaOverlayItem(item: nextItem, publication: publication)
         : null;
     final cueKey =
@@ -1076,7 +1077,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
-            child: cover ??
+            child:
+                cover ??
                 Text(
                   book.title,
                   textAlign: TextAlign.center,
@@ -1132,266 +1134,274 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
               behavior: HitTestBehavior.translucent,
               onPointerDown: (_) => _noteActivity(),
               child: Stack(
-              fit: StackFit.expand,
-              children: [
-                ReadiumReaderWidget(
-                  publication: publication,
-                  initialLocator: _initialLocator,
-                  shouldShowControls: _showControls,
-                  selectionActions: const [
-                    SelectionAction(id: 'highlight', title: 'Highlight'),
-                    SelectionAction(id: 'bookmark', title: 'Bookmark'),
-                  ],
-                  onSelectionAction: (event) {
-                    if (event.actionId == 'highlight') {
-                      unawaited(_addHighlight(event));
-                    } else if (event.actionId == 'bookmark') {
-                      _currentLocator = event.locator;
-                      unawaited(_addBookmark());
-                    }
-                  },
-                  loadingWidget: const ColoredBox(
-                    color: paper,
-                    child: Center(
-                      child: SizedBox(
-                        width: 36,
-                        height: 36,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          color: ink,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                InkOverlay(
-                  key: _inkLayerKey,
-                  enabled: _inkMode,
-                  refresh: _einkRefresh,
-                  strokes: inkStrokesForPage(
-                    _inkStrokes,
-                    _currentLocator == null
-                        ? null
-                        : shelfPositionFromLocator(
-                            _currentLocator!,
-                            paged: _pagedFormat,
-                            publication: _publication,
-                          ),
-                  ),
-                  onStrokeComplete: (stroke) =>
-                      unawaited(_saveInkStroke(stroke)),
-                ),
-                if (chrome)
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: Material(
+                fit: StackFit.expand,
+                children: [
+                  ReadiumReaderWidget(
+                    publication: publication,
+                    initialLocator: _initialLocator,
+                    shouldShowControls: _showControls,
+                    selectionActions: const [
+                      SelectionAction(id: 'highlight', title: 'Highlight'),
+                      SelectionAction(id: 'bookmark', title: 'Bookmark'),
+                    ],
+                    onSelectionAction: (event) {
+                      if (event.actionId == 'highlight') {
+                        unawaited(_addHighlight(event));
+                      } else if (event.actionId == 'bookmark') {
+                        _currentLocator = event.locator;
+                        unawaited(_addBookmark());
+                      }
+                    },
+                    loadingWidget: const ColoredBox(
                       color: paper,
-                      child: SafeArea(
-                        bottom: false,
+                      child: Center(
                         child: SizedBox(
-                          height: kToolbarHeight,
-                          child: Row(
-                            children: [
-                              IconButton(
-                                tooltip: 'Back',
-                                onPressed: () =>
-                                    Navigator.of(context).maybePop(),
-                                icon: const Icon(Icons.arrow_back, color: ink),
-                              ),
-                              Expanded(
-                                child: Text(
-                                  widget.book.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: ink,
-                                    fontSize: 18,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: _inkModeTooltip,
-                                onPressed: _toggleInkMode,
-                                icon: Icon(
-                                  _inkMode ? Icons.edit_off : Icons.edit,
-                                  color: ink,
-                                ),
-                              ),
-                              if (widget.book.isCbz)
-                                IconButton(
-                                  tooltip: 'Comic view',
-                                  onPressed: _showComicPrefsSheet,
-                                  icon: const Icon(
-                                    Icons.view_carousel_outlined,
-                                    color: ink,
-                                  ),
-                                ),
-                              if (_showListen)
-                                IconButton(
-                                  tooltip: _listenActive
-                                      ? 'Stop listening'
-                                      : (_hasMediaOverlay
-                                            ? 'Listen (read-along)'
-                                            : 'Listen'),
-                                  onPressed: _ttsBusy
-                                      ? null
-                                      : () => unawaited(_onListenPressed()),
-                                  icon: Icon(
-                                    _listenActive
-                                        ? Icons.headphones
-                                        : Icons.headphones_outlined,
-                                    color: ink,
-                                  ),
-                                ),
-                              IconButton(
-                                tooltip: 'Bookmarks and highlights',
-                                onPressed: _showMarksSheet,
-                                icon: const Icon(
-                                  Icons.bookmarks_outlined,
-                                  color: ink,
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: 'Add bookmark',
-                                onPressed: _addBookmark,
-                                icon: const Icon(
-                                  Icons.bookmark_add_outlined,
-                                  color: ink,
-                                ),
-                              ),
-                            ],
+                          width: 36,
+                          height: 36,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 3,
+                            color: ink,
                           ),
                         ),
                       ),
                     ),
                   ),
-                if (chrome)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Material(
-                      color: paper,
-                      child: SafeArea(
-                        top: false,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
+                  InkOverlay(
+                    key: _inkLayerKey,
+                    enabled: _inkMode,
+                    refresh: _einkRefresh,
+                    strokes: inkStrokesForPage(
+                      _inkStrokes,
+                      _currentLocator == null
+                          ? null
+                          : shelfPositionFromLocator(
+                              _currentLocator!,
+                              paged: _pagedFormat,
+                              publication: _publication,
+                            ),
+                    ),
+                    onStrokeComplete: (stroke) =>
+                        unawaited(_saveInkStroke(stroke)),
+                  ),
+                  if (chrome)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: Material(
+                        color: paper,
+                        child: SafeArea(
+                          bottom: false,
+                          child: SizedBox(
+                            height: kToolbarHeight,
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  tooltip: 'Back',
+                                  onPressed: () =>
+                                      Navigator.of(context).maybePop(),
+                                  icon: const Icon(
+                                    Icons.arrow_back,
+                                    color: ink,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    widget.book.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: _inkModeTooltip,
+                                  onPressed: _toggleInkMode,
+                                  icon: Icon(
+                                    _inkMode ? Icons.edit_off : Icons.edit,
+                                    color: ink,
+                                  ),
+                                ),
+                                if (widget.book.isCbz)
+                                  IconButton(
+                                    tooltip: 'Comic view',
+                                    onPressed: _showComicPrefsSheet,
+                                    icon: const Icon(
+                                      Icons.view_carousel_outlined,
+                                      color: ink,
+                                    ),
+                                  ),
+                                if (_showListen)
+                                  IconButton(
+                                    tooltip: _listenActive
+                                        ? 'Stop listening'
+                                        : (_hasMediaOverlay
+                                              ? 'Listen (read-along)'
+                                              : 'Listen'),
+                                    onPressed: _ttsBusy
+                                        ? null
+                                        : () => unawaited(_onListenPressed()),
+                                    icon: Icon(
+                                      _listenActive
+                                          ? Icons.headphones
+                                          : Icons.headphones_outlined,
+                                      color: ink,
+                                    ),
+                                  ),
+                                IconButton(
+                                  tooltip: 'Bookmarks and highlights',
+                                  onPressed: _showMarksSheet,
+                                  icon: const Icon(
+                                    Icons.bookmarks_outlined,
+                                    color: ink,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Add bookmark',
+                                  onPressed: _addBookmark,
+                                  icon: const Icon(
+                                    Icons.bookmark_add_outlined,
+                                    color: ink,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_listenActive) ...[
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    IconButton(
-                                      tooltip: 'Previous',
-                                      onPressed: () => unawaited(
-                                        _skipListen(forward: false),
-                                      ),
-                                      icon: const Icon(
-                                        Icons.skip_previous,
-                                        color: ink,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      tooltip: _listenPlaying
-                                          ? 'Pause'
-                                          : 'Play',
-                                      onPressed: () =>
-                                          unawaited(_toggleListenPlayback()),
-                                      icon: Icon(
-                                        _listenPlaying
-                                            ? Icons.pause
-                                            : Icons.play_arrow,
-                                        color: ink,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      tooltip: 'Next',
-                                      onPressed: () =>
-                                          unawaited(_skipListen(forward: true)),
-                                      icon: const Icon(
-                                        Icons.skip_next,
-                                        color: ink,
-                                      ),
-                                    ),
-                                    if (_ttsPlayer.active)
+                        ),
+                      ),
+                    ),
+                  if (chrome)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Material(
+                        color: paper,
+                        child: SafeArea(
+                          top: false,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_listenActive) ...[
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
                                       IconButton(
-                                        tooltip: 'Change voice',
-                                        onPressed: _ttsBusy
-                                            ? null
-                                            : () => unawaited(
-                                                _pickVoiceAndStart(),
-                                              ),
+                                        tooltip: 'Previous',
+                                        onPressed: () => unawaited(
+                                          _skipListen(forward: false),
+                                        ),
                                         icon: const Icon(
-                                          Icons.record_voice_over_outlined,
+                                          Icons.skip_previous,
                                           color: ink,
                                         ),
                                       ),
-                                    IconButton(
-                                      tooltip: 'Stop listening',
-                                      onPressed: () => unawaited(_stopListen()),
-                                      icon: const Icon(Icons.close, color: ink),
-                                    ),
-                                  ],
-                                ),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.volume_mute, color: ink),
-                                    Expanded(
-                                      child: Slider(
-                                        value: _listenVolume,
-                                        onChanged: (value) => unawaited(
-                                          _setListenVolume(value),
+                                      IconButton(
+                                        tooltip: _listenPlaying
+                                            ? 'Pause'
+                                            : 'Play',
+                                        onPressed: () =>
+                                            unawaited(_toggleListenPlayback()),
+                                        icon: Icon(
+                                          _listenPlaying
+                                              ? Icons.pause
+                                              : Icons.play_arrow,
+                                          color: ink,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Next',
+                                        onPressed: () => unawaited(
+                                          _skipListen(forward: true),
+                                        ),
+                                        icon: const Icon(
+                                          Icons.skip_next,
+                                          color: ink,
+                                        ),
+                                      ),
+                                      if (_ttsPlayer.active)
+                                        IconButton(
+                                          tooltip: 'Change voice',
+                                          onPressed: _ttsBusy
+                                              ? null
+                                              : () => unawaited(
+                                                  _pickVoiceAndStart(),
+                                                ),
+                                          icon: const Icon(
+                                            Icons.record_voice_over_outlined,
+                                            color: ink,
+                                          ),
+                                        ),
+                                      IconButton(
+                                        tooltip: 'Stop listening',
+                                        onPressed: () =>
+                                            unawaited(_stopListen()),
+                                        icon: const Icon(
+                                          Icons.close,
+                                          color: ink,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.volume_mute, color: ink),
+                                      Expanded(
+                                        child: Slider(
+                                          value: _listenVolume,
+                                          onChanged: (value) => unawaited(
+                                            _setListenVolume(value),
+                                          ),
+                                        ),
+                                      ),
+                                      const Icon(Icons.volume_up, color: ink),
+                                    ],
+                                  ),
+                                  if (_listenError != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: Text(
+                                        _listenError!,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          color: ink,
+                                          fontSize: 13,
                                         ),
                                       ),
                                     ),
-                                    const Icon(Icons.volume_up, color: ink),
-                                  ],
-                                ),
-                                if (_listenError != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Text(
-                                      _listenError!,
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: ink,
-                                        fontSize: 13,
-                                      ),
-                                    ),
+                                ],
+                                Text(
+                                  _progressLabel,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: ink,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                              ],
-                              Text(
-                                _progressLabel,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: ink,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                if (_screensaverVisible)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _noteActivity,
-                      child: _coverScreensaver(paper, ink),
+                  if (_screensaverVisible)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _noteActivity,
+                        child: _coverScreensaver(paper, ink),
+                      ),
                     ),
-                  ),
-              ],
-            ),
+                ],
+              ),
             ),
     );
   }

@@ -84,7 +84,10 @@ class MediaOverlayPlaylist {
 }
 
 /// Storyteller-style: keep decoding when the next SMIL cue continues the same file.
-bool mediaOverlayClipsAreAdjacent(MediaOverlayItem current, MediaOverlayItem next) {
+bool mediaOverlayClipsAreAdjacent(
+  MediaOverlayItem current,
+  MediaOverlayItem next,
+) {
   final end = current.clipEndSeconds;
   return next.audioHref == current.audioHref &&
       end != null &&
@@ -105,7 +108,8 @@ bool _moHrefMatch(String a, String b) {
 
 double _moItemDuration(MediaOverlayItem item) {
   final end = item.clipEndSeconds;
-  if (end != null && end > item.clipBeginSeconds) return end - item.clipBeginSeconds;
+  if (end != null && end > item.clipBeginSeconds)
+    return end - item.clipBeginSeconds;
   return 0.25;
 }
 
@@ -239,12 +243,7 @@ int mediaOverlayStartIndex({
   final whole = [for (var i = 0; i < items.length; i++) i];
   final tp = totalProgression;
   if (tp != null && tp.isFinite) {
-    return _moIndexAtProgress(
-      whole,
-      items,
-      tp,
-      biasToVisiblePageTop: false,
-    );
+    return _moIndexAtProgress(whole, items, tp, biasToVisiblePageTop: false);
   }
   return 0;
 }

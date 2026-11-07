@@ -230,11 +230,7 @@ async fn stream_book_file(
             "Could not read the on-disk book file.",
         )
     })?;
-    let len = file
-        .metadata()
-        .await
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
     let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
     let mut response = (
         [
@@ -246,10 +242,9 @@ async fn stream_book_file(
         .into_response();
     // Clients need a length for a determinate download progress bar.
     if len > 0 {
-        response.headers_mut().insert(
-            header::CONTENT_LENGTH,
-            header::HeaderValue::from(len),
-        );
+        response
+            .headers_mut()
+            .insert(header::CONTENT_LENGTH, header::HeaderValue::from(len));
     }
     Ok(response)
 }

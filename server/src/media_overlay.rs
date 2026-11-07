@@ -45,10 +45,7 @@ fn zip_size<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> u64 {
     let Some(entry_name) = zip_entry_name(archive, name) else {
         return 0;
     };
-    archive
-        .by_name(&entry_name)
-        .map(|f| f.size())
-        .unwrap_or(0)
+    archive.by_name(&entry_name).map(|f| f.size()).unwrap_or(0)
 }
 
 fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {

@@ -262,11 +262,7 @@ Future<void> showDisplayProfilePicker({
   required BuildContext context,
   required DisplayProfile current,
   required Future<void> Function(DisplayProfile profile) onChosen,
-}) => showShelfSettings(
-  context: context,
-  current: current,
-  onChosen: onChosen,
-);
+}) => showShelfSettings(context: context, current: current, onChosen: onChosen);
 
 Future<void> showShelfSettings({
   required BuildContext context,
@@ -321,9 +317,7 @@ Future<void> showShelfSettings({
                   const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
                     initialValue: idleMinutes,
-                    decoration: const InputDecoration(
-                      labelText: 'Timeout',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Timeout'),
                     items: [
                       for (final minutes in screensaverIdleChoices)
                         DropdownMenuItem(
