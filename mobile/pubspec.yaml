@@ -8,6 +8,8 @@ environment:
 
 dependencies:
   archive: ^4.6.0
+  audio_service: ^0.18.19
+  audio_session: ^0.2.4
   connectivity_plus: ^7.3.2
   file_selector: ^1.1.0
   flutter:
