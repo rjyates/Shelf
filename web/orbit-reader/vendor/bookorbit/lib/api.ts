@@ -228,7 +228,7 @@ type ShelfBookRow = {
 
 /** Resolve imported-file progress/cover from a Shelf book row (flat or nested). */
 export function shelfEpubFields(book: ShelfBookRow): {
-  format: 'epub' | 'pdf' | 'cbz' | 'cbr' | 'cb7' | 'djvu' | 'mp3' | 'm4b'
+  format: 'epub' | 'pdf' | 'cbz' | 'cbr' | 'cb7' | 'djvu' | 'mp3' | 'm4b' | 'aax' | 'opus' | 'ogg' | 'flac' | 'audiozip'
   percentage: number
   position: string | null
   has_cover: boolean
@@ -242,7 +242,12 @@ export function shelfEpubFields(book: ShelfBookRow): {
     raw === 'cb7' ||
     raw === 'djvu' ||
     raw === 'mp3' ||
-    raw === 'm4b'
+    raw === 'm4b' ||
+    raw === 'aax' ||
+    raw === 'opus' ||
+    raw === 'ogg' ||
+    raw === 'flac' ||
+    raw === 'audiozip'
       ? raw
       : 'epub'
   const isImported =
@@ -254,6 +259,11 @@ export function shelfEpubFields(book: ShelfBookRow): {
     book.format === 'djvu' ||
     book.format === 'mp3' ||
     book.format === 'm4b' ||
+    book.format === 'aax' ||
+    book.format === 'opus' ||
+    book.format === 'ogg' ||
+    book.format === 'flac' ||
+    book.format === 'audiozip' ||
     nested != null ||
     typeof book.percentage === 'number' ||
     typeof book.position === 'string' ||

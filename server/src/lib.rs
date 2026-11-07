@@ -1,3 +1,6 @@
+mod aax;
+mod audio_meta;
+mod audiobook;
 mod epub;
 mod media_overlay;
 mod reader_data;
@@ -216,6 +219,10 @@ fn book_file_mime(format: &str) -> (&'static str, &'static str) {
         ),
         "mp3" => ("audio/mpeg", "inline; filename=book.mp3"),
         "m4b" => ("audio/mp4", "inline; filename=book.m4b"),
+        "opus" => ("audio/ogg", "inline; filename=book.opus"),
+        "ogg" => ("audio/ogg", "inline; filename=book.ogg"),
+        "flac" => ("audio/flac", "inline; filename=book.flac"),
+        "audiozip" => ("application/zip", "attachment; filename=audiobook.zip"),
         _ => ("application/epub+zip", "attachment; filename=book.epub"),
     }
 }
@@ -350,10 +357,13 @@ fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
         [],
         |r| r.get(0),
     )?;
-    if sql.contains("'mp3'") {
-        let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source BLOB");
-        let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN storage_path TEXT");
-        let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source_path TEXT");
+    let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source BLOB");
+    let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN storage_path TEXT");
+    let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN source_path TEXT");
+    let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN conversion_status TEXT");
+    let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN conversion_error TEXT");
+    let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN chapter_markers TEXT");
+    if sql.contains("'aax'") {
         return Ok(());
     }
     db.execute_batch(
@@ -367,14 +377,18 @@ fn migrate_epub_files_formats(db: &Connection) -> rusqlite::Result<()> {
            cover_mime TEXT,
            position TEXT,
            percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
-           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu','mp3','m4b')),
+           format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu','mp3','m4b','opus','ogg','flac','audiozip','aax')),
            source BLOB,
            storage_path TEXT,
-           source_path TEXT
+           source_path TEXT,
+           conversion_status TEXT,
+           conversion_error TEXT,
+           chapter_markers TEXT
          );
          INSERT INTO epub_files_new
-           (book_id,digest,content,cover,cover_mime,position,percentage,format)
-           SELECT book_id,digest,content,cover,cover_mime,position,percentage,format
+           (book_id,digest,content,cover,cover_mime,position,percentage,format,source,storage_path,source_path,conversion_status,conversion_error,chapter_markers)
+           SELECT book_id,digest,content,cover,cover_mime,position,percentage,format,
+                  source,storage_path,source_path,conversion_status,conversion_error,chapter_markers
            FROM epub_files;
          DROP TABLE epub_files;
          ALTER TABLE epub_files_new RENAME TO epub_files;
@@ -405,6 +419,21 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
          )",
     );
     migrate_epub_files_formats(&db)?;
+    let _ = db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS aax_activation_cache (
+           checksum TEXT PRIMARY KEY,
+           activation_bytes TEXT NOT NULL CHECK(length(activation_bytes) = 8)
+         )",
+    );
+    let state = AppState {
+        data_dir: database
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf(),
+        database,
+        login_attempts: Arc::new(Mutex::new(VecDeque::new())),
+    };
+    aax::resume_pending(&state);
     Ok(Router::new()
         .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
         .route("/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/app.css")) }))
@@ -447,6 +476,20 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/epub/{id}/media-overlay",
             get(media_overlay::media_overlay_playlist),
+        )
+        .route(
+            "/api/v1/audiobooks/{id}/manifest",
+            get(audiobook::manifest),
+        )
+        .route(
+            "/api/v1/audiobooks/{id}/assets/{asset_id}/content",
+            get(audiobook::asset_content),
+        )
+        .route(
+            "/api/v1/audiobooks/{id}/playback-state",
+            get(audiobook::get_playback_state)
+                .put(audiobook::put_playback_state)
+                .delete(audiobook::delete_playback_state),
         )
         .route("/api/v1/tts/providers", get(tts::list_providers))
         .route("/api/v1/tts/voices", get(tts::list_voices))
@@ -523,14 +566,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             if !headers.contains_key(header::CONTENT_SECURITY_POLICY) { headers.insert(header::CONTENT_SECURITY_POLICY, "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap()); }
             response
         }))
-        .with_state(AppState {
-            data_dir: database
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .to_path_buf(),
-            database,
-            login_attempts: Arc::new(Mutex::new(VecDeque::new())),
-        }))
+        .with_state(state))
 }
 
 async fn setup_status(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
@@ -709,6 +745,11 @@ struct EpubInfo {
     percentage: f64,
     position: Option<String>,
     has_cover: bool,
+    /// AAX conversion job status when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversion_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversion_error: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -721,11 +762,13 @@ struct NewBook {
 async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Vec<Book>>> {
     state.db(move |db| {
         let user = authenticate(db, &headers)?;
-        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,b.reading_status,f.book_id,f.percentage,f.position,f.cover IS NOT NULL,f.format,f.digest FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
+        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,b.reading_status,f.book_id,f.percentage,f.position,f.cover IS NOT NULL,f.format,f.digest,f.conversion_status,f.conversion_error FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
         let books = query.query_map([user], |r| {
             let imported = r.get::<_, Option<i64>>(6)?.is_some();
             let format = r.get::<_, Option<String>>(10)?;
             let digest = r.get::<_, Option<String>>(11)?;
+            let conversion_status: Option<String> = r.get(12)?;
+            let conversion_error: Option<String> = r.get(13)?;
             Ok(Book {
                 id: r.get(0)?,
                 title: r.get(1)?,
@@ -743,12 +786,19 @@ async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<J
                             Some("djvu") => "djvu",
                             Some("mp3") => "mp3",
                             Some("m4b") => "m4b",
+                            Some("opus") => "opus",
+                            Some("ogg") => "ogg",
+                            Some("flac") => "flac",
+                            Some("audiozip") => "audiozip",
+                            Some("aax") => "aax",
                             _ => "epub",
                         },
                         digest: digest.unwrap_or_default(),
                         percentage: r.get(7)?,
                         position: r.get(8)?,
                         has_cover: r.get(9)?,
+                        conversion_status,
+                        conversion_error,
                     })
                 } else {
                     None

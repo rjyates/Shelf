@@ -25,7 +25,12 @@ const router = createRouter({
           raw === 'cb7' ||
           raw === 'djvu' ||
           raw === 'mp3' ||
-          raw === 'm4b'
+          raw === 'm4b' ||
+          raw === 'aax' ||
+          raw === 'opus' ||
+          raw === 'ogg' ||
+          raw === 'flac' ||
+          raw === 'audiozip'
             ? raw
             : 'epub'
         if (Number.isFinite(id) && id > 0) {

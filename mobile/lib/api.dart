@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
@@ -99,6 +100,8 @@ class Book {
     this.digest,
     this.percentage = 0,
     this.position,
+    this.conversionStatus,
+    this.conversionError,
   });
   factory Book.fromJson(Map<String, dynamic> json) {
     final id = json['id'];
@@ -113,13 +116,22 @@ class Book {
         format == 'cbr' ||
         format == 'cb7' ||
         format == 'djvu';
-    final audio = format == 'mp3' || format == 'm4b';
+    final audio =
+        format == 'mp3' ||
+        format == 'm4b' ||
+        format == 'aax' ||
+        format == 'opus' ||
+        format == 'ogg' ||
+        format == 'flac' ||
+        format == 'audiozip';
     // PDF/comics/audio are imported like EPUB (null page count + %). CBR/CB7/DjVu arrive as ZIP-backed comics.
     final imported = epub || format == 'pdf' || comic || audio;
     final percentage = json['percentage'];
     final position = json['position'];
     final status = json['reading_status'] ?? 'open';
     final digest = json['digest'];
+    final conversionStatus = json['conversion_status'];
+    final conversionError = json['conversion_error'];
     final digestOk =
         digest == null ||
         (digest is String &&
@@ -143,7 +155,18 @@ class Book {
                         position.codeUnits.any((c) => c < 32))) ||
                 !digestOk ||
                 digest is! String ||
-                digest.isEmpty)) ||
+                digest.isEmpty ||
+                (conversionStatus != null &&
+                    (conversionStatus is! String ||
+                        !const {
+                          'pending',
+                          'running',
+                          'failed',
+                          'ready',
+                        }.contains(conversionStatus))) ||
+                (conversionError != null &&
+                    (conversionError is! String ||
+                        conversionError.length > 500)))) ||
         read is! int ||
         read < 0 ||
         (!imported && read > (total as int)) ||
@@ -174,6 +197,8 @@ class Book {
       format: imported && format is String ? format : null,
       digest: imported ? digest as String : null,
       readingStatus: status,
+      conversionStatus: conversionStatus is String ? conversionStatus : null,
+      conversionError: conversionError is String ? conversionError : null,
     );
   }
   final int id;
@@ -184,7 +209,7 @@ class Book {
   final bool isPdf;
   final bool isCbz;
 
-  /// Server format string for imported books (`epub` / `pdf` / comics / `mp3` / `m4b`).
+  /// Server format string for imported books (`epub` / `pdf` / comics / audio).
   final String? format;
 
   /// SHA-256 hex of the uploaded file; offline cache key.
@@ -194,16 +219,34 @@ class Book {
   final String? position;
   final int pagesRead;
   final String readingStatus;
+  final String? conversionStatus;
+  final String? conversionError;
 
-  bool get isAudio => format == 'mp3' || format == 'm4b';
+  bool get isAudio =>
+      format == 'mp3' ||
+      format == 'm4b' ||
+      format == 'aax' ||
+      format == 'opus' ||
+      format == 'ogg' ||
+      format == 'flac' ||
+      format == 'audiozip';
 
   bool get isImported => isEpub || isPdf || isCbz || isAudio;
 
   /// Formats opened in the Readium reader (not manual page progress or audiobooks).
   bool get opensInReader => isEpub || isPdf || isCbz;
 
-  /// Standalone audiobook player (not Readium).
-  bool get opensAsAudiobook => isAudio;
+  /// Standalone audiobook player (not Readium). AAX waits until converted to M4B.
+  bool get opensAsAudiobook => isAudio && format != 'aax';
+
+  bool get isConvertingAax =>
+      format == 'aax' &&
+      (conversionStatus == null ||
+          conversionStatus == 'pending' ||
+          conversionStatus == 'running');
+
+  bool get aaxConversionFailed =>
+      format == 'aax' && conversionStatus == 'failed';
 
   /// Fraction complete for catalogue math (imported % or manual pages).
   double get progressFraction =>
@@ -325,6 +368,34 @@ class ShelfApi {
     if (_token != null) HttpHeaders.authorizationHeader: 'Bearer $_token',
   };
 
+  /// Cover image bytes for catalogue / audiobook player art.
+  Future<List<int>?> fetchBookCover(int bookId) async {
+    try {
+      final request = await _client.getUrl(
+        base.resolve('/api/v1/books/$bookId/cover'),
+      );
+      request.followRedirects = false;
+      if (_token != null) {
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      }
+      final response = await request.close().timeout(
+        const Duration(seconds: 30),
+      );
+      if (response.statusCode != 200) {
+        await response.drain<void>();
+        return null;
+      }
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in response) {
+        builder.add(chunk);
+      }
+      final bytes = builder.takeBytes();
+      return bytes.isEmpty ? null : bytes;
+    } on Exception {
+      return null;
+    }
+  }
+
   Future<bool> importEpub(List<int> bytes, {String? filename}) async {
     if (bytes.isEmpty) {
       throw ShelfException('Choose a non-empty book file.');
@@ -338,8 +409,16 @@ class ShelfApi {
       final lower = filename?.trim().toLowerCase() ?? '';
       request.headers.contentType = lower.endsWith('.mp3')
           ? ContentType('audio', 'mpeg')
-          : lower.endsWith('.m4b')
+          : lower.endsWith('.m4b') || lower.endsWith('.m4a')
           ? ContentType('audio', 'mp4')
+          : lower.endsWith('.opus') ||
+                lower.endsWith('.ogg') ||
+                lower.endsWith('.oga')
+          ? ContentType('audio', 'ogg')
+          : lower.endsWith('.flac')
+          ? ContentType('audio', 'flac')
+          : lower.endsWith('.zip')
+          ? ContentType('application', 'zip')
           : ContentType('application', 'epub+zip');
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       if (filename != null && filename.trim().isNotEmpty) {
@@ -447,6 +526,50 @@ class ShelfApi {
       method: 'POST',
       body: {'position': position, 'percentage': percentage},
     );
+  }
+
+  Future<Map<String, dynamic>> audiobookManifest(int bookId) async {
+    final data = await request('audiobooks/$bookId/manifest');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Invalid audiobook manifest.');
+    }
+    return data;
+  }
+
+  Future<Map<String, dynamic>?> audiobookPlaybackState(int bookId) async {
+    try {
+      final data = await request('audiobooks/$bookId/playback-state');
+      if (data is Map<String, dynamic>) return data;
+      return null;
+    } on ShelfException catch (error) {
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> saveAudiobookPlaybackState(
+    int bookId, {
+    required String assetId,
+    required int positionMs,
+    required int baseRevision,
+    required String manifestRevision,
+  }) async {
+    final data = await request(
+      'audiobooks/$bookId/playback-state',
+      method: 'PUT',
+      body: {
+        'assetId': assetId,
+        'positionMs': positionMs,
+        'capturedAt': DateTime.now().toUtc().toIso8601String(),
+        'operationId': DateTime.now().microsecondsSinceEpoch.toString(),
+        'baseRevision': baseRevision,
+        'manifestRevision': manifestRevision,
+      },
+    );
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Invalid audiobook playback state.');
+    }
+    return data;
   }
 
   Future<List<Map<String, dynamic>>> listBookmarks(int bookId) async {

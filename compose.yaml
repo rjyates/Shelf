@@ -3,9 +3,13 @@ services:
     image: ghcr.io/rjyates/shelf-server:latest
     ports:
       - "127.0.0.1:8080:8080"
+    # Optional AAX→M4B: clone https://github.com/inAudible-NG/tables to ./aax-tables
+    # environment:
+    #   SHELF_AAX_TABLES: /aax-tables
     volumes:
       - shelf-data:/data
       - ./books:/books:ro
+      # - ./aax-tables:/aax-tables:ro
     restart: unless-stopped
 
 volumes:

@@ -1,15 +1,13 @@
-import 'dart:async';
-
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 
-/// Background / lock-screen controls for a single local audiobook file.
+/// Background / lock-screen controls for Shelf audiobooks (single or multi-track).
 class ShelfAudiobookHandler extends BaseAudioHandler with SeekHandler {
   ShelfAudiobookHandler() {
     _player.playbackEventStream.listen(_broadcast);
     _player.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) {
-        stop();
+        // Advance is owned by the screen for multi-track playlists.
       }
     });
   }
@@ -17,6 +15,20 @@ class ShelfAudiobookHandler extends BaseAudioHandler with SeekHandler {
   final AudioPlayer _player = AudioPlayer();
 
   AudioPlayer get player => _player;
+
+  Future<void> loadUri({
+    required Uri uri,
+    required MediaItem item,
+    Map<String, String>? headers,
+    Duration? start,
+  }) async {
+    mediaItem.add(item);
+    await _player.setAudioSource(
+      AudioSource.uri(uri, headers: headers),
+      initialPosition: start ?? Duration.zero,
+    );
+    _broadcast(_player.playbackEvent);
+  }
 
   Future<void> loadFile({
     required String path,

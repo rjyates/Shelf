@@ -66,7 +66,7 @@ static IMPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 fn invalid() -> ApiError {
     ApiError(
         StatusCode::BAD_REQUEST,
-        "Not a supported book file. Use an unencrypted EPUB, PDF, CBZ, CBR, CB7, DjVu, MP3, or M4B.",
+        "Not a supported book file. Use an unencrypted EPUB, PDF, CBZ, CBR, CB7, DjVu, MP3, M4B, Opus, Ogg, FLAC, or a ZIP of audio tracks.",
     )
 }
 
@@ -120,6 +120,14 @@ fn is_mp4_ftyp(bytes: &[u8]) -> bool {
     bytes.len() >= 12 && &bytes[4..8] == b"ftyp"
 }
 
+fn is_flac(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"fLaC")
+}
+
+fn is_ogg(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"OggS")
+}
+
 fn detect_audio(bytes: &[u8], filename: Option<&str>) -> Option<&'static str> {
     let ext = filename
         .and_then(|n| std::path::Path::new(n).extension())
@@ -135,7 +143,29 @@ fn detect_audio(bytes: &[u8], filename: Option<&str>) -> Option<&'static str> {
             return Some("m4b");
         }
     }
+    if is_flac(bytes) && matches!(ext.as_deref(), None | Some("flac")) {
+        return Some("flac");
+    }
+    if is_ogg(bytes) {
+        // Opus is Ogg-framed; prefer .opus when named, else ogg.
+        if ext.as_deref() == Some("opus")
+            || (ext.is_none() && bytes.windows(8).any(|w| w == b"OpusHead"))
+        {
+            return Some("opus");
+        }
+        if matches!(ext.as_deref(), None | Some("ogg") | Some("oga")) {
+            return Some("ogg");
+        }
+    }
     None
+}
+
+/// ZIP of audio tracks (not comics / EPUBs).
+fn is_audio_zip(bytes: &[u8]) -> bool {
+    if !is_zip(bytes) || is_epub_zip(bytes) {
+        return false;
+    }
+    audiobook::audio_zip_track_names(bytes).is_ok() && comic_page_names(bytes).is_err()
 }
 
 fn image_mime(path: &str) -> Option<&'static str> {
@@ -540,16 +570,12 @@ fn import_audio(
     format: &str,
     data_dir: &std::path::Path,
 ) -> ApiResult<i64> {
-    if !matches!(format, "mp3" | "m4b") || detect_audio(bytes, filename) != Some(format) {
+    if !matches!(format, "mp3" | "m4b" | "opus" | "ogg" | "flac")
+        || detect_audio(bytes, filename) != Some(format)
+    {
         return Err(invalid());
     }
-    let title = title_from_filename(filename).unwrap_or_else(|| {
-        if format == "m4b" {
-            "Untitled audiobook".into()
-        } else {
-            "Untitled audio".into()
-        }
-    });
+    let title = title_from_filename(filename).unwrap_or_else(|| "Untitled audiobook".into());
     tx.execute(
         "INSERT INTO books(user_id,title,author,total_pages) VALUES (?,?,?,1)",
         params![user, title, ""],
@@ -560,6 +586,60 @@ fn import_audio(
         "INSERT INTO epub_files(book_id,digest,content,format,storage_path) VALUES (?,?,?,?,?)",
         params![id, digest, content, format, storage_path],
     )?;
+    // Cover, embedded chapters, and tag title/author when ffprobe/ffmpeg are available.
+    let _ = audio_meta::enrich_audio_book(tx, data_dir, id);
+    Ok(id)
+}
+
+fn import_aax(
+    tx: &rusqlite::Transaction<'_>,
+    user: i64,
+    bytes: &[u8],
+    digest: &str,
+    filename: Option<&str>,
+    data_dir: &std::path::Path,
+) -> ApiResult<i64> {
+    if !aax::is_aax(bytes, filename) {
+        return Err(invalid());
+    }
+    let title = title_from_filename(filename).unwrap_or_else(|| "Untitled audiobook".into());
+    tx.execute(
+        "INSERT INTO books(user_id,title,author,total_pages) VALUES (?,?,?,1)",
+        params![user, title, ""],
+    )?;
+    let id = tx.last_insert_rowid();
+    // Keep the original AAX in source; playable M4B fills content after conversion.
+    let (source_blob, source_path) = store_book_bytes(data_dir, digest, "aax", bytes)?;
+    let empty: Vec<u8> = Vec::new();
+    tx.execute(
+        "INSERT INTO epub_files(book_id,digest,content,format,source,source_path,conversion_status)
+         VALUES (?,?,?,'aax',?,?, 'pending')",
+        params![id, digest, empty, source_blob, source_path],
+    )?;
+    Ok(id)
+}
+
+fn import_audio_zip(
+    tx: &rusqlite::Transaction<'_>,
+    user: i64,
+    bytes: &[u8],
+    digest: &str,
+    filename: Option<&str>,
+    data_dir: &std::path::Path,
+) -> ApiResult<i64> {
+    let tracks = audiobook::audio_zip_track_names(bytes)?;
+    let title = title_from_filename(filename).unwrap_or_else(|| "Untitled audiobook".into());
+    tx.execute(
+        "INSERT INTO books(user_id,title,author,total_pages) VALUES (?,?,?,1)",
+        params![user, title, ""],
+    )?;
+    let id = tx.last_insert_rowid();
+    let (content, storage_path) = store_book_bytes(data_dir, digest, "audiozip", bytes)?;
+    tx.execute(
+        "INSERT INTO epub_files(book_id,digest,content,format,storage_path) VALUES (?,?,?,'audiozip',?)",
+        params![id, digest, content, storage_path],
+    )?;
+    let _ = tracks; // validated above
     Ok(id)
 }
 
@@ -677,7 +757,7 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
         })?
         .to_vec();
     let data_dir = state.data_dir.clone();
-    state
+    let (response, convert_id) = state
         .db(move |db| {
             let digest = format!("{:x}", Sha256::digest(&bytes));
             let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -689,8 +769,9 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
                 )
                 .optional()?
             {
-                return Ok((StatusCode::OK, Json(serde_json::json!({"id":id,"duplicate":true}))).into_response());
+                return Ok(((StatusCode::OK, Json(serde_json::json!({"id":id,"duplicate":true}))).into_response(), None));
             }
+            let mut convert_id = None;
             let id = if is_pdf(&bytes) {
                 import_pdf(&tx, user, &bytes, &digest, filename.as_deref(), &data_dir)?
             } else if is_rar(&bytes) {
@@ -703,17 +784,30 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
             } else if is_djvu(&bytes) {
                 let zip = djvu_to_zip(&bytes)?;
                 import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "djvu", Some(&bytes), &data_dir)?
+            } else if aax::is_aax(&bytes, filename.as_deref()) {
+                let id = import_aax(&tx, user, &bytes, &digest, filename.as_deref(), &data_dir)?;
+                convert_id = Some(id);
+                id
             } else if let Some(audio_format) = detect_audio(&bytes, filename.as_deref()) {
                 import_audio(&tx, user, &bytes, &digest, filename.as_deref(), audio_format, &data_dir)?
+            } else if is_zip(&bytes) && is_audio_zip(&bytes) {
+                import_audio_zip(&tx, user, &bytes, &digest, filename.as_deref(), &data_dir)?
             } else if is_zip(&bytes) && !is_epub_zip(&bytes) {
                 import_comic_zip(&tx, user, &bytes, &digest, filename.as_deref(), "cbz", None, &data_dir)?
             } else {
                 import_epub(&tx, user, &bytes, &digest, &data_dir)?
             };
             tx.commit()?;
-            Ok((StatusCode::CREATED, Json(serde_json::json!({"id":id,"duplicate":false}))).into_response())
+            Ok((
+                (StatusCode::CREATED, Json(serde_json::json!({"id":id,"duplicate":false}))).into_response(),
+                convert_id,
+            ))
         })
-        .await
+        .await?;
+    if let Some(id) = convert_id {
+        aax::spawn_convert(state, id);
+    }
+    Ok(response)
 }
 
 pub(super) async fn delete_book(
@@ -782,6 +876,12 @@ pub(super) async fn file(
             }
         })
         .await?;
+    if format == "aax" {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "This audiobook is still converting from AAX.",
+        ));
+    }
     let (mime, disposition) = book_file_mime(&format);
     // Large spilled books stream from disk — loading 1.5 GiB into RAM OOMs clients.
     if let Some(relative) = storage_path.filter(|p| !p.is_empty()) {
@@ -807,7 +907,7 @@ pub(super) async fn file(
         inline,
     )
         .into_response();
-    if matches!(format.as_str(), "mp3" | "m4b") {
+    if audiobook::is_audio_format(&format) {
         response.headers_mut().insert(
             header::ACCEPT_RANGES,
             header::HeaderValue::from_static("bytes"),
@@ -854,6 +954,11 @@ pub(super) async fn source_file(
                 "djvu" => ("image/vnd.djvu", "attachment; filename=book.djvu"),
                 "mp3" => ("audio/mpeg", "inline; filename=book.mp3"),
                 "m4b" => ("audio/mp4", "inline; filename=book.m4b"),
+                "opus" => ("audio/ogg", "inline; filename=book.opus"),
+                "ogg" => ("audio/ogg", "inline; filename=book.ogg"),
+                "flac" => ("audio/flac", "inline; filename=book.flac"),
+                "audiozip" => ("application/zip", "attachment; filename=audiobook.zip"),
+                "aax" => ("audio/vnd.audible.aax", "attachment; filename=book.aax"),
                 _ => ("application/epub+zip", "attachment; filename=book.epub"),
             };
             Ok((
@@ -923,11 +1028,32 @@ pub(super) async fn cover(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> ApiResult<Response> {
-    state.db(move |db| {
-        let user = authenticate(db, &headers)?;
-        let (content,mime) = db.query_row("SELECT f.cover,f.cover_mime FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=? AND f.cover IS NOT NULL", params![id,user], |r| Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,String>(1)?))).optional()?.ok_or(ApiError(StatusCode::NOT_FOUND,"Cover not found."))?;
-        Ok(([(header::CONTENT_TYPE,mime)],content).into_response())
-    }).await
+    let data_dir = state.data_dir.clone();
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            let owned: bool = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM books WHERE id=? AND user_id=?)",
+                params![id, user],
+                |r| r.get(0),
+            )?;
+            if !owned {
+                return Err(ApiError(StatusCode::NOT_FOUND, "Cover not found."));
+            }
+            // Audiobook covers may be extracted lazily from embedded art.
+            let _ = audio_meta::enrich_audio_book(db, &data_dir, id);
+            let (content, mime) = db
+                .query_row(
+                    "SELECT f.cover,f.cover_mime FROM epub_files f JOIN books b ON b.id=f.book_id
+                     WHERE b.id=? AND b.user_id=? AND f.cover IS NOT NULL",
+                    params![id, user],
+                    |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?)),
+                )
+                .optional()?
+                .ok_or(ApiError(StatusCode::NOT_FOUND, "Cover not found."))?;
+            Ok(([(header::CONTENT_TYPE, mime)], content).into_response())
+        })
+        .await
 }
 
 /// `GET /books/{id}/pages` → `{ pageCount }` for CBZ (Book Orbit comic reader).

@@ -27,15 +27,25 @@ CREATE TABLE IF NOT EXISTS epub_files (
   cover_mime TEXT,
   position TEXT,
   percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
-  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu','mp3','m4b')),
-  -- Original upload for converted comics (CBR/CB7/DjVu); NULL when content is the source.
+  format TEXT NOT NULL DEFAULT 'epub' CHECK(format IN ('epub','pdf','cbz','cbr','cb7','djvu','mp3','m4b','opus','ogg','flac','audiozip','aax')),
+  -- Original upload for converted comics (CBR/CB7/DjVu) or AAX; NULL when content is the source.
   source BLOB,
   -- When set, book bytes live under $SHELF_DATA/{storage_path} and `content` is empty.
   storage_path TEXT,
-  -- Same for oversized `source` blobs (converted comics).
-  source_path TEXT
+  -- Same for oversized `source` blobs (converted comics / AAX).
+  source_path TEXT,
+  -- AAX → M4B job: pending/running/failed/ready; NULL for non-AAX books.
+  conversion_status TEXT CHECK(conversion_status IS NULL OR conversion_status IN ('pending','running','failed','ready')),
+  conversion_error TEXT,
+  -- JSON array of {id,title,startMs,endMs} from M4B/MP4 chapter atoms (empty = probed, none found).
+  chapter_markers TEXT
 );
 CREATE INDEX IF NOT EXISTS epub_digest ON epub_files(digest);
+-- Audible activation_bytes keyed by AAX file checksum (account-constant; cache once).
+CREATE TABLE IF NOT EXISTS aax_activation_cache (
+  checksum TEXT PRIMARY KEY,
+  activation_bytes TEXT NOT NULL CHECK(length(activation_bytes) = 8)
+);
 CREATE TABLE IF NOT EXISTS bookmarks (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
@@ -87,3 +97,14 @@ CREATE TABLE IF NOT EXISTS tts_providers (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS tts_providers_user ON tts_providers(user_id, display_order, id);
+
+CREATE TABLE IF NOT EXISTS audiobook_playback (
+  book_id INTEGER PRIMARY KEY REFERENCES books(id),
+  asset_id TEXT NOT NULL,
+  position_ms INTEGER NOT NULL CHECK(position_ms >= 0),
+  percentage REAL NOT NULL DEFAULT 0 CHECK(percentage BETWEEN 0 AND 1),
+  completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0, 1)),
+  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+  captured_at TEXT NOT NULL,
+  manifest_revision TEXT NOT NULL
+);

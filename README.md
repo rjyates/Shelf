@@ -69,6 +69,25 @@ adb uninstall app.shelf.shelf_mobile
 adb install -r app-release.apk
 ```
 
+## Audible AAX → M4B
+
+Upload an `.aax` file like any other audiobook. Shelf keeps the original in storage and converts it to a playable M4B in the background (same pipeline as [audible-tools](https://audible-tools.codestars.at/): checksum at offset 653, rainbow-table activation bytes, `ffmpeg -c copy`).
+
+The image includes **ffmpeg**. You must also mount [inAudible-NG/tables](https://github.com/inAudible-NG/tables) and point the server at it:
+
+```yaml
+services:
+  shelf:
+    image: ghcr.io/rjyates/shelf-server:latest
+    environment:
+      SHELF_AAX_TABLES: /aax-tables
+    volumes:
+      - shelf-data:/data
+      - ./aax-tables:/aax-tables:ro
+```
+
+Clone the tables repo into `./aax-tables` on the host (includes `rcrack` and `*.rtc`). Optional overrides: `SHELF_AAX_RCRACK`, `SHELF_AAX_FFMPEG`. Without tables, AAX import still succeeds but conversion fails with a clear catalogue error.
+
 ## Import and read EPUBs
 
 In Library, choose **Add book** and select your EPUBs. On mobile, **Add book** opens your phone's document picker. Exact duplicates reuse the existing entry without resetting progress. Title, author, and an available JPEG/PNG cover come from the EPUB; no metadata provider receives the file.

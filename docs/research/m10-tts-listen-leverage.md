@@ -14,7 +14,7 @@ Reference: Book Orbit TTS UI under `web/orbit-reader/vendor/bookorbit/features/t
 | Prefs / position | Browser localStorage stubs until SQLite TTS prefs |
 | EPUB media overlays | **Web shipped** — Foliate plays embedded SMIL/audio from the whole-file EPUB; Shelf serves `GET /api/v1/epub/{id}/media-overlay` for resume timing. Streaming package files still deferred. |
 | Mobile listen | **Shipped (slices 4–5)** — server TTS when online + providers; MO read-along from local EPUB (playlist disk cache, continuous same-file clips, highlight + page sync, volume); large `/file` download streams to disk |
-| Standalone audiobooks | **Shipped (slice 6)** — single-file `mp3`/`m4b` ingest; web player + Media Session; mobile player + `audio_service` background controls; `audioms` resume; Range on spilled `/file` |
+| Standalone audiobooks | **Shipped (slice 6)** — `mp3`/`m4b`/`opus`/`ogg`/`flac` + `audiozip`; BO manifest + asset content + playback-state; web/mobile players; Range on spilled `/file` |
 
 ## Recommended M10 slice order (fly path)
 
