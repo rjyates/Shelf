@@ -1835,9 +1835,12 @@ async fn aax_import_converts_to_m4b_keeping_source() {
     }
     let ffmpeg = bin.join("ffmpeg");
     let fixture_path = m4b_fixture.display().to_string();
+    // POSIX-only: CI runners use dash as /bin/sh; bash `${@: -1}` fails there.
     std::fs::write(
         &ffmpeg,
-        format!("#!/bin/sh\nout=\"${{@: -1}}\"\ncp \"{fixture_path}\" \"$out\"\n"),
+        format!(
+            "#!/bin/sh\nout=\nfor arg do out=$arg; done\ncp \"{fixture_path}\" \"$out\"\n"
+        ),
     )
     .unwrap();
     #[cfg(unix)]
