@@ -25,14 +25,14 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host done; bookmarks/annotations/prefs persist on Shelf SQLite |
 | Mobile EPUB reading (Readium) | Done: Read downloads/caches EPUB if needed, opens `flutter_readium`; progress/bookmarks/annotations via Shelf APIs. Foliate WebView removed from mobile. |
 | Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations |
-| Offline book download + progress/annotation outbox | Done: Save offline / auto-cache on Read; outbox (transport + HTTP 5xx); flush on refresh and connectivity; pre-M4 localStorage one-shot migrate |
+| Offline book download + progress/annotation outbox | Done: Save offline / auto-cache on Read (EPUB/PDF/CBZ) and Listen (audio formats + ZIP); catalogue local-copy icon; outbox (transport + HTTP 5xx); flush on refresh and connectivity; pre-M4 localStorage one-shot migrate |
 | Native mobile EPUB navigator (Readium) | Done: sole mobile reader; auto-cache on Read; bookmarks/highlights UI; Locator ↔ CFI/% sync |
 | Stylus / freehand ink on pages (native overlay) | **M7–M8 complete** (2026-11-04): Nomad SPEED+A2+tip lead (~0.15–0.2s); Flutter `noop` elsewhere. Mid-stroke fill-in experiments closed. Drawing G1/G2 is milestone 13. |
 | Folder scanning and multiple libraries | Planned |
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
 | PDF reading | **M9 web + mobile PDF** — ingest + BO `pdf-v4`; mobile Readium PDF open/cache with shared `pdfpage(N)`, fit-to-page, tap-to-hide chrome, page/progress footer — `docs/research/m9-pdf-comics-leverage.md` |
 | Comic archive reading | **M9 web + mobile CBZ/CBR/CB7/DjVu** — CBZ as ZIP; CBR/CB7/DjVu → ZIP-of-images at ingest (labels preserved; original on `/source`); shared page API + `cbzpage(N)`; DjVu embedded text sheet; web BO comic reader; mobile Readium ZIP path with scroll/RTL/spread prefs — same leverage doc |
-| Audiobook playback and background media controls | Planned (later M10 slice — standalone audio, not EPUB narration) |
+| Audiobook playback and background media controls | **Usable (M10 slice 6)** — MP3/M4B/Opus/Ogg/FLAC + multi-track ZIP; AAX→M4B; embedded M4B chapters + cover via ffprobe/ffmpeg; BO `manifest` / `assets/…/content` / `playback-state`; web + mobile players (cover + chapter picker); Listen auto-caches for offline file playback; lock-screen via `audio_service`; Storyteller sync still Planned (slice 7) |
 | EPUB Media Overlay read-along and alignment | **Web + mobile usable** — Foliate on web; mobile plays SMIL from the local EPUB (playlist API, disk cache, sentence highlight, page sync); spilled large books stream on `/file`; package-file streaming for web Foliate still deferred |
 | Web OpenAI-compatible / Kokoro TTS | **Usable when configured** — Settings `#settings` providers; reader listen hidden until an enabled provider exists; synthesize proxied by Shelf; see `docs/research/m10-tts-listen-leverage.md` |
 | Browser SpeechSynthesis | Dropped for web (not BO’s path); system voices not required |

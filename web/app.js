@@ -21,6 +21,20 @@ function displayTitle(title) {
     .replace(/\s+/g, " ")
     .trim();
 }
+function isAudio(book) {
+  return (
+    book.format === "mp3" ||
+    book.format === "m4b" ||
+    book.format === "opus" ||
+    book.format === "ogg" ||
+    book.format === "flac" ||
+    book.format === "audiozip" ||
+    book.format === "aax"
+  );
+}
+function isPlayableAudiobook(book) {
+  return isAudio(book) && book.format !== "aax";
+}
 function isImported(book) {
   return (
     book.format === "epub" ||
@@ -28,8 +42,33 @@ function isImported(book) {
     book.format === "cbz" ||
     book.format === "cbr" ||
     book.format === "cb7" ||
-    book.format === "djvu"
+    book.format === "djvu" ||
+    isAudio(book)
   );
+}
+function formatLabel(book) {
+  if (isAudio(book)) return "Audiobook";
+  switch (book.format) {
+    case "pdf":
+      return "PDF";
+    case "cbz":
+      return "CBZ";
+    case "cbr":
+      return "CBR";
+    case "cb7":
+      return "CB7";
+    case "djvu":
+      return "DjVu";
+    default:
+      return "EPUB";
+  }
+}
+function audioStatusLine(book) {
+  if (book.format !== "aax") return null;
+  if (book.conversion_status === "failed") {
+    return book.conversion_error || "AAX conversion failed.";
+  }
+  return "Converting AAX…";
 }
 function isFinished(book) {
   if (book.reading_status === "finished") return true;
@@ -266,7 +305,22 @@ function render() {
       $("progress-dialog").showModal();
     });
     const actions = element("div", undefined, "book-actions");
-    if (isImported(book)) {
+    if (isPlayableAudiobook(book)) {
+      actions.append(
+        Object.assign(
+          element(
+            "a",
+            book.position ? "Continue listening →" : "Listen →",
+            "quiet",
+          ),
+          {
+            href: `/reader?id=${book.id}&format=${book.format}`,
+          },
+        ),
+      );
+    } else if (book.format === "aax") {
+      actions.append(element("p", audioStatusLine(book), "fine"));
+    } else if (isImported(book)) {
       actions.append(
         Object.assign(
           element(
@@ -328,19 +382,9 @@ function render() {
       element(
         "p",
         isImported(book)
-          ? `${Math.round(book.percentage * 100)}% read · ${
-              book.format === "pdf"
-                ? "PDF"
-                : book.format === "cbz"
-                  ? "CBZ"
-                  : book.format === "cbr"
-                    ? "CBR"
-                    : book.format === "cb7"
-                      ? "CB7"
-                      : book.format === "djvu"
-                        ? "DjVu"
-                        : "EPUB"
-            }`
+          ? `${Math.round(book.percentage * 100)}% ${
+              isAudio(book) ? "played" : "read"
+            } · ${formatLabel(book)}`
           : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`,
         "fine",
       ),
@@ -552,13 +596,27 @@ $("epub-files").addEventListener("change", async () => {
           ? "application/pdf"
           : file.type === "application/vnd.comicbook+zip" || name.endsWith(".cbz")
             ? "application/vnd.comicbook+zip"
-            : name.endsWith(".cbr") ||
-                name.endsWith(".cb7") ||
-                name.endsWith(".7z") ||
-                name.endsWith(".djvu") ||
-                name.endsWith(".djv")
-              ? "application/octet-stream"
-              : "application/epub+zip";
+            : name.endsWith(".aax")
+              ? "audio/vnd.audible.aax"
+              : name.endsWith(".mp3")
+              ? "audio/mpeg"
+              : name.endsWith(".m4b") || name.endsWith(".m4a")
+                ? "audio/mp4"
+                : name.endsWith(".opus")
+                  ? "audio/ogg"
+                  : name.endsWith(".ogg") || name.endsWith(".oga")
+                    ? "audio/ogg"
+                    : name.endsWith(".flac")
+                      ? "audio/flac"
+                      : name.endsWith(".zip")
+                        ? "application/zip"
+                        : name.endsWith(".cbr") ||
+                    name.endsWith(".cb7") ||
+                    name.endsWith(".7z") ||
+                    name.endsWith(".djvu") ||
+                    name.endsWith(".djv")
+                  ? "application/octet-stream"
+                  : "application/epub+zip";
       const result = await api("books/import", {
         method: "POST",
         headers: {

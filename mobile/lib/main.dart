@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
+import 'audiobook_screen.dart';
 import 'connectivity.dart';
 import 'display_profile.dart';
 import 'eink_reader.dart';
@@ -673,8 +674,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (store == null) return {};
     final saved = <int>{};
     for (final book in books) {
-      if (!book.opensInReader) continue;
-      final ext = EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
+      if (!book.opensInReader && !book.opensAsAudiobook) continue;
+      final ext = EpubStore.extensionFor(
+        isPdf: book.isPdf,
+        isCbz: book.isCbz,
+        format: book.format,
+      );
       if (await store.has(book.id, extension: ext, digest: book.digest)) {
         saved.add(book.id);
       }
@@ -720,8 +725,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   String? _localExtension(Book book) {
-    if (!book.opensInReader) return null;
-    return EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
+    if (!book.opensInReader && !book.opensAsAudiobook) return null;
+    return EpubStore.extensionFor(
+      isPdf: book.isPdf,
+      isCbz: book.isCbz,
+      format: book.format,
+    );
   }
 
   Future<void> _removeLocalCopy(Book book) async {
@@ -892,14 +901,145 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  Future<void> _listen(Book book) async {
+    if (!book.opensAsAudiobook) return;
+    if (_openingBookId != null) return;
+    final epubs = widget.epubs;
+    if (epubs == null) return;
+    _openingProgress.value = const _OpenProgress(label: 'Opening…');
+    setState(() => _openingBookId = book.id);
+    var prepareDialogOpen = true;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) {
+          return PopScope(
+            canPop: false,
+            child: AlertDialog(
+              content: ValueListenableBuilder<_OpenProgress>(
+                valueListenable: _openingProgress,
+                builder: (_, progress, _) => _OpenProgressBody(progress),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    void closePrepareDialog() {
+      if (!prepareDialogOpen || !mounted) return;
+      prepareDialogOpen = false;
+      final nav = Navigator.of(context, rootNavigator: true);
+      if (nav.canPop()) nav.pop();
+    }
+
+    try {
+      final online = connectivityLooksOnline(
+        await Connectivity().checkConnectivity(),
+      );
+      final ext = _localExtension(book)!;
+      var cached = await epubs.has(
+        book.id,
+        extension: ext,
+        digest: book.digest,
+      );
+      if (!cached) {
+        if (!online) {
+          closePrepareDialog();
+          if (mounted) {
+            setState(() => _openingBookId = null);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Save offline first to listen without a connection.',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        _openingProgress.value = const _OpenProgress(
+          label: 'Downloading…',
+          downloading: true,
+        );
+        try {
+          await epubs.saveViaDownload(
+            book.id,
+            (dest) => widget.api.downloadBookToFile(
+              book.id,
+              dest,
+              onProgress: (received, total) {
+                _openingProgress.value = _OpenProgress(
+                  label: formatDownloadProgress(received, total),
+                  downloading: true,
+                  received: received,
+                  total: total,
+                );
+              },
+            ),
+            extension: ext,
+            digest: book.digest,
+          );
+          cached = true;
+          if (mounted) setState(() => _savedOffline.add(book.id));
+        } catch (error) {
+          closePrepareDialog();
+          if (mounted) {
+            setState(() => _openingBookId = null);
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(error.toString())));
+          }
+          return;
+        }
+      }
+      if (!mounted || !cached) {
+        closePrepareDialog();
+        if (mounted) setState(() => _openingBookId = null);
+        return;
+      }
+      closePrepareDialog();
+      final local = epubs.fileFor(book.id, extension: ext, digest: book.digest);
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              AudiobookScreen(api: widget.api, book: book, localFile: local),
+        ),
+      );
+      await _refresh();
+    } catch (error) {
+      closePrepareDialog();
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _openingBookId = null);
+    }
+  }
+
   Future<void> _import() async {
     try {
       final file = await openFile(
         acceptedTypeGroups: [
           const XTypeGroup(
-            label: 'EPUB books',
-            extensions: ['epub'],
-            uniformTypeIdentifiers: ['org.idpf.epub-container'],
+            label: 'Books and audiobooks',
+            extensions: [
+              'epub',
+              'mp3',
+              'm4b',
+              'aax',
+              'opus',
+              'ogg',
+              'flac',
+              'zip',
+            ],
+            uniformTypeIdentifiers: [
+              'org.idpf.epub-container',
+              'public.mp3',
+              'com.apple.m4b-audio',
+              'public.mpeg-4-audio',
+              'public.ogg-audio',
+              'org.xiph.flac',
+              'public.zip-archive',
+            ],
           ),
         ],
       );
@@ -910,12 +1050,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
       await _refresh();
       if (mounted) {
+        const audioExts = [
+          '.mp3',
+          '.m4b',
+          '.aax',
+          '.opus',
+          '.ogg',
+          '.flac',
+          '.zip',
+        ];
+        final lower = file.name.toLowerCase();
+        final kind = audioExts.any(lower.endsWith) ? 'audiobook' : 'EPUB';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               duplicate
-                  ? 'This EPUB is already in your library.'
-                  : 'EPUB imported.',
+                  ? 'This $kind is already in your library.'
+                  : '${kind == 'EPUB' ? 'EPUB' : 'Audiobook'} imported.',
             ),
           ),
         );
@@ -1201,6 +1352,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       onOpen: () {
                         if (book.opensInReader) {
                           _read(book);
+                        } else if (book.opensAsAudiobook) {
+                          _listen(book);
+                        } else if (book.isConvertingAax) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Still converting this AAX to M4B. Pull to refresh.',
+                              ),
+                            ),
+                          );
+                        } else if (book.aaxConversionFailed) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                book.conversionError ?? 'AAX conversion failed. Check server ffmpeg and SHELF_AAX_TABLES.',
+                              ),
+                            ),
+                          );
                         } else {
                           _record(book);
                         }
@@ -1303,6 +1472,13 @@ class _BookTile extends StatelessWidget {
       'cbr' => 'CBR',
       'cb7' => 'CB7',
       'djvu' => 'DjVu',
+      'mp3' ||
+      'm4b' ||
+      'aax' ||
+      'opus' ||
+      'ogg' ||
+      'flac' ||
+      'audiozip' => 'Audiobook',
       'epub' => 'EPUB',
       _ =>
         book.isPdf
@@ -1311,17 +1487,25 @@ class _BookTile extends StatelessWidget {
             ? 'CBZ'
             : book.isEpub
             ? 'EPUB'
+            : book.isAudio
+            ? 'Audiobook'
             : null,
     };
     final progressLabel = formatLabel != null
-        ? '${(book.percentage * 100).round()}% read · $formatLabel'
+        ? '${(book.percentage * 100).round()}% ${book.isAudio ? 'played' : 'read'} · $formatLabel'
         : '${book.pagesRead} / ${book.totalPages} pages';
     final action = opening
         ? 'Opening…'
         : book.opensInReader
         ? 'Read book'
+        : book.opensAsAudiobook
+        ? 'Listen'
+        : book.isConvertingAax
+        ? 'Converting…'
+        : book.aaxConversionFailed
+        ? 'Conversion failed'
         : 'Record progress';
-    final showLocalIcon = book.opensInReader;
+    final showLocalIcon = book.opensInReader || book.opensAsAudiobook;
     final cover = book.hasCover
         ? Image.network(
             api.base.resolve('/api/v1/books/${book.id}/cover').toString(),
@@ -1350,7 +1534,10 @@ class _BookTile extends StatelessWidget {
               const SizedBox(width: 8),
               Padding(
                 padding: const EdgeInsets.only(top: 2),
-                child: _LocalCopyIcon(downloaded: savedOffline),
+                child: _LocalCopyIcon(
+                  downloaded: savedOffline,
+                  forAudiobook: book.opensAsAudiobook,
+                ),
               ),
             ],
           ],
@@ -1454,13 +1641,16 @@ class _BookTile extends StatelessWidget {
 /// High-contrast local-copy badge for e-ink (no mid-grays / soft fills).
 /// Downloaded: filled tray + check. Not downloaded: outline tray + down arrow.
 class _LocalCopyIcon extends StatelessWidget {
-  const _LocalCopyIcon({required this.downloaded});
+  const _LocalCopyIcon({required this.downloaded, this.forAudiobook = false});
   final bool downloaded;
+  final bool forAudiobook;
 
   @override
   Widget build(BuildContext context) {
     final label = downloaded
         ? 'Downloaded on this device'
+        : forAudiobook
+        ? 'Not downloaded — Listen will download it'
         : 'Not downloaded — Read book will download it';
     return Semantics(
       label: label,
