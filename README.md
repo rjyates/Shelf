@@ -29,9 +29,35 @@ Run:
 docker compose up -d
 ```
 
-Open [localhost:8080](http://localhost:8080) and create your account. There is no default password, database service, or required environment file. `/data` stores the SQLite database, sessions, imported EPUB bytes, covers, and saved reader positions. Back up this volume. A host directory works in place of the named volume, for example `./data:/data`. A root-owned folder is given to uid 10001 on startup. A folder you already own is left alone, and the server runs as that user. The optional books mount is reserved for future folder scanning; it is not automatically imported.
+Open [localhost:8080](http://localhost:8080) and create your account. There is no default password, database service, or required environment file. One container includes Combine/readalong (CTC via ghost-story on loopback). `/data` stores the SQLite database, sessions, imported EPUB bytes, covers, saved reader positions, and the CTC model cache under `ghost-story/` (downloaded on first boot, ~1.2GB). Back up this volume. A host directory works in place of the named volume, for example `./data:/data`. A root-owned folder is given to uid 10001 on startup. A folder you already own is left alone, and the server runs as that user. The optional books mount is reserved for future folder scanning; it is not automatically imported.
 
 For repeatable installations, use the version-pinned Compose file attached to a [server release](https://github.com/rjyates/Shelf/releases). The published image includes Linux amd64 and arm64.
+
+### Faster Combine with a GPU (optional)
+
+One `compose.yaml`. Change the image tag and uncomment the matching GPU block already in that file (NVIDIA or AMD — not both). CTC emit supports `cpu`, `cuda`, and `webgpu`.
+
+| Tag | Uncomment in compose | Host needs |
+| --- | --- | --- |
+| `ghcr.io/rjyates/shelf-server:latest` | nothing | CPU only |
+| `…:cuda` | NVIDIA block (`runtime: nvidia`, …) | [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) |
+| `…:rocm` | AMD block (`/dev/dri`, `/dev/kfd`, `group_add`) | AMD drivers; user in `render`/`video`. Image ships Mesa ≥25 (bookworm-backports) for RDNA3.5 iGPUs (860M/880M/890M); bookworm’s Mesa 22 cannot initialize those chips. |
+
+Example — AMD:
+
+```yaml
+image: ghcr.io/rjyates/shelf-server:rocm
+environment:
+  GHOST_STORY_DEVICE: webgpu
+devices:
+  - /dev/dri:/dev/dri
+  - /dev/kfd:/dev/kfd
+group_add:
+  - render
+  - video
+```
+
+Building from this repo: set `build.args.SHELF_GPU_VARIANT` to `cuda` or `rocm` (same comments in `compose.yaml`). Override device anytime with `GHOST_STORY_DEVICE=cpu|cuda|webgpu|auto`; the entrypoint falls back to CPU if device nodes are missing. Publishing `:cuda` / `:rocm` to GHCR is the same CI path as `:latest` once those tags are wired on main.
 
 ### Build the unreleased source
 

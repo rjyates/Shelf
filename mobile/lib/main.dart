@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'audiobook_screen.dart';
+import 'companion.dart';
 import 'connectivity.dart';
 import 'display_profile.dart';
 import 'eink_reader.dart';
@@ -635,6 +636,7 @@ class LibraryScreen extends StatefulWidget {
 
 class _LibraryScreenState extends State<LibraryScreen> {
   List<Book> _books = [];
+  List<Work> _works = [];
   bool _loading = true;
   String? _error;
   late DisplayProfile _profile = widget.profile;
@@ -703,10 +705,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
     try {
       await _flushOutbox();
       final books = await widget.api.books();
+      // Works fold audio/readaloud; soft-fail so older servers still list books.
+      var works = <Work>[];
+      try {
+        works = await widget.api.works();
+      } catch (_) {}
       final saved = await _cachedEpubs(books);
       if (mounted) {
         setState(() {
           _books = books;
+          _works = works;
           _savedOffline
             ..clear()
             ..addAll(saved);
@@ -724,6 +732,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  List<Book> get _visibleBooks {
+    final hide = hiddenEditionIds(_books, works: _works);
+    return [
+      for (final b in _books)
+        if (!hide.contains(b.id)) b,
+    ];
+  }
+
   String? _localExtension(Book book) {
     if (!book.opensInReader && !book.opensAsAudiobook) return null;
     return EpubStore.extensionFor(
@@ -731,6 +747,124 @@ class _LibraryScreenState extends State<LibraryScreen> {
       isCbz: book.isCbz,
       format: book.format,
     );
+  }
+
+  Future<void> _mergeAndCombine(Book book) async {
+    final candidates = mergeCandidates(book, _books);
+    if (candidates.isEmpty || !mounted) return;
+    var otherId = candidates.first.id;
+    final titleController = TextEditingController(text: book.title);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocal) => AlertDialog(
+            title: const Text('Merge & Combine'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Pair an EPUB with an audiobook when titles differ, set the '
+                    'shared title, then Combine into a read-aloud edition.',
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<int>(
+                    initialValue: otherId,
+                    decoration: const InputDecoration(labelText: 'Merge with'),
+                    items: [
+                      for (final other in candidates)
+                        DropdownMenuItem(
+                          value: other.id,
+                          child: Text(
+                            '${other.title} · ${other.isEpub ? 'EPUB' : 'Audiobook'}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setLocal(() => otherId = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(
+                      labelText: 'Merged title',
+                    ),
+                    maxLength: 500,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Merge & Combine'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    final mergedTitle = titleController.text.trim();
+    titleController.dispose();
+    if (confirmed != true || !mounted) return;
+    if (mergedTitle.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Enter a merged title.')));
+      return;
+    }
+    final otherMatches = [
+      for (final b in _books)
+        if (b.id == otherId) b,
+    ];
+    if (otherMatches.isEmpty) return;
+    final other = otherMatches.first;
+    final epubBook = book.isEpub
+        ? book
+        : other.isEpub
+        ? other
+        : null;
+    final audioBook = book.opensAsAudiobook
+        ? book
+        : other.opensAsAudiobook
+        ? other
+        : null;
+    if (epubBook == null || audioBook == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Merge needs one EPUB and one playable audiobook.'),
+        ),
+      );
+      return;
+    }
+    try {
+      final work = await widget.api.createWork(
+        epubBookId: epubBook.id,
+        audioBookId: audioBook.id,
+        title: mergedTitle,
+      );
+      await _refresh();
+      if (!mounted) return;
+      final message = work.isReady
+          ? 'Read-aloud ready.'
+          : work.isFailed
+          ? (work.error ?? 'Alignment failed.')
+          : 'Combining in the background — pull to refresh when it finishes.';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
   }
 
   Future<void> _removeLocalCopy(Book book) async {
@@ -755,6 +889,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _manage(Book book) async {
     final hasLocal = _savedOffline.contains(book.id);
+    final canMerge = mergeCandidates(book, _books).isNotEmpty;
     final action = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -794,6 +929,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 onTap: () => Navigator.pop(context, 'rereading'),
               ),
             ],
+            if (findCompanionEdition(book, _books) != null) ...[
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  book.opensAsAudiobook
+                      ? 'Open ebook companion'
+                      : 'Open audiobook companion',
+                ),
+                subtitle: const Text(
+                  'Same title on the shelf — opens the other edition',
+                ),
+                onTap: () => Navigator.pop(context, 'companion'),
+              ),
+            ],
+            if (canMerge) ...[
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Merge & Combine'),
+                subtitle: const Text(
+                  'Pair EPUB + audiobook when titles differ, then align',
+                ),
+                onTap: () => Navigator.pop(context, 'merge'),
+              ),
+            ],
             if (hasLocal) ...[
               const SizedBox(height: 8),
               ListTile(
@@ -823,6 +984,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
     );
     if (!mounted) return;
+    if (action == 'merge') {
+      await _mergeAndCombine(book);
+      return;
+    }
+    if (action == 'companion') {
+      final companion = findCompanionEdition(book, _books);
+      if (companion == null) return;
+      if (companion.opensAsAudiobook) {
+        await _listen(companion);
+      } else if (companion.opensInReader) {
+        await _read(companion);
+      }
+      return;
+    }
     if (action == 'remove-local') {
       await _removeLocalCopy(book);
       return;
@@ -1298,7 +1473,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    libraryReadingBlurb(_books),
+                    libraryReadingBlurb(_visibleBooks),
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
                   const SizedBox(height: 20),
@@ -1341,7 +1516,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         style: TextStyle(fontSize: 18),
                       ),
                     ),
-                  for (final book in _books)
+                  for (final book in _visibleBooks)
                     _BookTile(
                       api: widget.api,
                       book: book,

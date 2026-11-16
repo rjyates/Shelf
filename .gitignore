@@ -11,6 +11,7 @@ web/orbit-reader/dist/
 server/target/
 .tools/
 data/
+data.bak/
 books/
 *.db
 *.db-shm
@@ -24,3 +25,10 @@ artifacts/
 release-out/
 # Local upload fixtures (see samples/README.md); keep binaries out of git.
 samples/*.cbz
+# Local EPUBs stay out of git except Four Lamps CI gate fixtures.
+*.epub
+!samples/align-smoke/Four_Lamps.epub
+samples/align-smoke/Lamp_and_Rain.*
+# Accidental editor dump (literal filename `"`).
+"
+IDEA.md

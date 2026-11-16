@@ -13,6 +13,7 @@ import 'epub_store.dart';
 import 'ink_overlay.dart';
 import 'ink_stroke.dart';
 import 'listen_mode.dart';
+import 'listen_sync_prefs.dart';
 import 'media_overlay_cache.dart';
 import 'media_overlay_locator.dart';
 import 'media_overlay_player.dart';
@@ -76,6 +77,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   String? _moPaintTextHref;
   var _moSecondsSincePaint = 0.0;
   var _listenVolume = 1.0;
+  var _syncOffsetMs = 0;
 
   /// Last SMIL cue when listen stopped — resume here on the same HTML page.
   int? _moResumeIndex;
@@ -173,6 +175,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   }
 
   Future<void> _bootstrapListenGate() async {
+    _syncOffsetMs = await loadListenSyncOffsetMs();
+
     final results = await Connectivity().checkConnectivity();
     await _onConnectivity(results);
   }
@@ -337,6 +341,20 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     try {
       await _readium.applyDecorations('shelf-media-overlay', const []);
     } catch (_) {}
+  }
+
+  Future<void> _setSyncOffset(int ms) async {
+    final snapped = listenSyncOffsetChoicesMs.reduce(
+      (a, b) => (a - ms).abs() <= (b - ms).abs() ? a : b,
+    );
+    _syncOffsetMs = snapped;
+    await saveListenSyncOffsetMs(snapped);
+    await _moPlayer.setSyncOffsetMs(snapped);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _nudgeSyncOffset(int delta) async {
+    await _setSyncOffset(_syncOffsetMs + delta);
   }
 
   Future<void> _setListenVolume(double value) async {
@@ -921,6 +939,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       _moHighlightHref = null;
       _moPaintTextHref = null;
       _moSecondsSincePaint = 99;
+      _moPlayer.syncOffsetMs = _syncOffsetMs;
       await _moPlayer.start(
         playlist: playlist,
         epubFile: file,
@@ -1364,6 +1383,49 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                                       const Icon(Icons.volume_up, color: ink),
                                     ],
                                   ),
+
+                                  if (_moPlayer.active) ...[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Sync ${listenSyncOffsetLabel(_syncOffsetMs)}',
+                                      style: const TextStyle(
+                                        color: ink,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                    Row(
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Highlight earlier',
+                                          onPressed: () =>
+                                              unawaited(_nudgeSyncOffset(-500)),
+                                          icon: const Icon(Icons.remove),
+                                          color: ink,
+                                        ),
+                                        Expanded(
+                                          child: Slider(
+                                            value: _syncOffsetMs.toDouble(),
+                                            min: -2000,
+                                            max: 2000,
+                                            divisions: 8,
+                                            label: listenSyncOffsetLabel(
+                                              _syncOffsetMs,
+                                            ),
+                                            onChanged: (v) => unawaited(
+                                              _setSyncOffset(v.round()),
+                                            ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Highlight later',
+                                          onPressed: () =>
+                                              unawaited(_nudgeSyncOffset(500)),
+                                          icon: const Icon(Icons.add),
+                                          color: ink,
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                   if (_listenError != null)
                                     Padding(
                                       padding: const EdgeInsets.only(bottom: 8),

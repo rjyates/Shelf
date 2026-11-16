@@ -1145,12 +1145,22 @@ pub(super) async fn location(
                 return Err(ApiError(StatusCode::NOT_FOUND, "Book file not found."));
             }
             // Natural completion; unfinished/rereading stay until manage marks finished again.
-            if (value.percentage - 1.0).abs() < f64::EPSILON {
+            let finished = (value.percentage - 1.0).abs() < f64::EPSILON;
+            if finished {
                 db.execute(
                     "UPDATE books SET reading_status='finished' WHERE id=? AND user_id=?",
                     params![id, user],
                 )?;
             }
+            // Library cards show the EPUB edition; Read opens the readaloud — mirror.
+            mirror_work_text_progress(
+                db,
+                user,
+                id,
+                Some(value.position.as_str()),
+                Some(value.percentage),
+                if finished { Some("finished") } else { None },
+            )?;
             Ok(StatusCode::NO_CONTENT)
         })
         .await

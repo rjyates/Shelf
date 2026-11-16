@@ -261,6 +261,69 @@ class Book {
   }
 }
 
+/// Align/Combine work from `/api/v1/works` (book_works row).
+class Work {
+  Work({
+    required this.id,
+    required this.epubBookId,
+    required this.audioBookId,
+    this.readaloudBookId,
+    required this.status,
+    this.stage,
+    required this.progress,
+    this.error,
+  });
+  factory Work.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final epub = json['epub_book_id'];
+    final audio = json['audio_book_id'];
+    final readaloud = json['readaloud_book_id'];
+    final status = json['status'];
+    final stage = json['stage'];
+    final progress = json['progress'];
+    final error = json['error'];
+    if (id is! int ||
+        id < 1 ||
+        epub is! int ||
+        epub < 1 ||
+        audio is! int ||
+        audio < 1 ||
+        status is! String ||
+        status.isEmpty ||
+        (readaloud != null && (readaloud is! int || readaloud < 1)) ||
+        (stage != null && stage is! String) ||
+        progress is! num ||
+        !progress.isFinite ||
+        (error != null && error is! String)) {
+      throw ShelfException(
+        'Your server returned an invalid work entry. Check the server version.',
+      );
+    }
+    return Work(
+      id: id,
+      epubBookId: epub,
+      audioBookId: audio,
+      readaloudBookId: readaloud as int?,
+      status: status,
+      stage: stage as String?,
+      progress: progress.toDouble(),
+      error: error as String?,
+    );
+  }
+  final int id;
+  final int epubBookId;
+  final int audioBookId;
+  final int? readaloudBookId;
+  final String status;
+  final String? stage;
+  final double progress;
+  final String? error;
+
+  bool get isBusy => status == 'queued' || status == 'processing';
+  bool get isReady => status == 'ready';
+  bool get isFailed => status == 'failed';
+}
+
 /// Library blurb: imported books have no page count (decision 0003), so mean progress replaces "pages turned".
 String libraryReadingBlurb(List<Book> books) {
   final started = books
@@ -482,6 +545,61 @@ class ShelfApi {
       }
       return Book.fromJson(item);
     }).toList();
+  }
+
+  Future<List<Work>> works() async {
+    final data = await request('works');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid works list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>)
+          Work.fromJson(item)
+        else
+          throw ShelfException(
+            'Your server returned an invalid work entry. Check the server version.',
+          ),
+    ];
+  }
+
+  Future<Work> work(int id) async {
+    final data = await request('works/$id');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not load this work.');
+    }
+    return Work.fromJson(data);
+  }
+
+  /// Create or reuse a book_works row; optional [title] renames both editions.
+  Future<Work> createWork({
+    required int epubBookId,
+    required int audioBookId,
+    bool start = true,
+    String? title,
+  }) async {
+    final body = <String, dynamic>{
+      'epub_book_id': epubBookId,
+      'audio_book_id': audioBookId,
+      'start': start,
+    };
+    final merged = title?.trim();
+    if (merged != null && merged.isNotEmpty) body['title'] = merged;
+    final data = await request('works', method: 'POST', body: body);
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not create work.');
+    }
+    return Work.fromJson(data);
+  }
+
+  Future<Work> startWorkAlign(int id) async {
+    final data = await request('works/$id/align', method: 'POST');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not start alignment.');
+    }
+    return Work.fromJson(data);
   }
 
   Future<void> addBook(String title, String author, int totalPages) async {

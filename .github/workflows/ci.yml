@@ -210,10 +210,55 @@ jobs:
           name: mobile-ios
           path: shelf-ios-unsigned.ipa
 
+  combine-ctc:
+    name: four-lamps-combine
+    needs: plan
+    if: needs.plan.outputs.server == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      - name: Cache CTC models under /data
+        uses: actions/cache@v4
+        with:
+          path: data/ghost-story
+          key: ghost-story-ctc-${{ hashFiles('deploy/Dockerfile', 'deploy/entrypoint.sh') }}
+          restore-keys: ghost-story-ctc-
+      - name: Build shelf image (CTC in-image)
+        run: |
+          mkdir -p data/files data/ghost-story
+          docker compose -f compose.yaml build
+      - name: Start Shelf Compose
+        run: |
+          docker compose -p shelf-ctc-gate -f compose.yaml up -d
+          # Wait for shelf health (entrypoint installs CTC model + starts ghost-story).
+          for i in $(seq 1 120); do
+            if curl -sf http://127.0.0.1:8080/api/v1/health >/dev/null; then
+              echo "shelf ready"
+              break
+            fi
+            if [ "$i" -eq 120 ]; then
+              docker compose -p shelf-ctc-gate -f compose.yaml logs --tail=200
+              exit 1
+            fi
+            sleep 5
+          done
+          docker compose -p shelf-ctc-gate -f compose.yaml exec -T shelf \
+            curl -sf -H "Authorization: Bearer shelf-internal" \
+            http://127.0.0.1:8765/v1/capabilities >/dev/null
+      - name: Four Lamps CTC Combine gate
+        env:
+          SHELF_GATE_BASE: http://127.0.0.1:8080/api/v1
+          SHELF_GATE_POLL_SECS: '4800'
+        run: python3 scripts/four_lamps_combine_gate.py
+      - name: Stop Shelf Compose
+        if: always()
+        run: docker compose -p shelf-ctc-gate -f compose.yaml down -v
   gate:
     name: ci-gate
     if: always()
-    needs: [plan, server, server-image, mobile, android, ios]
+    needs: [plan, server, server-image, combine-ctc, mobile, android, ios]
     runs-on: ubuntu-24.04
     steps:
       - name: Require success for every selected component
@@ -227,6 +272,7 @@ jobs:
           selected = jobs['plan']['outputs']
           required = {name: selected[name] == 'true' for name in ('server', 'mobile', 'android', 'ios')}
           required['server-image'] = required['server']
+          required['combine-ctc'] = required['server']
           for name, needed in required.items():
               if needed:
                   assert jobs[name]['result'] == 'success', f'{name} did not pass'

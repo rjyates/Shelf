@@ -24,8 +24,11 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal
 tokio-util = { version = "0.7", features = ["io"] }
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 mime_guess = "2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 tempfile = "3"
+regex = "1"
+xmltree = "0.11"
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
