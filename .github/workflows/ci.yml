@@ -229,6 +229,15 @@ jobs:
           path: data/ghost-story
           key: ghost-story-ctc-${{ hashFiles('deploy/Dockerfile', 'deploy/entrypoint.sh') }}
           restore-keys: ghost-story-ctc-
+      # MMS ONNX + Node can spike past the 7Gi runner; Four Lamps flake was emit poll
+      # connection reset when ghost-story was OOM-killed mid-job.
+      - name: Add swap for CTC model load
+        run: |
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
       - name: Build shelf image (CTC in-image)
         run: |
           mkdir -p data/files data/ghost-story books
@@ -257,10 +266,27 @@ jobs:
           SHELF_GATE_BASE: http://127.0.0.1:8080/api/v1
           SHELF_GATE_POLL_SECS: '4800'
         run: |
-          python3 scripts/four_lamps_combine_gate.py || {
-            docker compose -p shelf-ctc-gate -f compose.yaml logs --tail=300
-            exit 1
+          dump_fail() {
+            docker compose -p shelf-ctc-gate -f compose.yaml logs --tail=300 || true
+            free -h || true
+            dmesg -T 2>/dev/null | tail -80 || true
           }
+          if ! python3 scripts/four_lamps_combine_gate.py; then
+            echo "first Four Lamps attempt failed; recreating stack once"
+            dump_fail
+            docker compose -p shelf-ctc-gate -f compose.yaml down
+            # Fresh DB so the gate can re-import; keep bind-mounted CTC models.
+            rm -f data/shelf.db data/shelf.db-wal data/shelf.db-shm
+            docker compose -p shelf-ctc-gate -f compose.yaml up -d --pull never
+            for i in $(seq 1 120); do
+              if curl -sf http://127.0.0.1:8080/api/v1/health >/dev/null; then
+                break
+              fi
+              if [ "$i" -eq 120 ]; then dump_fail; exit 1; fi
+              sleep 5
+            done
+            python3 scripts/four_lamps_combine_gate.py || { dump_fail; exit 1; }
+          fi
       - name: Stop Shelf Compose
         if: always()
         run: docker compose -p shelf-ctc-gate -f compose.yaml down -v

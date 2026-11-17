@@ -62,12 +62,20 @@ if [ -z "$(ls -A "$GHOST_STORY_MODELS_DIR" 2>/dev/null || true)" ]; then
     fi
 fi
 
-ghost-story serve \
-    --host "$GHOST_STORY_HOST" \
-    --port "$GHOST_STORY_PORT" \
-    --api-key "$GHOST_STORY_API_KEY" \
-    --device "$device" \
-    --model-dir "$GHOST_STORY_MODELS_DIR" &
+# Restart loop: a single OOM/crash must not leave shelf without emissions.
+(
+    while true; do
+        ghost-story serve \
+            --host "$GHOST_STORY_HOST" \
+            --port "$GHOST_STORY_PORT" \
+            --api-key "$GHOST_STORY_API_KEY" \
+            --device "$device" \
+            --model-dir "$GHOST_STORY_MODELS_DIR" \
+            && break
+        echo "shelf: ghost-story exited; restarting in 2s" >&2
+        sleep 2
+    done
+) &
 gs_pid=$!
 cleanup() { kill "$gs_pid" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM

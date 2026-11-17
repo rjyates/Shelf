@@ -216,15 +216,26 @@ impl CtcEmitClient {
     fn poll_job(&self, job_id: &str) -> Result<String, String> {
         let client = self.http()?;
         let mut revision: u64 = 0;
+        let mut send_failures: u32 = 0;
         loop {
             let url = format!(
                 "{}/v1/emissions/jobs/{job_id}?wait={WAIT_SECONDS}&revision={revision}",
                 self.base_url
             );
-            let resp = self
-                .auth(client.get(&url))
-                .send()
-                .map_err(|e| format!("ctc emit poll: {e}"))?;
+            let resp = match self.auth(client.get(&url)).send() {
+                Ok(r) => {
+                    send_failures = 0;
+                    r
+                }
+                // ghost-story can drop the long-poll when the process is OOM-killed or
+                // briefly restarting; a few soft retries beat failing the whole Combine.
+                Err(_e) if send_failures < 8 => {
+                    send_failures += 1;
+                    std::thread::sleep(Duration::from_secs(2));
+                    continue;
+                }
+                Err(e) => return Err(format!("ctc emit poll: {e}")),
+            };
             if !resp.status().is_success() {
                 return Err(format!(
                     "ctc emit poll {}: {}",
