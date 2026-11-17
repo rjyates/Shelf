@@ -445,6 +445,120 @@ async fn media_overlay_playlist_from_epub_smil() {
 }
 
 #[tokio::test]
+async fn epub_package_info_and_file_stream() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("stream.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("/api/v1/epub/{id}/info"),
+            Value::Null,
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let (status, info) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/epub/{id}/info?fileId={id}"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["containerPath"], "package.opf");
+    assert_eq!(info["rootPath"], "");
+    assert_eq!(info["metadata"]["title"], "A test chapter");
+    assert_eq!(info["spine"][0]["href"], "chapter.xhtml");
+    assert_eq!(info["manifest"][0]["href"], "chapter.xhtml");
+    assert!(info["manifest"][0]["size"].as_u64().unwrap() > 0);
+    assert_eq!(info["toc"]["children"][0]["label"], "Chapter");
+
+    let chapter = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/epub/{id}/file/chapter.xhtml"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(chapter.status(), StatusCode::OK);
+    assert_eq!(chapter.headers()["content-type"], "application/xhtml+xml");
+    let chapter_bytes = to_bytes(chapter.into_body(), 1024).await.unwrap();
+    assert!(String::from_utf8_lossy(&chapter_bytes).contains("Original synthetic test text"));
+
+    let escaped = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/epub/{id}/file/../package.opf"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(escaped.status(), StatusCode::BAD_REQUEST);
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/epub/{id}/file/missing.xhtml"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    let (status, _) = upload(&app, sample_pdf(), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let pdf_id = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["format"] == "pdf")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("/api/v1/epub/{pdf_id}/info"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
 async fn epub_import_duplicate_access_and_saved_position_survive_restart() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("epub.db");

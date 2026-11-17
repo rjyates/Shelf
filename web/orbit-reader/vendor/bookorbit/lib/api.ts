@@ -445,11 +445,14 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
   const ttsLocal = await handleTtsLocal(path, method, url, init)
   if (ttsLocal) return ttsLocal
 
-  // Media-overlay playlist is served by Shelf; streaming /info still deferred.
-  if (path.includes('/media-overlay')) {
+  // EPUB package streaming (/info + /file/*) and media-overlay hit Shelf.
+  if (
+    path.includes('/media-overlay') ||
+    /^\/api\/v1\/epub\/\d+\/(info|file)\b/.test(path)
+  ) {
     return null
   }
-  // Sessions, EPUB info/stream — later M10 slices.
+  // Sessions and remaining stubbed EPUB paths stay local until implemented.
   if (
     path.startsWith('/api/v1/fonts') ||
     path.startsWith('/api/v1/server-fonts') ||

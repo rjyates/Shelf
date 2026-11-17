@@ -5,7 +5,8 @@ import { useFoliateAnnotations } from './useFoliateAnnotations'
 import { useFoliateSelection } from './useFoliateSelection'
 import { useFoliateInput } from './useFoliateInput'
 import { ensureMediaOverlayActiveClass } from '../../media-overlay/lib/media-overlay-highlight'
-import type { EpubReaderSettings } from '@bookorbit/types'
+import { scalePublisherFontSizes } from '../lib/publisher-font-sizes'
+import type { EpubBookInfo, EpubReaderSettings } from '@bookorbit/types'
 
 export interface RelocateDetail {
   /** Why the view moved: a user's `page`/`snap`/`scroll`, a programmatic `navigation`, or an `anchor` relayout. */
@@ -280,24 +281,32 @@ export function useFoliate(
 
       let shouldRestoreByFraction = false
 
-      // Shelf serves the whole EPUB at /api/v1/books/{id}/file. Book Orbit's
-      // streaming /api/v1/epub/... info API is not implemented here; Foliate still
-      // opens a File blob the same way Book Orbit does for non-streamed formats.
       if (format === 'epub') {
-        bookLanguage.value = 'en'
-        const res = await api(`/api/v1/books/${bookId}/file`)
-        if (!res.ok) throw new Error(`Failed to fetch book file: ${res.status}`)
-        const blob = await res.blob()
-        const file = new File([blob], `book-${bookId}.epub`, { type: 'application/epub+zip' })
-        await view.open(file)
-        const book = view.book
-        if (book) {
-          ensureMediaOverlayActiveClass(book)
-          applyEpubOpenOptions(book, options)
-          shouldRestoreByFraction = isFixedLayoutBook(book)
-          isFixedLayout.value = shouldRestoreByFraction
-        }
-        void fileId
+        const infoRes = await api(`/api/v1/epub/${bookId}/info?fileId=${fileId}`)
+        if (!infoRes.ok) throw new Error(`Failed to fetch EPUB info: ${infoRes.status}`)
+        const bookInfo = (await infoRes.json()) as EpubBookInfo
+        const rawLang = bookInfo?.metadata?.language
+        bookLanguage.value =
+          typeof rawLang === 'string' && rawLang ? (rawLang.split('-')[0] ?? 'en').toLowerCase() : 'en'
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const makeStreamingBook = (window as any).makeStreamingBook as
+          | ((
+              id: number,
+              base: string,
+              info: unknown,
+              fetchFile: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+              bookType: null,
+              fileId: number,
+            ) => Promise<unknown>)
+          | undefined
+        if (!makeStreamingBook) throw new Error('makeStreamingBook not available')
+        const book = await makeStreamingBook(bookId, '/api/v1/epub', bookInfo, makeFoliateFetchFile(), null, fileId)
+        ensureMediaOverlayActiveClass(book)
+        applyEpubOpenOptions(book, options)
+        shouldRestoreByFraction = isFixedLayoutBook(book)
+        isFixedLayout.value = shouldRestoreByFraction
+        if (!shouldRestoreByFraction) scalePublisherFontSizes(book)
+        await view.open(book as never)
       } else {
         const mimeType = format === 'pdf' ? 'application/pdf' : 'application/zip'
         const ext = format === 'pdf' ? 'pdf' : format === 'cbz' ? 'cbz' : format
