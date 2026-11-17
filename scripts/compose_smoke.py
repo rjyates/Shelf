@@ -50,10 +50,27 @@ def host_directory_mount():
             check=True,
         )
         data = str(Path(parent) / "data")
-        # Reuse models from the Compose smoke volume so we do not re-download ~1.2GB.
-        cached = Path("data/ghost-story")
+        # data/ is root-owned (created above); seed models as root so CI does not re-download.
+        cached = Path("data/ghost-story").resolve()
         if cached.is_dir() and any(cached.rglob("*")):
-            shutil.copytree(cached, Path(data) / "ghost-story", dirs_exist_ok=True)
+            subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--entrypoint",
+                    "cp",
+                    "-v",
+                    f"{cached}:/src:ro",
+                    "-v",
+                    f"{data}:/dst",
+                    IMAGE,
+                    "-a",
+                    "/src",
+                    "/dst/ghost-story",
+                ],
+                check=True,
+            )
         subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(
             ["docker", "run", "-d", "--name", name, "-p", "127.0.0.1:18080:8080", "-v", f"{data}:/data", IMAGE],
