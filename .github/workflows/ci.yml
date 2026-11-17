@@ -120,6 +120,7 @@ jobs:
           cache-to: type=gha,mode=max,ignore-error=true,scope=shelf-${{ matrix.arch }}
       - name: Verify Compose and container startup
         run: |
+          mkdir -p data books
           docker compose config --quiet
           docker tag "shelf-tested:$GITHUB_SHA" ghcr.io/rjyates/shelf-server:latest
           docker compose -p shelf-ci up -d --pull never
@@ -227,11 +228,12 @@ jobs:
           restore-keys: ghost-story-ctc-
       - name: Build shelf image (CTC in-image)
         run: |
-          mkdir -p data/files data/ghost-story
-          docker compose -f compose.yaml build
+          mkdir -p data/files data/ghost-story books
+          # compose.yaml is the published CPU image (no /dev/kfd); build from this SHA.
+          docker build -f deploy/Dockerfile -t ghcr.io/rjyates/shelf-server:latest .
       - name: Start Shelf Compose
         run: |
-          docker compose -p shelf-ctc-gate -f compose.yaml up -d
+          docker compose -p shelf-ctc-gate -f compose.yaml up -d --pull never
           # Wait for shelf health (entrypoint installs CTC model + starts ghost-story).
           for i in $(seq 1 120); do
             if curl -sf http://127.0.0.1:8080/api/v1/health >/dev/null; then

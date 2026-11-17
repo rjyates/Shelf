@@ -1,13 +1,9 @@
 services:
   shelf:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
-      # GPU local build: cuda | rocm (omit / cpu for CPU-only).
-      args:
-        SHELF_GPU_VARIANT: rocm
     # Published: ghcr.io/rjyates/shelf-server:latest | :cuda | :rocm
-    image: shelf-local-rocm
+    # Local source build: docker build -f deploy/Dockerfile -t ghcr.io/rjyates/shelf-server:latest .
+    # (or -t shelf-local / :rocm with --build-arg SHELF_GPU_VARIANT=rocm)
+    image: ghcr.io/rjyates/shelf-server:latest
     ports:
       - "127.0.0.1:8080:8080"
     # Optional AAX→M4B: clone https://github.com/inAudible-NG/tables to ./aax-tables
@@ -18,7 +14,7 @@ services:
       - ./books:/books:ro
       # - ./aax-tables:/aax-tables:ro
     restart: unless-stopped
-    # --- GPU: change image tag / SHELF_GPU_VARIANT; enable ONE vendor block ---
+    # --- GPU: change image tag; enable ONE vendor block (not both). CI has no /dev/kfd. ---
     # NVIDIA (:cuda) — needs NVIDIA Container Toolkit
     # environment:
     #   GHOST_STORY_DEVICE: cuda
@@ -31,13 +27,13 @@ services:
     #           count: all
     #           capabilities: [gpu]
     # AMD (:rocm) — ghost-story CTC uses WebGPU/Mesa; pass ROCm device nodes
-    environment:
-      GHOST_STORY_DEVICE: webgpu
-      # Ryzen AI 300 / gfx1152: uncomment if HIP tools need a supported gfx id
-      # HSA_OVERRIDE_GFX_VERSION: "11.5.0"
-    devices:
-      - /dev/dri:/dev/dri
-      - /dev/kfd:/dev/kfd
-    group_add:
-      - render
-      - video
+    # environment:
+    #   GHOST_STORY_DEVICE: webgpu
+    #   # Ryzen AI 300 / gfx1152: uncomment if HIP tools need a supported gfx id
+    #   # HSA_OVERRIDE_GFX_VERSION: "11.5.0"
+    # devices:
+    #   - /dev/dri:/dev/dri
+    #   - /dev/kfd:/dev/kfd
+    # group_add:
+    #   - render
+    #   - video

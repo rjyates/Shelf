@@ -1872,7 +1872,11 @@ async fn aax_import_converts_to_m4b_keeping_source() {
     let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
         .await
         .1;
-    assert_eq!(catalogue[0]["format"], "aax");
+    // Stub ffmpeg finishes before the first poll on fast CI; accept aax or m4b.
+    assert!(
+        catalogue[0]["format"] == "aax" || catalogue[0]["format"] == "m4b",
+        "{catalogue}"
+    );
     assert_eq!(catalogue[0]["title"], "Silent Planet");
     assert!(
         catalogue[0]["conversion_status"] == "pending"
