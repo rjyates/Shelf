@@ -55,7 +55,11 @@ echo "shelf: ghost-story --device $device"
 
 if [ -z "$(ls -A "$GHOST_STORY_MODELS_DIR" 2>/dev/null || true)" ]; then
     echo "shelf: installing CTC model into $GHOST_STORY_MODELS_DIR"
-    ghost-story install ctc-model || true
+    ghost-story install ctc-model
+    if [ -z "$(ls -A "$GHOST_STORY_MODELS_DIR" 2>/dev/null || true)" ]; then
+        echo "shelf: CTC model install left $GHOST_STORY_MODELS_DIR empty" >&2
+        exit 1
+    fi
 fi
 
 ghost-story serve \
