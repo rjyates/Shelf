@@ -1,5 +1,5 @@
 //! EPUB3 media-overlay playlist for Book Orbit's resume / chapter timing UI.
-//! Playback itself uses Foliate against the whole-file EPUB blob.
+//! Package-file streaming (`epub_package`) reuses the zip/OPF helpers below.
 
 use super::*;
 use serde_json::{json, Value};
@@ -8,7 +8,10 @@ use std::io::{Cursor, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 use zip::ZipArchive;
 
-fn zip_entry_name<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Option<String> {
+pub(crate) fn zip_entry_name<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    name: &str,
+) -> Option<String> {
     if archive.by_name(name).is_ok() {
         return Some(name.to_string());
     }
@@ -20,7 +23,10 @@ fn zip_entry_name<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Op
     })
 }
 
-fn zip_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> ApiResult<Vec<u8>> {
+pub(crate) fn zip_bytes<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    name: &str,
+) -> ApiResult<Vec<u8>> {
     let entry_name = zip_entry_name(archive, name).ok_or(ApiError(
         StatusCode::BAD_REQUEST,
         "Could not read this EPUB.",
@@ -34,28 +40,31 @@ fn zip_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> ApiResu
     Ok(buf)
 }
 
-fn zip_string<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> ApiResult<String> {
+pub(crate) fn zip_string<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    name: &str,
+) -> ApiResult<String> {
     let bytes = zip_bytes(archive, name)?;
     String::from_utf8(bytes)
         .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "EPUB XML is not valid UTF-8."))
 }
 
 /// Uncompressed size from the central directory — do not inflate audio just for metadata.
-fn zip_size<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> u64 {
+pub(crate) fn zip_size<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> u64 {
     let Some(entry_name) = zip_entry_name(archive, name) else {
         return 0;
     };
     archive.by_name(&entry_name).map(|f| f.size()).unwrap_or(0)
 }
 
-fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     let key = format!("{name}=\"");
     let start = tag.find(&key)? + key.len();
     let end = tag[start..].find('"')? + start;
     Some(&tag[start..end])
 }
 
-fn attr_owned(tag: &str, name: &str) -> Option<String> {
+pub(crate) fn attr_owned(tag: &str, name: &str) -> Option<String> {
     attr(tag, name).map(html_unescape)
 }
 
@@ -67,7 +76,7 @@ fn html_unescape(s: &str) -> String {
         .replace("&apos;", "'")
 }
 
-fn resolve_href(base: &str, href: &str) -> String {
+pub(crate) fn resolve_href(base: &str, href: &str) -> String {
     if href.starts_with('/') {
         return href.trim_start_matches('/').replace('\\', "/");
     }
@@ -126,39 +135,65 @@ pub(crate) fn parse_clock(raw: &str) -> Option<f64> {
     Some(n * factor)
 }
 
-struct ManifestItem {
-    id: String,
-    href: String,
-    media_type: String,
-    media_overlay: Option<String>,
+pub(crate) struct ManifestItem {
+    pub id: String,
+    pub href: String,
+    pub media_type: String,
+    pub media_overlay: Option<String>,
+    pub properties: Option<Vec<String>>,
 }
 
-fn parse_manifest_and_spine(opf: &str) -> (Vec<ManifestItem>, Vec<String>) {
+/// Spine `itemref` with optional `linear` (defaults true when omitted).
+pub(crate) struct SpineRef {
+    pub idref: String,
+    pub linear: bool,
+}
+
+pub(crate) fn parse_manifest_and_spine(opf: &str) -> (Vec<ManifestItem>, Vec<String>) {
+    let (items, refs) = parse_manifest_and_spine_refs(opf);
+    (items, refs.into_iter().map(|r| r.idref).collect())
+}
+
+pub(crate) fn parse_manifest_and_spine_refs(opf: &str) -> (Vec<ManifestItem>, Vec<SpineRef>) {
     let mut items = Vec::new();
     let mut spine = Vec::new();
-    let lower = opf; // keep original for attr quotes
-    let mut search = lower;
+    let mut search = opf;
     while let Some(start) = search.find("<item") {
         let rest = &search[start..];
         let end = rest.find('>').unwrap_or(rest.len());
         let tag = &rest[..end];
+        // Skip `<itemref` — it also starts with `<item`.
+        if tag.starts_with("<itemref") {
+            search = &rest[end.max(1)..];
+            continue;
+        }
         if let (Some(id), Some(href)) = (attr_owned(tag, "id"), attr_owned(tag, "href")) {
+            let properties = attr_owned(tag, "properties").map(|raw| {
+                raw.split_whitespace()
+                    .map(str::to_string)
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            });
             items.push(ManifestItem {
                 id,
                 href,
                 media_type: attr_owned(tag, "media-type").unwrap_or_default(),
                 media_overlay: attr_owned(tag, "media-overlay"),
+                properties: properties.filter(|p| !p.is_empty()),
             });
         }
         search = &rest[end.max(1)..];
     }
-    search = lower;
+    search = opf;
     while let Some(start) = search.find("<itemref") {
         let rest = &search[start..];
         let end = rest.find('>').unwrap_or(rest.len());
         let tag = &rest[..end];
         if let Some(idref) = attr_owned(tag, "idref") {
-            spine.push(idref);
+            let linear = attr(tag, "linear")
+                .map(|v| !v.eq_ignore_ascii_case("no"))
+                .unwrap_or(true);
+            spine.push(SpineRef { idref, linear });
         }
         search = &rest[end.max(1)..];
     }
@@ -238,7 +273,7 @@ fn parse_smil_pars(smil: &str, smil_href: &str) -> Vec<SmilPar> {
     pars
 }
 
-fn opf_path_from_container(container: &str) -> Option<String> {
+pub(crate) fn opf_path_from_container(container: &str) -> Option<String> {
     let mut search = container;
     while let Some(start) = search.find("<rootfile") {
         let rest = &search[start..];

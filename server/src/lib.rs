@@ -3,6 +3,7 @@ mod align;
 mod audio_meta;
 mod audiobook;
 mod epub;
+mod epub_package;
 mod media_overlay;
 mod reader_data;
 mod tts;
@@ -478,6 +479,11 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/epub/{id}/media-overlay",
             get(media_overlay::media_overlay_playlist),
+        )
+        .route("/api/v1/epub/{id}/info", get(epub_package::book_info))
+        .route(
+            "/api/v1/epub/{id}/file/{*path}",
+            get(epub_package::package_file),
         )
         .route(
             "/api/v1/audiobooks/{id}/manifest",
