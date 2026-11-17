@@ -32,8 +32,8 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
 | PDF reading | **M9 web + mobile PDF** — ingest + BO `pdf-v4`; mobile Readium PDF open/cache with shared `pdfpage(N)`, fit-to-page, tap-to-hide chrome, page/progress footer — `docs/research/m9-pdf-comics-leverage.md` |
 | Comic archive reading | **M9 web + mobile CBZ/CBR/CB7/DjVu** — CBZ as ZIP; CBR/CB7/DjVu → ZIP-of-images at ingest (labels preserved; original on `/source`); shared page API + `cbzpage(N)`; DjVu embedded text sheet; web BO comic reader; mobile Readium ZIP path with scroll/RTL/spread prefs — same leverage doc |
-| Audiobook playback and background media controls | **Usable (M10 slice 6)** — MP3/M4B/Opus/Ogg/FLAC + multi-track ZIP; AAX→M4B; embedded M4B chapters + cover via ffprobe/ffmpeg; BO `manifest` / `assets/…/content` / `playback-state`; web + mobile players (cover + chapter picker); Listen auto-caches for offline file playback; lock-screen via `audio_service`; Storyteller sync still Planned (slice 7) |
-| EPUB Media Overlay read-along and alignment | **Web + mobile usable** — Foliate on web; mobile plays SMIL from the local EPUB (playlist API, disk cache, sentence highlight, page sync); spilled large books stream on `/file`; package-file streaming for web Foliate still deferred |
+| Audiobook playback and background media controls | **Usable (M10 slice 6)** — MP3/M4B/Opus/Ogg/FLAC + multi-track ZIP; AAX→M4B; embedded M4B chapters + cover via ffprobe/ffmpeg; BO `manifest` / `assets/…/content` / `playback-state`; web + mobile players (cover + chapter picker); Listen auto-caches for offline file playback; lock-screen via `audio_service`; Storyteller sync extras in slice 7; MO generation via Combine |
+| EPUB Media Overlay read-along and alignment | **Web + mobile usable** — Foliate on web; mobile plays SMIL from the local EPUB (playlist API, disk cache, sentence highlight, page sync); Shelf *generates* MO EPUBs via Combine (`/api/v1/works` — web Manage + mobile works client); EN Foliate CTC→MO production path PASS (Four Lamps + RotK 2026-11-16); spilled large books stream on `/file`; package-file streaming for web Foliate still deferred |
 | Web OpenAI-compatible / Kokoro TTS | **Usable when configured** — Settings `#settings` providers; reader listen hidden until an enabled provider exists; synthesize proxied by Shelf; see `docs/research/m10-tts-listen-leverage.md` |
 | Browser SpeechSynthesis | Dropped for web (not BO’s path); system voices not required |
 | Mobile / e-ink listen | **Usable (M10 slices 4–5)** — server TTS when online + providers; MO read-along offline from cache; download progress; cover screensaver idle timeout in Settings |
@@ -42,16 +42,16 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Reader preference sync across devices | Per-book + account defaults on Shelf; chrome pin stays local |
 | Kobo and KOReader integrations | Planned |
 | OPDS and Send-to-Kindle | Planned |
-| Metadata providers and cover enrichment | Planned |
+| Metadata providers and cover enrichment | Planned (**M17**) — providers to enrich title/author/series/etc.; multi-cover gallery and switch which cover is active |
 | Authors, series, smart scopes, collections | Planned |
 | Session-based statistics, heatmaps, streaks, Reading DNA | Planned; overview average progress; catalogue `reading_status` (`open`/`finished`/`unfinished`/`rereading`) stored for later reopen metrics |
 | Annual goals, monthly challenges, achievements | Planned |
 | Hardcover, Readwise, StoryGraph | Planned; external accounts remain unconfigured |
-| Multiple users, roles, OIDC/SSO | Planned; initial foundation is one account |
-| Automated ingestion and book requests/download clients | Planned |
+| Multiple users, roles, OIDC/SSO | Planned (**M16**) — Jellyfin-like household/server: many accounts; admin controls for library visibility and whether users must request titles vs auto-approved (admins); OIDC/SSO as needed. Foundation today is one account |
+| Automated ingestion and book/comic requests (*arr / Prowlarr) | Planned (**M15**) — Seerr-shaped request/discovery UX inside Shelf for books and comics ([Seerr](https://github.com/seerr-team/seerr) as the functional reference); wire Prowlarr indexers + the rest of the *arr download-client stack rather than inventing a parallel indexer path |
 | Reading journal | Planned; approved design includes a journal panel |
 | Localization | Planned; vendored reader ships English from Book Orbit |
-| Storyteller-style synced narration, PiP, sleep timer | Planned after audio; not the reader base |
+| Storyteller-style synced narration, PiP, sleep timer | **Usable (M10 slice 7)** — sleep timer (web/mobile audiobook; BO TTS already); MO sync offset (±2s) on mobile; Document PiP on web audiobook; paired EPUB+audiobook (+readaloud) fold into **one library card and one shelf count** (web `libraryStats` + `/stats` hide work audio/readaloud; mobile list folds companions) with Open → Read/Listen; Manage → Merge & Combine when titles differ (`POST /api/v1/works` optional `title`); after Combine, Read opens the MO readaloud. **Rust STAlign pipeline** (`server/src/align/`) + Combine on web; CTC emit via in-image ghost-story (Compose only; no Whisper production path). **EN Foliate CTC→MO production path at Storyteller parity (2026-11-16)** vs ST pin `2de166da` — Four Lamps gate PASS (90 clips) + RotK SoT live PASS (~12.9k clips, median ~4.5s, not SMIL-collapse). Living gap map `docs/research/storyteller-align-parity.md`: quality residuals **shipped** (CLDR/words, BacktraceGraph + token-span, model.ts/`ResolvedPos`, Intl, report, WebPub roles/`inferPageCount`/toc·landmarks, VAD + UTF-16 timeline, STEM `blocks()`). Intentional leftovers: Shelf soft-fail, ICU/CJK (ST default off), grapheme Unicode-scalar shortcut, Whisper production omit, package-file streaming deferred. Mobile plays MO + lists `/works`, folds by `book_works`, Manage → Merge & Combine |
 | Signed Android/iOS distribution and stores | Deferred by user; artifacts first |
 
 ## Implementation milestones (ordered for mutual benefit)
@@ -80,9 +80,17 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 11. **Library scale and organization** — folder scanning, editable metadata, authors/series/scopes/collections, storage/performance.
 
-12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph; multi-user/OIDC as needed.
+12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph. Multi-user/OIDC lives in M16; *arr request UX in M15.
 
 13. **Post-M8 drawing: generic tablet ink → golden OEM backends (G1 → G2)** — final drawing milestone. G1: portable mid-stroke path (Surface/Flutter) without OEM refresh APIs, same `EinkRefresh` contract. G2: deepen devices we can physically hack (Nomad already golden; e.g. Onyx `EpdController` only with hardware + smoke). Ledger: `docs/research/nomad-stylus.md`.
+
+14. **Native Rust CTC emit (replace in-image ghost-story)** — reverse-engineer `@storyteller-platform/ghost-story` MMS/CTC emissions into a Rust implementation that does the same STEM emit, faster, and can use a GPU when the container is given one (CUDA/ROCm/Vulkan as appropriate). Keep one compose / one image; drop the Node ghost-story runtime once the Rust path matches protocol + quality. Does not block M11–M13; production Combine stays on in-image ghost-story until this ships.
+
+15. **Book/comic requests via *arr stack (Seerr-shaped)** — Seerr-like request and discovery inside Shelf for books and comics ([Seerr](https://github.com/seerr-team/seerr) as reference — MIT, Jellyfin/Plex/Emby request manager). Integrate Prowlarr indexers and the same download clients the rest of the *arr stack already uses; do not invent a parallel indexer/download path. Scope is books/comics/audiobooks for Shelf, not movies/TV.
+
+16. **Multi-user (Jellyfin-like) + admin request policy** — many accounts on one Shelf instance; admin controls for what users can see (library visibility / scopes) and whether requests require approval or auto-approve (e.g. admins auto-approved, members request). OIDC/SSO as needed. Builds on M15 request flow when both ship.
+
+17. **Metadata providers + multi-cover select** — enrich catalogue entries from external metadata providers (title/author/series/description/etc.); keep multiple candidate covers and let the user pick/switch the active cover (gallery), rather than only the first embedded raster.
 
 **Explicitly out of milestones (REA closed):** clone `ThreadSampleEmr`; ship OpenCV/`librPainter`; port Wacom G12/G14/Lamy LUT catalogs; Notes HandWrite/PWCore EMR. Raw `/dev/ebc` DISPAREA is an **optional Nomad experiment** (`debug.shelf.ink.ebc`), not the default product path.
 

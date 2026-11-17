@@ -108,3 +108,16 @@ CREATE TABLE IF NOT EXISTS audiobook_playback (
   captured_at TEXT NOT NULL,
   manifest_revision TEXT NOT NULL
 );
+
+-- EPUB + audiobook pairing and Storyteller-shaped align jobs (M10 slice 7).
+CREATE TABLE IF NOT EXISTS book_works (
+  id INTEGER PRIMARY KEY,
+  epub_book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  audio_book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  readaloud_book_id INTEGER REFERENCES books(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','queued','processing','failed','ready')),
+  stage TEXT CHECK(stage IS NULL OR stage IN ('SPLIT_TRACKS','TRANSCRIBE_CHAPTERS','SYNC_CHAPTERS')),
+  progress REAL NOT NULL DEFAULT 0,
+  error TEXT,
+  UNIQUE(epub_book_id, audio_book_id)
+);

@@ -2,10 +2,13 @@
 import { request } from "./api.mjs";
 const $ = (id) => document.getElementById(id);
 let catalogue = [];
+let works = [];
 let setupRequired = false;
 let signedIn = false;
 let progressBook = null;
 let removeBook = null;
+let openEdition = null;
+let alignPollTimer = null;
 async function api(path, options = {}) {
   try {
     return await request(path, options);
@@ -46,6 +49,279 @@ function isImported(book) {
     isAudio(book)
   );
 }
+
+function companionKey(title, author) {
+  const t = String(title || "")
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const a = String(author || "").toLowerCase().trim();
+  return `${t}|${a}`;
+}
+
+/** EPUB ↔ audiobook pair when both editions share a title/author. */
+function findCompanionEdition(book, catalogue) {
+  const key = companionKey(book.title, book.author);
+  if (!book.title || key.startsWith("|")) return null;
+  const wantAudio = isImported(book) && !isAudio(book);
+  const wantReader = isPlayableAudiobook(book);
+  if (!wantAudio && !wantReader) return null;
+  for (const other of catalogue) {
+    if (other.id === book.id) continue;
+    if (companionKey(other.title, other.author) !== key) continue;
+    if (wantAudio && isPlayableAudiobook(other)) return other;
+    if (wantReader && isImported(other) && !isAudio(other)) return other;
+  }
+  return null;
+}
+
+/** Opposite-format editions available for a manual merge (titles may differ). */
+function mergeCandidates(book, catalogue) {
+  // Already paired by shared title/author — no merge UI needed.
+  if (findCompanionEdition(book, catalogue)) return [];
+  if (book.format === "epub") {
+    return catalogue.filter(
+      (other) => other.id !== book.id && isPlayableAudiobook(other),
+    );
+  }
+  if (isPlayableAudiobook(book)) {
+    return catalogue.filter(
+      (other) => other.id !== book.id && other.format === "epub",
+    );
+  }
+  return [];
+}
+
+/** Storyteller/BO shape: one library card per EPUB+audio pair; hide audio + readaloud rows. */
+function findWorkForPair(epub, audio) {
+  if (!epub || !audio) return null;
+  return (
+    works.find(
+      (w) => w.epub_book_id === epub.id && w.audio_book_id === audio.id,
+    ) || null
+  );
+}
+
+/** Prefer a ready work for this EPUB; else in-flight; else any (incl. failed). */
+function findWorkForEpub(epub) {
+  if (!epub) return null;
+  const matches = works.filter((w) => w.epub_book_id === epub.id);
+  if (!matches.length) return null;
+  return (
+    matches.find((w) => w.status === "ready") ||
+    matches.find(
+      (w) => w.status === "processing" || w.status === "queued",
+    ) ||
+    matches[0]
+  );
+}
+
+/**
+ * Audio edition for Open → Listen / Combine.
+ * Works win over title|author companion matching (MP3 tags often lack author).
+ */
+function pairedAudioForEpub(book, catalogue) {
+  if (!book || book.format !== "epub") return null;
+  const work = findWorkForEpub(book);
+  if (work?.audio_book_id != null) {
+    const audio = catalogue.find((b) => b.id === work.audio_book_id);
+    if (audio && isPlayableAudiobook(audio)) return { audio, work };
+  }
+  const companion = findCompanionEdition(book, catalogue);
+  if (companion && isPlayableAudiobook(companion)) {
+    return { audio: companion, work: findWorkForPair(book, companion) };
+  }
+  return null;
+}
+
+function hiddenEditionIds(catalogue, worksList) {
+  const hide = new Set();
+  // When a ready work owns an audio file, hide other works' EPUBs for that audio
+  // (e.g. failed Combine on a bad EPUB, then re-import + ready on a good one).
+  const readyByAudio = new Map();
+  for (const w of worksList) {
+    if (w.status === "ready" && w.audio_book_id != null) {
+      readyByAudio.set(w.audio_book_id, w);
+    }
+  }
+  for (const w of worksList) {
+    if (w.readaloud_book_id != null) hide.add(w.readaloud_book_id);
+    if (w.audio_book_id != null) hide.add(w.audio_book_id);
+    const ready =
+      w.audio_book_id != null ? readyByAudio.get(w.audio_book_id) : null;
+    if (ready && w.epub_book_id !== ready.epub_book_id) {
+      hide.add(w.epub_book_id);
+    }
+  }
+  for (const book of catalogue) {
+    // Orphan readalouds (work lost the link) — same title cue as mobile.
+    if (/\(readaloud\)\s*$/i.test(book.title || "")) hide.add(book.id);
+    if (!isPlayableAudiobook(book)) continue;
+    if (findCompanionEdition(book, catalogue)) hide.add(book.id);
+  }
+  return hide;
+}
+
+/** Stats for the folded catalogue (one entry per EPUB+audio work). */
+function libraryStats(catalogue, worksList) {
+  const hide = hiddenEditionIds(catalogue, worksList);
+  const visible = catalogue.filter((b) => !hide.has(b.id));
+  let reading = 0;
+  let finished = 0;
+  let sum = 0;
+  let n = 0;
+  for (const book of visible) {
+    if (book.reading_status === "finished") finished += 1;
+    const frac = isImported(book)
+      ? Number(book.percentage) || 0
+      : book.total_pages > 0
+        ? book.pages_read / book.total_pages
+        : 0;
+    const inProgress = isImported(book)
+      ? book.position && frac < 1
+      : book.pages_read > 0 && book.pages_read < book.total_pages;
+    if (
+      book.reading_status === "rereading" ||
+      (book.reading_status === "open" && inProgress)
+    ) {
+      reading += 1;
+    }
+    if (isImported(book) ? book.position : book.pages_read > 0) {
+      sum += frac;
+      n += 1;
+    }
+  }
+  return {
+    books: visible.length,
+    reading,
+    finished,
+    average_progress: n ? sum / n : 0,
+  };
+}
+
+function readerHref(book) {
+  if (!book) return "#";
+  if (isPlayableAudiobook(book)) {
+    return `/reader?id=${book.id}&format=${book.format}`;
+  }
+  const fmt =
+    book.format === "pdf" ||
+    book.format === "cbz" ||
+    book.format === "cbr" ||
+    book.format === "cb7" ||
+    book.format === "djvu"
+      ? `&format=${book.format}`
+      : "";
+  return `/reader?id=${book.id}${fmt}`;
+}
+
+function setAlignStatus(el, work) {
+  if (!el || !work) return;
+  el.hidden = false;
+  el.classList.add("align-status");
+  const pct = Math.round((work.progress || 0) * 100);
+  const stage = work.stage || "working";
+  let label;
+  if (work.status === "ready") label = "Read-aloud ready.";
+  else if (work.status === "failed")
+    label = work.error || "Alignment failed.";
+  else label = `Aligning (${stage} · ${pct}%)…`;
+  el.replaceChildren();
+  const row = element("div", undefined, "align-status-row");
+  if (work.status === "processing" || work.status === "queued") {
+    row.append(element("span", "", "align-spinner"));
+  }
+  row.append(element("span", label, "fine"));
+  el.append(row);
+  if (work.status === "processing" || work.status === "queued") {
+    const bar = element("progress");
+    bar.max = 1;
+    bar.value = Math.max(0, Math.min(1, Number(work.progress) || 0));
+    bar.setAttribute("aria-label", `Alignment ${pct}%`);
+    el.append(bar);
+  }
+}
+
+function scheduleAlignPoll() {
+  const busy = works.some(
+    (w) => w.status === "processing" || w.status === "queued",
+  );
+  if (!busy) {
+    if (alignPollTimer) {
+      clearInterval(alignPollTimer);
+      alignPollTimer = null;
+    }
+    return;
+  }
+  if (alignPollTimer) return;
+  alignPollTimer = setInterval(() => {
+    void refreshWorksOnly();
+  }, 2000);
+}
+
+async function refreshWorksOnly() {
+  if (!signedIn) return;
+  try {
+    works = await api("works");
+    render();
+    scheduleAlignPoll();
+  } catch {
+    /* keep last known works */
+  }
+}
+
+async function combineEditions(epubBook, audioBook, statusEl, title) {
+  if (statusEl) {
+    setAlignStatus(statusEl, {
+      status: "queued",
+      stage: "SPLIT_TRACKS",
+      progress: 0,
+    });
+  }
+  const body = {
+    epub_book_id: epubBook.id,
+    audio_book_id: audioBook.id,
+    start: true,
+  };
+  const merged = String(title || "").trim();
+  if (merged) body.title = merged;
+  const work = await api("works", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  let current = work;
+  const upsertWork = (w) => {
+    const i = works.findIndex((x) => x.id === w.id);
+    if (i >= 0) works[i] = w;
+    else works.push(w);
+  };
+  upsertWork(current);
+  scheduleAlignPoll();
+  // Whisper + multi-chapter align can take many minutes; poll up to ~30 min.
+  for (let i = 0; i < 1800; i++) {
+    if (current.status === "ready") {
+      if (statusEl) setAlignStatus(statusEl, current);
+      await refresh();
+      return current;
+    }
+    if (current.status === "failed") {
+      if (statusEl) setAlignStatus(statusEl, current);
+      throw new Error(current.error || "Alignment failed.");
+    }
+    if (statusEl) setAlignStatus(statusEl, current);
+    await new Promise((r) => setTimeout(r, 1000));
+    current = await api(`works/${work.id}`);
+    upsertWork(current);
+  }
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.textContent =
+      "Still aligning in the background — progress keeps updating on this card.";
+  }
+  return current;
+}
+
 function formatLabel(book) {
   if (isAudio(book)) return "Audiobook";
   switch (book.format) {
@@ -104,8 +380,13 @@ function showAuth(setup) {
   $("content").hidden = true;
   $("open-add").hidden = true;
   $("signout").hidden = true;
-  for (const id of ["progress-dialog", "manage-dialog", "remove-dialog"])
-    if ($(id).open) $(id).close();
+  for (const id of [
+    "progress-dialog",
+    "manage-dialog",
+    "remove-dialog",
+    "open-edition-dialog",
+  ])
+    if ($(id)?.open) $(id).close();
   $("auth-heading").textContent = setup
     ? "Make yourself at home."
     : "Open your reading room.";
@@ -118,24 +399,31 @@ function showAuth(setup) {
   password.minLength = setup ? 12 : 1;
 }
 async function refresh() {
-  const [books, stats] = await Promise.all([api("books"), api("stats")]);
+  const [books, workList] = await Promise.all([
+    api("books"),
+    api("works").catch(() => []),
+  ]);
   catalogue = books;
+  works = Array.isArray(workList) ? workList : [];
   signedIn = true;
   $("auth").hidden = true;
   $("content").hidden = false;
   $("open-add").hidden = false;
   $("signout").hidden = false;
+  // Folded counts: EPUB+audio(+readaloud) is one shelf book.
+  const folded = libraryStats(catalogue, works);
   for (const [id, key] of [
     ["books", "books"],
     ["reading", "reading"],
     ["finished", "finished"],
   ]) {
-    $(`stat-${id}`).textContent = stats[key].toLocaleString();
+    $(`stat-${id}`).textContent = folded[key].toLocaleString();
   }
   // EPUB has no printed page count (decision 0003); show mean completion instead.
   $("stat-pages").textContent =
-    `${Math.round(Number(stats.average_progress || 0) * 100)}%`;
+    `${Math.round(Number(folded.average_progress || 0) * 100)}%`;
   render();
+  scheduleAlignPoll();
 }
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -246,13 +534,15 @@ function render() {
   const query = $("search").value.toLowerCase();
   const fraction = (book) =>
     isImported(book) ? book.percentage : book.pages_read / book.total_pages;
-  const visible = catalogue.filter((book) =>
-    library
+  const foldedAway = hiddenEditionIds(catalogue, works);
+  const visible = catalogue.filter((book) => {
+    if (foldedAway.has(book.id)) return false;
+    return library
       ? `${book.title} ${book.author}`.toLowerCase().includes(query)
       : isImported(book)
         ? book.position && book.percentage < 1
-        : book.pages_read > 0 && book.pages_read < book.total_pages,
-  );
+        : book.pages_read > 0 && book.pages_read < book.total_pages;
+  });
   $("books").replaceChildren();
   $("empty").hidden = visible.length > 0;
   $("empty").querySelector("h3").textContent = catalogue.length
@@ -305,7 +595,32 @@ function render() {
       $("progress-dialog").showModal();
     });
     const actions = element("div", undefined, "book-actions");
-    if (isPlayableAudiobook(book)) {
+    const pair = pairedAudioForEpub(book, catalogue);
+    const pairedAudio = pair?.audio ?? null;
+    const pairWork = pair?.work ?? null;
+    const readaloud =
+      pairWork?.readaloud_book_id != null
+        ? catalogue.find((b) => b.id === pairWork.readaloud_book_id) || null
+        : null;
+    if (pairedAudio) {
+      const open = element("button", "Open →", "quiet");
+      open.type = "button";
+      open.addEventListener("click", () => {
+        openEdition = {
+          title,
+          epub: book,
+          audio: pairedAudio,
+          readaloud,
+          work: pairWork,
+        };
+        $("open-edition-title").textContent = title;
+        $("open-edition-help").textContent = readaloud
+          ? "Read opens the aligned edition (highlight + narration). Listen opens the audiobook player."
+          : "Choose Read for the ebook or Listen for the audiobook.";
+        $("open-edition-dialog").showModal();
+      });
+      actions.append(open);
+    } else if (isPlayableAudiobook(book)) {
       actions.append(
         Object.assign(
           element(
@@ -313,9 +628,7 @@ function render() {
             book.position ? "Continue listening →" : "Listen →",
             "quiet",
           ),
-          {
-            href: `/reader?id=${book.id}&format=${book.format}`,
-          },
+          { href: readerHref(book) },
         ),
       );
     } else if (book.format === "aax") {
@@ -328,17 +641,7 @@ function render() {
             book.position ? "Continue reading →" : "Read book →",
             "quiet",
           ),
-          {
-            href: `/reader?id=${book.id}${
-              book.format === "pdf" ||
-              book.format === "cbz" ||
-              book.format === "cbr" ||
-              book.format === "cb7" ||
-              book.format === "djvu"
-                ? `&format=${book.format}`
-                : ""
-            }`,
-          },
+          { href: readerHref(book) },
         ),
       );
     } else {
@@ -374,22 +677,76 @@ function render() {
       $("manage-rereading").hidden = !finished;
       $("manage-rereading").disabled = !finished;
       $("manage-help").textContent = manageHelp(book);
+      const candidates = mergeCandidates(book, catalogue);
+      const mergeForm = $("manage-merge");
+      const mergeSelect = $("manage-merge-with");
+      const mergeStatus = $("manage-merge-status");
+      mergeStatus.hidden = true;
+      mergeStatus.textContent = "";
+      $("manage-merge-submit").disabled = false;
+      mergeSelect.replaceChildren();
+      if (candidates.length) {
+        for (const other of candidates) {
+          const opt = document.createElement("option");
+          opt.value = String(other.id);
+          opt.textContent = `${displayTitle(other.title)} · ${formatLabel(other)}`;
+          mergeSelect.append(opt);
+        }
+        $("manage-merge-title").value = displayTitle(book.title);
+        mergeForm.hidden = false;
+      } else {
+        mergeForm.hidden = true;
+      }
       $("manage-dialog").showModal();
     });
+    let combineStatus = null;
+    if (pairedAudio) {
+      combineStatus = element("div", undefined, "align-status");
+      combineStatus.hidden = true;
+      const busy =
+        pairWork &&
+        (pairWork.status === "processing" || pairWork.status === "queued");
+      const failed = pairWork && pairWork.status === "failed";
+      const ready = pairWork && pairWork.status === "ready" && readaloud;
+      if (busy || failed) setAlignStatus(combineStatus, pairWork);
+      if (!ready && !busy) {
+        const combine = element(
+          "button",
+          failed ? "Retry Combine →" : "Combine →",
+          "quiet",
+        );
+        combine.type = "button";
+        combine.addEventListener("click", async () => {
+          combine.disabled = true;
+          try {
+            const result = await combineEditions(
+              book,
+              pairedAudio,
+              combineStatus,
+            );
+            if (result.status !== "ready") combine.disabled = false;
+          } catch (error) {
+            setAlignStatus(combineStatus, {
+              status: "failed",
+              error: error.message || "Combine failed.",
+              progress: 1,
+            });
+            combine.disabled = false;
+          }
+        });
+        actions.append(combine);
+      }
+    }
     actions.append(manage);
-    info.append(
-      progress,
-      element(
-        "p",
-        isImported(book)
-          ? `${Math.round(book.percentage * 100)}% ${
-              isAudio(book) ? "played" : "read"
-            } · ${formatLabel(book)}`
-          : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`,
-        "fine",
-      ),
-      actions,
-    );
+    const metaLabel = pairedAudio
+      ? `${Math.round(book.percentage * 100)}% read · Ebook + audiobook`
+      : isImported(book)
+        ? `${Math.round(book.percentage * 100)}% ${
+            isAudio(book) ? "played" : "read"
+          } · ${formatLabel(book)}`
+        : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`;
+    info.append(progress, element("p", metaLabel, "fine"), actions);
+    if (combineStatus) info.append(combineStatus);
     article.append(cover, info);
     $("books").append(article);
   }
@@ -453,6 +810,18 @@ $("close-progress").addEventListener("click", () =>
   $("progress-dialog").close(),
 );
 $("close-manage").addEventListener("click", () => $("manage-dialog").close());
+$("close-open-edition").addEventListener("click", () =>
+  $("open-edition-dialog").close(),
+);
+$("open-edition-read").addEventListener("click", () => {
+  if (!openEdition) return;
+  const target = openEdition.readaloud || openEdition.epub;
+  location.href = readerHref(target);
+});
+$("open-edition-listen").addEventListener("click", () => {
+  if (!openEdition?.audio) return;
+  location.href = readerHref(openEdition.audio);
+});
 async function setReadingStatus(path, okMessage, buttonId) {
   if (!removeBook) return;
   const button = $(buttonId);
@@ -481,6 +850,60 @@ $("manage-unfinished").addEventListener("click", () => {
 $("manage-rereading").addEventListener("click", () => {
   if (!removeBook || !isFinished(removeBook)) return;
   setReadingStatus("rereading", "Marked as re-reading.", "manage-rereading");
+});
+$("manage-merge").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!removeBook) return;
+  const otherId = Number($("manage-merge-with").value);
+  const other = catalogue.find((book) => book.id === otherId);
+  const mergedTitle = $("manage-merge-title").value.trim();
+  if (!other || !mergedTitle) return;
+  const epubBook =
+    removeBook.format === "epub"
+      ? removeBook
+      : other.format === "epub"
+        ? other
+        : null;
+  const audioBook = isPlayableAudiobook(removeBook)
+    ? removeBook
+    : isPlayableAudiobook(other)
+      ? other
+      : null;
+  if (!epubBook || !audioBook) {
+    $("manage-error").textContent =
+      "Merge needs one EPUB and one playable audiobook.";
+    $("manage-error").hidden = false;
+    return;
+  }
+  const button = $("manage-merge-submit");
+  const statusEl = $("manage-merge-status");
+  button.disabled = true;
+  $("manage-error").hidden = true;
+  try {
+    const result = await combineEditions(
+      epubBook,
+      audioBook,
+      statusEl,
+      mergedTitle,
+    );
+    if (result.status === "ready") {
+      $("manage-dialog").close();
+      removeBook = null;
+      message("Read-aloud ready.");
+      return;
+    }
+    await refresh();
+    statusEl.hidden = false;
+    statusEl.textContent =
+      result.status === "failed"
+        ? result.error || "Alignment failed."
+        : "Still aligning in the background — refresh the library when it finishes.";
+    button.disabled = false;
+  } catch (error) {
+    $("manage-error").textContent = error.message || "Merge failed.";
+    $("manage-error").hidden = false;
+    button.disabled = false;
+  }
 });
 $("manage-remove").addEventListener("click", () => {
   if (!removeBook) return;

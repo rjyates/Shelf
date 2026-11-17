@@ -58,12 +58,19 @@ with no-op refresh → lag like plain Surface; that is **not** a supported
 backend. Treat non-Nomad as `noop` until the generic tablet path lands, then
 add golden backends one device at a time.
 
-### What Notes does (why we do not clone it)
+### What Notes / Atelier do (and what InkFlow does instead)
 
 Notes tip feel is `librecgnition.so` `ThreadUpdateEpdc` → `HTEINK_IOC_DISPAREA` on
-`/dev/ebc` (direct overlay FB), plus HandWrite / SF STARTPW / PWCore. That is
-privileged OEM stack, not a public SDK. Shelf approximates with framework SPEED+A2
-on **our** Surface. Raw DISPAREA / shipping Notes `.so` is out of product scope.
+`/dev/ebc` (direct overlay FB), plus HandWrite / SF STARTPW / PWCore. Atelier is
+the same first-party HandWrite lane with drawing tools — that is why it matches
+Notes speed. InkFlow is different: USB graphics-tablet → PC LCD, not on-panel
+wet ink. Shipping Notes `.so` / PWCore remains out of product scope.
+
+**Update 2026-11-16:** open clean-room clients (inkRead / plateaukao) show a
+sideloaded app can *claim* the HandWrite binder (`service_myservice`) and let
+**firmware** paint wet ink — the app must not treat HandWrite as a pixel feed
+for its own Surface. That is a different strategy from the SPEED+A2 host below.
+Investigation: `docs/research/nomad-atelier-inkflow.md`. Spike before productizing.
 
 ---
 
@@ -75,7 +82,7 @@ on **our** Surface. Raw DISPAREA / shipping Notes `.so` is out of product scope.
 | Soft refresh on every pen-up (sync) | Fights SPEED/A2 | Sticky tip, worse feel |
 | Mid-stroke fill-in (DU host, no SPEED, polish-after-lift, view-mode flip) | Fought tip feel or looked unchanged / worse | Abandoned 2026-11-04; keep SPEED+A2 |
 | `enableFullUiAuto(false)` without working EMR | Freezes UI partials | Ink invisible until mode exit |
-| Notes HandWrite binder as live paint | Reply `realTimeHandWriting` ≠ our pixels | No mid-stroke ink |
+| Notes HandWrite binder as *pixel source for our Surface* | Reply `realTimeHandWriting` ≠ our pixels | No mid-stroke ink (still true). Firmware-paints-overlay claim path is separate — see `nomad-atelier-inkflow.md` |
 | `PWCoreCtrl` / SF Communicate from sideload | SecurityException / no paint | Dead end |
 | FastPW `postRectForPw` + host bmp chase | Plateau ~0.5s; easy to blank page | White page / flash |
 | `SYNC_PW` mid-stroke | Bad waveform for our host | Flash + white page |

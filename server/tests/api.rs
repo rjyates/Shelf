@@ -1872,7 +1872,11 @@ async fn aax_import_converts_to_m4b_keeping_source() {
     let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
         .await
         .1;
-    assert_eq!(catalogue[0]["format"], "aax");
+    // Stub ffmpeg finishes before the first poll on fast CI; accept aax or m4b.
+    assert!(
+        catalogue[0]["format"] == "aax" || catalogue[0]["format"] == "m4b",
+        "{catalogue}"
+    );
     assert_eq!(catalogue[0]["title"], "Silent Planet");
     assert!(
         catalogue[0]["conversion_status"] == "pending"
@@ -1966,4 +1970,282 @@ async fn aax_import_converts_to_m4b_keeping_source() {
     .await;
     assert_eq!(status, StatusCode::OK, "{manifest}");
     assert_eq!(manifest["assets"][0]["format"], "m4b");
+}
+
+#[tokio::test]
+async fn combine_epub_audiobook_align_job() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("align.db");
+    // Dev/test transcript stand-in (worker looks beside the DB).
+    std::fs::write(
+        temp.path().join("align-script.txt"),
+        "A test chapter Original synthetic test text.",
+    )
+    .unwrap();
+    let app = shelf_server::app(db_path).unwrap();
+    let credentials = json!({"username":"aligner","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, epub) = upload_named(
+        &app,
+        sample_epub(false),
+        Some(&token),
+        Some("Shared Title.epub"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{epub}");
+    let epub_id = epub["id"].as_i64().unwrap();
+
+    let (status, audio) =
+        upload_named(&app, sample_mp3(), Some(&token), Some("Shared Title.mp3")).await;
+    assert_eq!(status, StatusCode::CREATED, "{audio}");
+    let audio_id = audio["id"].as_i64().unwrap();
+
+    let (status, work) = call(
+        &app,
+        "POST",
+        "/api/v1/works",
+        json!({"epub_book_id": epub_id, "audio_book_id": audio_id, "start": true}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{work}");
+    let work_id = work["id"].as_i64().unwrap();
+    assert!(
+        work["status"] == "queued" || work["status"] == "processing" || work["status"] == "ready",
+        "{work}"
+    );
+
+    let mut ready = None;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (status, w) = call(
+            &app,
+            "GET",
+            &format!("/api/v1/works/{work_id}"),
+            Value::Null,
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{w}");
+        if w["status"] == "ready" {
+            ready = Some(w);
+            break;
+        }
+        if w["status"] == "failed" {
+            panic!("align failed: {w}");
+        }
+    }
+    let w = ready.expect("align did not finish in time");
+    assert!(w["readaloud_book_id"].as_i64().is_some(), "{w}");
+    assert_eq!(w["progress"].as_f64().unwrap_or(0.0), 1.0);
+
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let readaloud_id = w["readaloud_book_id"].as_i64().unwrap();
+    let ra = catalogue
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == readaloud_id)
+        .expect("readaloud in catalogue");
+    assert_eq!(ra["format"], "epub");
+    assert!(
+        ra["title"].as_str().unwrap_or("").contains("readaloud"),
+        "{ra}"
+    );
+    // EPUB + audio + readaloud rows exist, but stats count the work as one shelf book.
+    let catalogue_n = catalogue.as_array().unwrap().len();
+    assert!(
+        catalogue_n >= 3,
+        "expected epub+audio+readaloud, got {catalogue_n}"
+    );
+    let stats = call(&app, "GET", "/api/v1/stats", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(stats["books"], 1, "{stats}");
+}
+
+#[tokio::test]
+async fn readaloud_finish_mirrors_to_source_epub_card() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("mirror-progress.db");
+    let app = shelf_server::app(db_path.clone()).unwrap();
+    let credentials = json!({"username":"mirror","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, epub) = upload_named(
+        &app,
+        sample_epub(false),
+        Some(&token),
+        Some("Four Lamps.epub"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{epub}");
+    let epub_id = epub["id"].as_i64().unwrap();
+
+    let (status, audio) =
+        upload_named(&app, sample_mp3(), Some(&token), Some("Four Lamps.mp3")).await;
+    assert_eq!(status, StatusCode::CREATED, "{audio}");
+    let audio_id = audio["id"].as_i64().unwrap();
+
+    let (status, ra) = upload_named(
+        &app,
+        sample_epub_with_media_overlay(),
+        Some(&token),
+        Some("Four Lamps (readaloud).epub"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{ra}");
+    let readaloud_id = ra["id"].as_i64().unwrap();
+
+    // Seed a ready work the way Combine would — no whisper needed for this gate.
+    {
+        let db = rusqlite::Connection::open(&db_path).unwrap();
+        db.execute(
+            "INSERT INTO book_works(epub_book_id, audio_book_id, readaloud_book_id, status, stage, progress)
+             VALUES (?1, ?2, ?3, 'ready', 'SYNC_CHAPTERS', 1)",
+            rusqlite::params![epub_id, audio_id, readaloud_id],
+        )
+        .unwrap();
+    }
+
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{readaloud_id}/location"),
+            json!({"position":"epubcfi(/6/8!/4/2/2[sentence-0]/1:0)","percentage":1.0}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let books = catalogue.as_array().unwrap();
+    let epub_row = books.iter().find(|b| b["id"] == epub_id).expect("epub");
+    let ra_row = books
+        .iter()
+        .find(|b| b["id"] == readaloud_id)
+        .expect("readaloud");
+    assert_eq!(ra_row["percentage"], 1.0, "{ra_row}");
+    assert_eq!(ra_row["reading_status"], "finished", "{ra_row}");
+    assert_eq!(epub_row["percentage"], 1.0, "{epub_row}");
+    assert_eq!(epub_row["reading_status"], "finished", "{epub_row}");
+    assert_eq!(epub_row["position"], "epubcfi(/6/8!/4/2/2[sentence-0]/1:0)");
+}
+
+#[tokio::test]
+async fn combine_with_merge_title_renames_mismatched_editions() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("align-merge.db");
+    std::fs::write(
+        temp.path().join("align-script.txt"),
+        "A test chapter Original synthetic test text.",
+    )
+    .unwrap();
+    let app = shelf_server::app(db_path).unwrap();
+    let credentials = json!({"username":"merger","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, epub) = upload_named(
+        &app,
+        sample_epub(false),
+        Some(&token),
+        Some("Return of the King EPUB edition.epub"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{epub}");
+    let epub_id = epub["id"].as_i64().unwrap();
+
+    let (status, audio) = upload_named(
+        &app,
+        sample_mp3(),
+        Some(&token),
+        Some("RotK Audible Book 3.mp3"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{audio}");
+    let audio_id = audio["id"].as_i64().unwrap();
+
+    let (status, work) = call(
+        &app,
+        "POST",
+        "/api/v1/works",
+        json!({
+            "epub_book_id": epub_id,
+            "audio_book_id": audio_id,
+            "title": "The Return of the King",
+            "start": true
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{work}");
+    let work_id = work["id"].as_i64().unwrap();
+
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let books = catalogue.as_array().unwrap();
+    let epub_row = books.iter().find(|b| b["id"] == epub_id).unwrap();
+    let audio_row = books.iter().find(|b| b["id"] == audio_id).unwrap();
+    assert_eq!(epub_row["title"], "The Return of the King");
+    assert_eq!(audio_row["title"], "The Return of the King");
+
+    let mut ready = None;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (status, w) = call(
+            &app,
+            "GET",
+            &format!("/api/v1/works/{work_id}"),
+            Value::Null,
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{w}");
+        if w["status"] == "ready" {
+            ready = Some(w);
+            break;
+        }
+        if w["status"] == "failed" {
+            panic!("align failed: {w}");
+        }
+    }
+    let w = ready.expect("align did not finish in time");
+    let readaloud_id = w["readaloud_book_id"].as_i64().unwrap();
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let ra = catalogue
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == readaloud_id)
+        .expect("readaloud in catalogue");
+    assert_eq!(ra["title"], "The Return of the King (readaloud)");
 }

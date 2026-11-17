@@ -30,6 +30,9 @@ class MediaOverlayPlayer {
   var playing = false;
   var active = false;
   var volume = 1.0;
+
+  /// Applied to clipBegin/clipEnd (ms). Positive delays the highlight.
+  var syncOffsetMs = 0;
   String? error;
   MediaOverlayItem? currentItem;
 
@@ -300,13 +303,23 @@ class MediaOverlayPlayer {
     return false;
   }
 
-  Duration _beginOf(MediaOverlayItem item) =>
-      Duration(milliseconds: (item.clipBeginSeconds * 1000).round());
+  Duration _beginOf(MediaOverlayItem item) {
+    final ms = (item.clipBeginSeconds * 1000).round() + syncOffsetMs;
+    return Duration(milliseconds: ms < 0 ? 0 : ms);
+  }
 
   Duration? _endOf(MediaOverlayItem item) {
     final end = item.clipEndSeconds;
     if (end == null) return null;
-    return Duration(milliseconds: (end * 1000).round());
+    final ms = (end * 1000).round() + syncOffsetMs;
+    return Duration(milliseconds: ms < 0 ? 0 : ms);
+  }
+
+  Future<void> setSyncOffsetMs(int ms) async {
+    syncOffsetMs = ms;
+    // Force re-seek on next cue so the new offset applies immediately.
+    _mustSeek = true;
+    _notify();
   }
 
   Future<void> _ensureSource(MediaOverlayItem item) async {

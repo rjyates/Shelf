@@ -52,8 +52,12 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   Duration _duration = Duration.zero;
   List<Map<String, dynamic>> _assets = const [];
   List<Map<String, dynamic>> _chapters = const [];
+  Timer? _sleepTimer;
+  int? _sleepRemainingSec;
+  int? _sleepPresetMin;
 
   static const _rates = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+  static const _sleepPresets = [5, 10, 15, 30, 60];
 
   @override
   void initState() {
@@ -525,8 +529,62 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     if (chosen != null) await _seekChapter(chosen);
   }
 
+  void _cancelSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    if (!mounted) {
+      _sleepRemainingSec = null;
+      _sleepPresetMin = null;
+      return;
+    }
+    setState(() {
+      _sleepRemainingSec = null;
+      _sleepPresetMin = null;
+    });
+  }
+
+  void _startSleepTimer(int minutes) {
+    _cancelSleepTimer();
+    setState(() {
+      _sleepPresetMin = minutes;
+      _sleepRemainingSec = minutes * 60;
+    });
+    _sleepTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      final left = (_sleepRemainingSec ?? 0) - 1;
+      if (left <= 0) {
+        timer.cancel();
+        _sleepTimer = null;
+        setState(() {
+          _sleepRemainingSec = null;
+          _sleepPresetMin = null;
+        });
+        final handler = _handler;
+        if (handler != null) {
+          await handler.pause();
+          await _persist();
+          if (mounted) setState(() {});
+        }
+        return;
+      }
+      setState(() => _sleepRemainingSec = left);
+    });
+  }
+
+  String get _sleepLabel {
+    final sec = _sleepRemainingSec;
+    if (sec == null) return 'Sleep';
+    final m = sec ~/ 60;
+    final s = sec % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
   @override
   void dispose() {
+    _sleepTimer?.cancel();
     unawaited(_persist());
     unawaited(_positionSub?.cancel() ?? Future<void>.value());
     unawaited(_completeSub?.cancel() ?? Future<void>.value());
@@ -796,6 +854,41 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
                           labelStyle: TextStyle(
                             color: _rate == rate ? _paper : _ink,
                           ),
+                          backgroundColor: _paper,
+                          side: const BorderSide(color: _hairline),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _sleepRemainingSec == null
+                        ? 'Sleep timer'
+                        : 'Sleep in $_sleepLabel',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: _soft, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    children: [
+                      for (final minutes in _sleepPresets)
+                        ChoiceChip(
+                          label: Text('${minutes}m'),
+                          selected: _sleepPresetMin == minutes,
+                          onSelected: (_) => _startSleepTimer(minutes),
+                          selectedColor: _ink,
+                          labelStyle: TextStyle(
+                            color: _sleepPresetMin == minutes ? _paper : _ink,
+                          ),
+                          backgroundColor: _paper,
+                          side: const BorderSide(color: _hairline),
+                        ),
+                      if (_sleepPresetMin != null)
+                        ChoiceChip(
+                          label: const Text('Off'),
+                          selected: false,
+                          onSelected: (_) => _cancelSleepTimer(),
                           backgroundColor: _paper,
                           side: const BorderSide(color: _hairline),
                         ),

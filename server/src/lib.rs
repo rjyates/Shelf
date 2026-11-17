@@ -1,4 +1,5 @@
 mod aax;
+mod align;
 mod audio_meta;
 mod audiobook;
 mod epub;
@@ -434,6 +435,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         login_attempts: Arc::new(Mutex::new(VecDeque::new())),
     };
     aax::resume_pending(&state);
+    align::resume_pending(&state);
     Ok(Router::new()
         .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
         .route("/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/app.css")) }))
@@ -491,6 +493,9 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
                 .put(audiobook::put_playback_state)
                 .delete(audiobook::delete_playback_state),
         )
+        .route("/api/v1/works", get(align::list_works_http).post(align::create_work_http))
+        .route("/api/v1/works/{id}", get(align::get_work_http))
+        .route("/api/v1/works/{id}/align", post(align::start_work_http))
         .route("/api/v1/tts/providers", get(tts::list_providers))
         .route("/api/v1/tts/voices", get(tts::list_voices))
         .route("/api/v1/tts/synthesize", post(tts::synthesize))
@@ -889,6 +894,58 @@ async fn update_progress(
         .await
 }
 
+/// Mirror text progress between a work's source EPUB and its readaloud.
+/// Library cards show the EPUB; Read opens the readaloud — keep them in sync.
+fn mirror_work_text_progress(
+    db: &Connection,
+    user: i64,
+    book_id: i64,
+    position: Option<&str>,
+    percentage: Option<f64>,
+    reading_status: Option<&str>,
+) -> ApiResult<()> {
+    let mut stmt = db.prepare(
+        "SELECT epub_book_id, readaloud_book_id FROM book_works
+         WHERE readaloud_book_id IS NOT NULL
+           AND (epub_book_id = ?1 OR readaloud_book_id = ?1)
+           AND epub_book_id IN (SELECT id FROM books WHERE user_id = ?2)",
+    )?;
+    let peers: Vec<i64> = stmt
+        .query_map(params![book_id, user], |row| {
+            let epub: i64 = row.get(0)?;
+            let readaloud: i64 = row.get(1)?;
+            Ok(if epub == book_id { readaloud } else { epub })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for peer in peers {
+        if let Some(pct) = percentage {
+            if let Some(pos) = position {
+                db.execute(
+                    "UPDATE epub_files SET position=?, percentage=? WHERE book_id=?",
+                    params![pos, pct, peer],
+                )?;
+            } else {
+                db.execute(
+                    "UPDATE epub_files SET percentage=? WHERE book_id=?",
+                    params![pct, peer],
+                )?;
+            }
+        } else if let Some(pos) = position {
+            db.execute(
+                "UPDATE epub_files SET position=? WHERE book_id=?",
+                params![pos, peer],
+            )?;
+        }
+        if let Some(status) = reading_status {
+            db.execute(
+                "UPDATE books SET reading_status=? WHERE id=? AND user_id=?",
+                params![status, peer, user],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Set catalogue lifecycle status; finished also completes progress, reopen clears it.
 fn set_reading_status(db: &Connection, user: i64, id: i64, status: &str) -> ApiResult<()> {
     let imported: bool = db.query_row(
@@ -940,6 +997,12 @@ fn set_reading_status(db: &Connection, user: i64, id: i64, status: &str) -> ApiR
         "UPDATE books SET reading_status=? WHERE id=? AND user_id=?",
         params![status, id, user],
     )?;
+    let pct = match status {
+        "finished" => Some(1.0),
+        "unfinished" | "rereading" => Some(0.0),
+        _ => None,
+    };
+    mirror_work_text_progress(db, user, id, None, pct, Some(status))?;
     Ok(())
 }
 
@@ -992,6 +1055,7 @@ async fn stats(
     state.db(move |db| {
         let user = authenticate(db, &headers)?;
         // pages_read stays manual-only (decision 0003); average_progress folds EPUB % and page ratios.
+        // Hide work audio + readaloud editions so a Combine pair counts as one shelf book.
         let values: (i64, i64, i64, i64, Option<f64>) = db.query_row(
             "SELECT count(*),
                     coalesce(sum(b.pages_read),0),
@@ -1001,8 +1065,11 @@ async fn stats(
                                      WHEN b2.total_pages>0 THEN cast(b2.pages_read as real)/b2.total_pages END)
                      FROM books b2 LEFT JOIN epub_files f2 ON f2.book_id=b2.id
                      WHERE b2.user_id=?1
+                       AND b2.id NOT IN (SELECT audio_book_id FROM book_works UNION SELECT readaloud_book_id FROM book_works WHERE readaloud_book_id IS NOT NULL)
                        AND CASE WHEN f2.book_id IS NOT NULL THEN f2.position IS NOT NULL ELSE b2.pages_read>0 END)
-             FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=?1",
+             FROM books b LEFT JOIN epub_files f ON f.book_id=b.id
+             WHERE b.user_id=?1
+               AND b.id NOT IN (SELECT audio_book_id FROM book_works UNION SELECT readaloud_book_id FROM book_works WHERE readaloud_book_id IS NOT NULL)",
             [user],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )?;

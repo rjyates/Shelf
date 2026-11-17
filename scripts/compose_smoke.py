@@ -10,6 +10,8 @@ import urllib.error
 import urllib.request
 
 IMAGE = "ghcr.io/rjyates/shelf-server:latest"
+# First boot may install the CTC model; match Dockerfile HEALTHCHECK start-period.
+BOOT_ATTEMPTS = 180
 
 
 def request(path, body=None, token=None, raw=False):
@@ -28,12 +30,12 @@ def request(path, body=None, token=None, raw=False):
 
 
 def ready():
-    for attempt in range(30):
+    for attempt in range(BOOT_ATTEMPTS):
         try:
             assert request("health")["status"] == "ok"
             return
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
-            if attempt == 29:
+        except (urllib.error.URLError, TimeoutError, OSError, AssertionError):
+            if attempt == BOOT_ATTEMPTS - 1:
                 raise
             time.sleep(1)
 
@@ -48,18 +50,39 @@ def host_directory_mount():
             check=True,
         )
         data = str(Path(parent) / "data")
+        # data/ is root-owned (created above); seed models as root so CI does not re-download.
+        cached = Path("data/ghost-story").resolve()
+        if cached.is_dir() and any(cached.rglob("*")):
+            subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--entrypoint",
+                    "cp",
+                    "-v",
+                    f"{cached}:/src:ro",
+                    "-v",
+                    f"{data}:/dst",
+                    IMAGE,
+                    "-a",
+                    "/src",
+                    "/dst/ghost-story",
+                ],
+                check=True,
+            )
         subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(
             ["docker", "run", "-d", "--name", name, "-p", "127.0.0.1:18080:8080", "-v", f"{data}:/data", IMAGE],
             check=True,
         )
-        for attempt in range(30):
+        for attempt in range(BOOT_ATTEMPTS):
             try:
                 with urllib.request.urlopen("http://127.0.0.1:18080/api/v1/health", timeout=2) as response:
                     assert json.load(response)["status"] == "ok"
                 break
-            except (urllib.error.URLError, TimeoutError, ConnectionError, AssertionError):
-                if attempt == 29:
+            except (urllib.error.URLError, TimeoutError, OSError, AssertionError):
+                if attempt == BOOT_ATTEMPTS - 1:
                     logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True)
                     raise AssertionError(f"bind-mounted /data did not become healthy\n{logs.stdout}\n{logs.stderr}")
                 time.sleep(1)

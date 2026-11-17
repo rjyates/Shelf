@@ -235,6 +235,28 @@
         Catalogue tools for this book.
       </p>
       <p id="manage-error" role="alert" hidden></p>
+      <form id="manage-merge" class="manage-merge" hidden>
+        <p class="fine">
+          Pair an EPUB with an audiobook when titles differ, set the shared
+          title, then Combine into a read-aloud edition.
+        </p>
+        <label
+          >Merge with
+          <select id="manage-merge-with" required></select
+        ></label>
+        <label
+          >Merged title
+          <input
+            id="manage-merge-title"
+            name="mergeTitle"
+            maxlength="500"
+            required
+        /></label>
+        <p id="manage-merge-status" class="fine" hidden></p>
+        <button type="submit" class="primary" id="manage-merge-submit">
+          Merge &amp; Combine
+        </button>
+      </form>
       <ul class="manage-options">
         <li>
           <button type="button" id="manage-finish" class="manage-option">
@@ -261,6 +283,31 @@
           </button>
         </li>
       </ul>
+    </dialog>
+    <dialog id="open-edition-dialog" aria-labelledby="open-edition-heading">
+      <div class="section-head">
+        <h2 id="open-edition-heading">Open book</h2>
+        <button
+          type="button"
+          id="close-open-edition"
+          class="quiet"
+          aria-label="Close open dialog"
+        >
+          ✕
+        </button>
+      </div>
+      <p class="manage-book" id="open-edition-title"></p>
+      <p class="fine" id="open-edition-help">
+        Choose Read for the ebook or Listen for the audiobook.
+      </p>
+      <div class="dialog-actions open-edition-actions">
+        <button type="button" id="open-edition-read" class="primary">
+          Read
+        </button>
+        <button type="button" id="open-edition-listen" class="quiet">
+          Listen
+        </button>
+      </div>
     </dialog>
     <dialog id="remove-dialog" aria-labelledby="remove-heading">
       <div class="section-head">

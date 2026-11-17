@@ -11,14 +11,17 @@ import {
   List,
   Moon,
   Pause,
+  PictureInPicture2,
   Play,
   RotateCcw,
   RotateCw,
   SkipBack,
   SkipForward,
   Sun,
+  Timer,
   X,
 } from '@lucide/vue'
+import { useTtsSleepTimer } from '@/features/tts/composables/useTtsSleepTimer'
 
 const props = defineProps<{ bookId: number; fileId: number }>()
 const router = useRouter()
@@ -55,6 +58,13 @@ const manifestRevision = ref('')
 const playbackRevision = ref(0)
 const rates = [0.75, 1, 1.25, 1.5, 1.75, 2]
 const showToc = ref(false)
+const showSleep = ref(false)
+
+function pausePlayback() {
+  audioRef.value?.pause()
+}
+const sleepTimer = useTtsSleepTimer(pausePlayback)
+
 /** `system` follows prefers-color-scheme; otherwise forced. */
 const themePref = ref<'system' | 'light' | 'dark'>('system')
 const systemDark = ref(true)
@@ -417,6 +427,101 @@ function onRateChange() {
   audio.playbackRate = rate.value
 }
 
+
+async function openPip() {
+  const anyWin = window as Window & {
+    documentPictureInPicture?: {
+      requestWindow: (opts?: { width?: number; height?: number }) => Promise<Window>
+    }
+  }
+  if (!anyWin.documentPictureInPicture) {
+    error.value = 'Picture-in-Picture is not supported in this browser.'
+    return
+  }
+  try {
+    const pip = await anyWin.documentPictureInPicture.requestWindow({
+      width: 360,
+      height: 420,
+    })
+    const style = pip.document.createElement('style')
+    style.textContent = `
+      body { margin: 0; font-family: system-ui, sans-serif; background: #171916; color: #e4dcc8; }
+      .pip { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; }
+      img { width: 160px; height: 160px; object-fit: cover; border-radius: 3px; }
+      .row { display: flex; gap: 8px; }
+      button { min-width: 44px; min-height: 44px; border: 1px solid #484b3d; background: #21241f; color: #e4dcc8; border-radius: 3px; cursor: pointer; }
+      button.play { background: #e4dcc8; color: #171916; border-color: #e4dcc8; border-radius: 999px; width: 56px; }
+      .label { font-size: 14px; text-align: center; max-width: 280px; }
+      .meta { font-size: 12px; color: #b4b6a5; }
+    `
+    pip.document.head.append(style)
+    const root = pip.document.createElement('div')
+    root.className = 'pip'
+    if (coverUrl.value) {
+      const img = pip.document.createElement('img')
+      img.src = coverUrl.value
+      img.alt = ''
+      root.append(img)
+    } else {
+      const placeholder = pip.document.createElement('div')
+      placeholder.className = 'label'
+      placeholder.textContent = 'Audiobook'
+      root.append(placeholder)
+    }
+    const titleEl = pip.document.createElement('div')
+    titleEl.className = 'label'
+    titleEl.textContent = title.value
+    root.append(titleEl)
+    const chapterMeta = pip.document.createElement('div')
+    chapterMeta.className = 'meta'
+    chapterMeta.dataset.chapter = ''
+    root.append(chapterMeta)
+    const row = pip.document.createElement('div')
+    row.className = 'row'
+    for (const [act, label, tip, play] of [
+      ['prev', '⏮', 'Previous', false],
+      ['back', '−15', 'Back 15s', false],
+      ['toggle', '▶', 'Play/Pause', true],
+      ['fwd', '+15', 'Forward 15s', false],
+      ['next', '⏭', 'Next', false],
+    ] as const) {
+      const btn = pip.document.createElement('button')
+      btn.type = 'button'
+      btn.dataset.act = act
+      btn.title = tip
+      btn.textContent = label
+      if (play) btn.className = 'play'
+      row.append(btn)
+    }
+    root.append(row)
+    pip.document.body.append(root)
+    const chapterEl = root.querySelector('[data-chapter]') as HTMLElement
+    const toggleBtn = root.querySelector('[data-act="toggle"]') as HTMLButtonElement
+    const sync = () => {
+      if (chapterEl) chapterEl.textContent = chapterLabel.value
+      if (toggleBtn) toggleBtn.textContent = playing.value ? '⏸' : '▶'
+    }
+    sync()
+    const timer = pip.setInterval(sync, 500)
+    root.addEventListener('click', (ev) => {
+      const t = (ev.target as HTMLElement).closest('button') as HTMLButtonElement | null
+      if (!t) return
+      const act = t.dataset.act
+      if (act === 'toggle') togglePlay()
+      else if (act === 'back') seekBy(-15)
+      else if (act === 'fwd') seekBy(15)
+      else if (act === 'prev') void prevTrack()
+      else if (act === 'next') void nextTrack()
+      sync()
+    })
+    pip.addEventListener('pagehide', () => {
+      pip.clearInterval(timer)
+    })
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Could not open Picture-in-Picture.'
+  }
+}
+
 function goBack() {
   void savePosition().finally(() => router.push('/'))
 }
@@ -461,6 +566,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   mediaQuery?.removeEventListener('change', onSystemTheme)
+  sleepTimer.cancelTimer()
   if (saveTimer != null) window.clearTimeout(saveTimer)
   void savePosition()
 })
@@ -476,6 +582,15 @@ onUnmounted(() => {
         <h1>{{ title }}</h1>
         <p v-if="author">{{ author }}</p>
       </div>
+      <button
+        type="button"
+        class="abook__icon-btn"
+        title="Picture-in-Picture"
+        aria-label="Picture-in-Picture"
+        @click="openPip"
+      >
+        <PictureInPicture2 :size="20" :stroke-width="1.75" />
+      </button>
       <button
         type="button"
         class="abook__icon-btn"
@@ -579,6 +694,44 @@ onUnmounted(() => {
         >
           {{ r }}×
         </button>
+      </div>
+
+      <div class="abook__sleep">
+        <button
+          type="button"
+          class="abook__sleep-toggle"
+          :class="{ 'abook__sleep-toggle--on': showSleep || sleepTimer.activeMinutes.value != null }"
+          :title="sleepTimer.activeMinutes.value != null ? 'Sleep timer active' : 'Sleep timer'"
+          :aria-expanded="showSleep"
+          @click="showSleep = !showSleep"
+        >
+          <Timer :size="18" :stroke-width="1.75" />
+          <span v-if="sleepTimer.remainingSeconds.value != null">
+            {{ Math.ceil(sleepTimer.remainingSeconds.value / 60) }}m
+          </span>
+          <span v-else>Sleep</span>
+        </button>
+        <div v-if="showSleep" class="abook__sleep-panel" role="group" aria-label="Sleep timer">
+          <button
+            v-for="m in sleepTimer.presets"
+            :key="m"
+            type="button"
+            class="abook__rate"
+            :class="{ 'abook__rate--on': sleepTimer.activeMinutes.value === m }"
+            :aria-pressed="sleepTimer.activeMinutes.value === m"
+            @click="sleepTimer.startTimer(m); showSleep = false"
+          >
+            {{ m }}m
+          </button>
+          <button
+            v-if="sleepTimer.activeMinutes.value != null"
+            type="button"
+            class="abook__rate"
+            @click="sleepTimer.cancelTimer()"
+          >
+            Off
+          </button>
+        </div>
       </div>
     </div>
 
@@ -895,6 +1048,41 @@ onUnmounted(() => {
 .abook__rate:focus-visible {
   outline: 2px solid var(--ab-accent);
   outline-offset: 2px;
+}
+
+.abook__sleep {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.abook__sleep-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.5rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--ab-line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ab-text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.abook__sleep-toggle--on {
+  border-color: var(--ab-accent);
+  background: color-mix(in srgb, var(--ab-accent) 14%, transparent);
+}
+
+.abook__sleep-panel {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
 }
 
 .sr-only {

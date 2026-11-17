@@ -24,7 +24,7 @@ Reference: Book Orbit TTS UI under `web/orbit-reader/vendor/bookorbit/features/t
 4. **Mobile / e-ink server TTS** — **shipped**: headphones gated on connectivity + enabled providers; voice select; stream `POST /tts/synthesize` like web.
 5. ~~**Mobile media overlays**~~ — **shipped**: local SMIL from the EPUB package; prefers MO over TTS; e-ink-friendly highlight/page sync.
 6. ~~**Standalone audiobook ingest + player UI**~~ — **shipped**: single-file MP3/M4B; web + mobile players; background/media controls.
-7. **Storyteller-shaped extras** — sleep timer (BO already has UI), sync offset, PiP; EPUB↔audiobook alignment. **← next**
+7. ~~**Storyteller-shaped extras**~~ — **shipped**: sleep timer; mobile MO sync offset; web Document PiP; companion edition links; Rust STAlign + web Combine (`POST /api/v1/works`) with whisper.cpp in the server image.
 
 ## Do not reinvent
 
