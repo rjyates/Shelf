@@ -646,6 +646,14 @@ function renderAuthorBreakdown() {
 
 let insightsReading = null;
 let insightsReadingPromise = null;
+let insightsRangeWired = false;
+
+/** Global Insights range. Defaults to trailing 26 weeks (API default). */
+const insightsRange = {
+  from: null,
+  to: null,
+  preset: "26w",
+};
 
 function formatDuration(seconds) {
   const s = Math.max(0, Math.round(Number(seconds) || 0));
@@ -670,6 +678,10 @@ function weekdayMonday0(iso) {
   return (wd + 6) % 7; // Mon=0
 }
 
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function heatmapLevel(seconds, maxSeconds) {
   if (!seconds || seconds <= 0) return 0;
   if (!maxSeconds || maxSeconds <= 0) return 1;
@@ -680,12 +692,130 @@ function heatmapLevel(seconds, maxSeconds) {
   return 4;
 }
 
+function rangeQuery() {
+  const parts = [];
+  if (insightsRange.from) parts.push(`from=${encodeURIComponent(insightsRange.from)}`);
+  if (insightsRange.to) parts.push(`to=${encodeURIComponent(insightsRange.to)}`);
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
+function applyPreset(preset) {
+  const to = todayIso();
+  insightsRange.preset = preset;
+  insightsRange.to = to;
+  if (preset === "7d") insightsRange.from = addDaysIso(to, -6);
+  else if (preset === "30d") insightsRange.from = addDaysIso(to, -29);
+  else if (preset === "90d") insightsRange.from = addDaysIso(to, -89);
+  else if (preset === "26w") insightsRange.from = addDaysIso(to, -(7 * 26 - 1));
+  else if (preset === "1y") insightsRange.from = addDaysIso(to, -364);
+  else if (preset === "all") {
+    insightsRange.from = "1970-01-01";
+    insightsRange.to = to;
+  }
+}
+
+function syncRangeControls() {
+  const fromEl = $("ins-range-from");
+  const toEl = $("ins-range-to");
+  const status = $("ins-range-status");
+  const custom = $("ins-range-custom");
+  if (fromEl && insightsRange.from) fromEl.value = insightsRange.from;
+  if (toEl && insightsRange.to) toEl.value = insightsRange.to;
+  document.querySelectorAll("[data-range-preset]").forEach((btn) => {
+    btn.setAttribute(
+      "aria-pressed",
+      btn.dataset.rangePreset === insightsRange.preset ? "true" : "false",
+    );
+  });
+  if (custom) custom.hidden = insightsRange.preset !== "custom";
+  if (status) {
+    status.textContent =
+      insightsRange.from && insightsRange.to
+        ? `${insightsRange.from} → ${insightsRange.to}`
+        : "";
+  }
+}
+
+function wireInsightsRange() {
+  if (insightsRangeWired) return;
+  const panel = $("insights-panel");
+  if (!panel) return;
+  insightsRangeWired = true;
+  if (!insightsRange.from) applyPreset("26w");
+  syncRangeControls();
+
+  panel.addEventListener("click", (ev) => {
+    const presetBtn = ev.target.closest("[data-range-preset]");
+    if (presetBtn) {
+      const preset = presetBtn.dataset.rangePreset;
+      if (preset === "custom") {
+        insightsRange.preset = "custom";
+        if (!insightsRange.from || !insightsRange.to) applyPreset("26w");
+        insightsRange.preset = "custom";
+        syncRangeControls();
+        $("ins-range-from")?.focus();
+        return;
+      }
+      applyPreset(preset);
+      syncRangeControls();
+      void renderReadingInsights(true);
+      return;
+    }
+    if (ev.target.id === "ins-range-apply") {
+      const fromEl = $("ins-range-from");
+      const toEl = $("ins-range-to");
+      const from = fromEl?.value;
+      const to = toEl?.value;
+      if (from && to && from <= to) {
+        insightsRange.from = from;
+        insightsRange.to = to;
+        insightsRange.preset = "custom";
+        syncRangeControls();
+        void renderReadingInsights(true);
+      }
+    }
+  });
+}
+
+const MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+function renderMonthLabels(startMonday, weeks) {
+  const host = $("ins-month-labels");
+  if (!host) return;
+  host.replaceChildren();
+  host.style.gridTemplateColumns = `repeat(${weeks}, 14px)`;
+  let prevMonth = -1;
+  for (let w = 0; w < weeks; w += 1) {
+    const day = addDaysIso(startMonday, w * 7);
+    const month = Number(day.slice(5, 7)) - 1;
+    const label = element("span");
+    if (month !== prevMonth) {
+      label.textContent = MONTH_SHORT[month];
+      prevMonth = month;
+    }
+    host.append(label);
+  }
+}
+
 function renderHeatmap(payload) {
   const grid = $("reading-calendar");
   if (!grid) return;
-  const to = payload?.to || new Date().toISOString().slice(0, 10);
+  const to = payload?.to || insightsRange.to || todayIso();
   const from =
-    payload?.from || addDaysIso(to, -(7 * 26 - 1));
+    payload?.from || insightsRange.from || addDaysIso(to, -(7 * 26 - 1));
   const byDay = new Map();
   for (const row of payload?.heatmap || []) {
     byDay.set(row.day, Number(row.readingSeconds) || 0);
@@ -693,24 +823,105 @@ function renderHeatmap(payload) {
   let max = 0;
   for (const v of byDay.values()) max = Math.max(max, v);
 
-  // Columns are weeks starting Monday; pad so the grid ends near `to`.
-  let cursor = addDaysIso(to, -(7 * 26 - 1));
-  cursor = addDaysIso(cursor, -weekdayMonday0(cursor));
+  // GitHub-style: pad to week boundaries covering [from, to].
+  let startMonday = addDaysIso(from, -weekdayMonday0(from));
+  const endPad = addDaysIso(to, 6 - weekdayMonday0(to));
+  const spanDays =
+    Math.round(
+      (Date.parse(`${endPad}T00:00:00Z`) -
+        Date.parse(`${startMonday}T00:00:00Z`)) /
+        86400000,
+    ) + 1;
+  const weeks = Math.min(53, Math.max(1, Math.ceil(spanDays / 7)));
+
+  renderMonthLabels(startMonday, weeks);
   grid.replaceChildren();
   let activeDays = 0;
-  for (let i = 0; i < 7 * 26; i += 1) {
+  let brushAnchor = null;
+  let brushLast = null;
+  const cursor = startMonday;
+
+  const tip = $("ins-day-tip");
+  const showTip = (btn, text) => {
+    if (!tip) return;
+    tip.hidden = false;
+    tip.textContent = text;
+    const rect = btn.getBoundingClientRect();
+    const host = grid.closest(".ins-season") || grid;
+    const hostRect = host.getBoundingClientRect();
+    const x = Math.min(hostRect.width - 180, Math.max(8, rect.left - hostRect.left));
+    const y = Math.max(8, rect.top - hostRect.top - 36);
+    tip.style.transform = `translate(${x}px, ${y}px)`;
+  };
+  const hideTip = () => {
+    if (tip) tip.hidden = true;
+  };
+
+  const paintBrush = (a, b) => {
+    const lo = a < b ? a : b;
+    const hi = a < b ? b : a;
+    grid.querySelectorAll("button[data-day]").forEach((btn) => {
+      const d = btn.dataset.day;
+      btn.dataset.inBrush = d >= lo && d <= hi ? "true" : "false";
+    });
+  };
+
+  const endBrush = (day) => {
+    if (!brushAnchor) return;
+    const a = brushAnchor;
+    const b = day || brushAnchor;
+    brushAnchor = null;
+    const lo = a < b ? a : b;
+    const hi = a < b ? b : a;
+    insightsRange.from = lo;
+    insightsRange.to = hi;
+    insightsRange.preset = "custom";
+    syncRangeControls();
+    hideTip();
+    void renderReadingInsights(true);
+  };
+
+  for (let i = 0; i < 7 * weeks; i += 1) {
     const day = addDaysIso(cursor, i);
-    const secs = byDay.get(day) || 0;
+    const inRange = day >= from && day <= to;
+    const secs = inRange ? byDay.get(day) || 0 : 0;
     if (secs > 0) activeDays += 1;
-    const cell = element("i");
+    const cell = element("button");
+    cell.type = "button";
+    cell.dataset.day = day;
+    if (!inRange) cell.dataset.out = "true";
     const level = heatmapLevel(secs, max);
     if (level) cell.dataset.level = String(level);
-    cell.title =
-      secs > 0
+    const label = !inRange
+      ? `${day}: outside range`
+      : secs > 0
         ? `${day}: ${formatDuration(secs)}`
         : `${day}: no reading`;
+    cell.setAttribute("aria-label", label);
+    cell.title = label;
+    cell.disabled = !inRange;
+    cell.addEventListener("pointerenter", () => showTip(cell, label));
+    cell.addEventListener("pointerleave", hideTip);
+    cell.addEventListener("pointerdown", (ev) => {
+      brushAnchor = day;
+      brushLast = day;
+      cell.setPointerCapture?.(ev.pointerId);
+      paintBrush(day, day);
+      const onWinUp = () => endBrush(brushLast || brushAnchor);
+      window.addEventListener("pointerup", onWinUp, { once: true });
+    });
+    cell.addEventListener("pointerenter", () => {
+      if (!brushAnchor) return;
+      brushLast = day;
+      paintBrush(brushAnchor, day);
+    });
+    cell.addEventListener("pointerup", () => {
+      brushLast = day;
+      endBrush(day);
+    });
     grid.append(cell);
   }
+  grid.setAttribute("role", "grid");
   grid.setAttribute(
     "aria-label",
     activeDays
@@ -724,10 +935,7 @@ function renderHeatmap(payload) {
   if (streakEl) {
     if (streak && (streak.currentStreak || streak.longestStreak)) {
       streakEl.hidden = false;
-      const dots = (streak.lastSevenDays || [])
-        .map((on) => (on ? "●" : "○"))
-        .join("");
-      streakEl.textContent = `Streak ${streak.currentStreak || 0} · best ${streak.longestStreak || 0} · ${dots}`;
+      streakEl.textContent = `Streak ${streak.currentStreak || 0} · best ${streak.longestStreak || 0}`;
     } else {
       streakEl.hidden = true;
       streakEl.textContent = "";
@@ -737,9 +945,11 @@ function renderHeatmap(payload) {
 
 function renderSourceBars(payload) {
   const box = $("ins-source-bars");
+  const stack = $("ins-source-stack");
   const empty = $("ins-source-empty");
   if (!box) return;
   box.replaceChildren();
+  if (stack) stack.replaceChildren();
   const slices = [...(payload?.sourceDistribution?.slices || [])].sort(
     (a, b) => (b.readingSeconds || 0) - (a.readingSeconds || 0),
   );
@@ -751,25 +961,37 @@ function renderSourceBars(payload) {
     return;
   }
   if (empty) empty.hidden = true;
-  for (const slice of slices) {
+
+  const bar = element("div", undefined, "ins-stack-bar");
+  bar.setAttribute("role", "img");
+  bar.setAttribute("aria-label", "Time by source");
+  slices.forEach((slice, idx) => {
     const secs = Number(slice.readingSeconds) || 0;
     const share = total ? secs / total : 0;
-    const row = element("div", undefined, "ins-bar-row");
+    const seg = element("div", undefined, "ins-stack-seg");
+    seg.style.width = `${Math.max(2, share * 100)}%`;
+    seg.dataset.bucket = slice.bucket;
+    seg.title = `${slice.bucket}: ${formatDuration(secs)}`;
+    bar.append(seg);
+
+    const row = element("div", undefined, "ins-source-row");
     row.setAttribute("role", "listitem");
-    const bar = element("progress");
-    bar.max = 1;
-    bar.value = share;
-    bar.setAttribute(
-      "aria-label",
-      `${slice.bucket}: ${formatDuration(secs)} (${Math.round(share * 100)}%)`,
-    );
+    const swatch = element("span", undefined, "ins-source-swatch");
+    const btn = element("button", slice.bucket);
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      const on = row.dataset.dim !== "true";
+      row.dataset.dim = on ? "true" : "false";
+      seg.dataset.dim = on ? "true" : "false";
+    });
     row.append(
-      element("span", slice.bucket, "ins-bar-label"),
-      bar,
-      element("span", formatDuration(secs), "fine"),
+      swatch,
+      btn,
+      element("span", `${formatDuration(secs)} · ${Math.round(share * 100)}%`, "num"),
     );
     box.append(row);
-  }
+  });
+  if (stack) stack.append(bar);
 }
 
 function renderSessionTimeline(payload) {
@@ -783,18 +1005,35 @@ function renderSessionTimeline(payload) {
     return;
   }
   if (empty) empty.hidden = true;
+  const maxDur = Math.max(
+    ...rows.map((r) => Number(r.durationSeconds) || 0),
+    1,
+  );
   for (const row of rows) {
-    const li = element("li", undefined, "ins-session-row");
+    const li = element("li", undefined, "ins-spine-row");
     const title = displayTitle(row.bookTitle) || "Untitled";
-    const when = String(row.endedAt || "").replace("T", " ").replace(/Z$/, " UTC");
-    li.append(
-      element("span", title, "ins-session-title"),
+    const when = String(row.endedAt || "")
+      .replace("T", " ")
+      .replace(/Z$/, " UTC");
+    const dur = Number(row.durationSeconds) || 0;
+    const track = element("div", undefined, "ins-spine-track");
+    const fill = element("div", undefined, "ins-spine-fill");
+    fill.style.width = `${Math.max(4, (dur / maxDur) * 100)}%`;
+    const mid = element("div");
+    mid.append(
+      element("span", title, "ins-spine-title"),
+      track,
       element(
         "span",
-        `${formatDuration(row.durationSeconds)} · ${row.bookSource || row.bookFormat || "session"}`,
-        "fine",
+        `${row.bookSource || row.bookFormat || "session"}`,
+        "ins-spine-meta",
       ),
-      element("span", when, "fine ins-session-when"),
+    );
+    track.append(fill);
+    li.append(
+      element("span", when, "ins-spine-when"),
+      mid,
+      element("span", formatDuration(dur), "ins-spine-dur"),
     );
     list.append(li);
   }
@@ -804,7 +1043,8 @@ async function loadReadingInsights(force = false) {
   if (!signedIn) return null;
   if (insightsReading && !force) return insightsReading;
   if (insightsReadingPromise && !force) return insightsReadingPromise;
-  insightsReadingPromise = api("insights/reading")
+  const q = rangeQuery();
+  insightsReadingPromise = api(`insights/reading${q}`)
     .then((data) => {
       insightsReading = data;
       insightsReadingPromise = null;
@@ -823,18 +1063,32 @@ function renderWidgets(payload) {
   grid.replaceChildren();
   const widgets = payload?.widgets || [];
   for (const widget of widgets) {
-    const card = element("article", undefined, "ins-widget");
+    const card = element("article", undefined, "ins-pulse-cell");
     card.dataset.type = widget.type || "";
     const data = widget.data || {};
     if (widget.type === "reading-streak") {
+      const dots = element("div", undefined, "ins-weekdots");
+      dots.setAttribute("role", "list");
+      dots.setAttribute("aria-label", "Last seven days");
+      const dayLetters = ["S", "M", "T", "W", "T", "F", "S"];
+      const days = data.lastSevenDays || [];
+      // Server order: today-6 … today (chronological).
+      for (let i = 0; i < 7; i += 1) {
+        const iso = addDaysIso(todayIso(), -(6 - i));
+        const wd = new Date(`${iso}T00:00:00Z`).getUTCDay(); // 0=Sun
+        const cell = element("div", undefined, "ins-weekdot");
+        cell.setAttribute("role", "listitem");
+        const mark = element("span");
+        mark.dataset.on = days[i] ? "true" : "false";
+        cell.append(mark, element("abbr", dayLetters[wd], "ins-weekdot-day"));
+        cell.querySelector("abbr").title = iso;
+        dots.append(cell);
+      }
       card.append(
-        element("h3", "Streak", "ins-widget-kicker"),
-        element("p", String(data.currentStreak || 0), "ins-widget-value"),
-        element(
-          "p",
-          `Best ${data.longestStreak || 0} · ${(data.lastSevenDays || []).map((on) => (on ? "●" : "○")).join("")}`,
-          "fine",
-        ),
+        element("p", "Streak", "ins-pulse-kicker"),
+        element("p", String(data.currentStreak || 0), "ins-pulse-value"),
+        dots,
+        element("p", `Best ${data.longestStreak || 0}`, "fine"),
       );
     } else if (widget.type === "reading-goal") {
       const goal = data.goalBooks;
@@ -843,40 +1097,49 @@ function renderWidgets(payload) {
         goal == null
           ? `${done} finished in ${data.year || ""} · set a goal in prefs`
           : `${done} / ${goal} books · ${data.year || ""}`;
-      const bar = element("progress");
+      const bar = element("progress", undefined, "ins-pulse-bar");
       bar.max = Math.max(1, Number(goal) || 1);
       bar.value = Math.min(bar.max, done);
       card.append(
-        element("h3", "Annual goal", "ins-widget-kicker"),
-        element("p", goal == null ? String(done) : `${done}/${goal}`, "ins-widget-value"),
+        element("p", "Annual goal", "ins-pulse-kicker"),
+        element(
+          "p",
+          goal == null ? String(done) : `${done}/${goal}`,
+          "ins-pulse-value",
+        ),
         bar,
         element("p", label, "fine"),
       );
     } else if (widget.type === "monthly-challenge") {
-      const bar = element("progress");
+      const bar = element("progress", undefined, "ins-pulse-bar");
       bar.max = Math.max(1, Number(data.target) || 1);
       bar.value = Math.min(bar.max, Number(data.progress) || 0);
       card.append(
-        element("h3", data.title || "Challenge", "ins-widget-kicker"),
+        element("p", data.title || "Challenge", "ins-pulse-kicker"),
         element(
           "p",
           `${data.progress || 0} / ${data.target || 0}`,
-          "ins-widget-value",
+          "ins-pulse-value",
         ),
         bar,
         element("p", data.description || "", "fine"),
       );
     } else if (widget.type === "reading-dna") {
+      const tags = element("ul", undefined, "ins-dna-tags");
+      for (const label of [data.lengthLabel, data.timeLabel, data.rhythmLabel]) {
+        if (!label || label === "—") continue;
+        tags.append(element("li", label));
+      }
       card.append(
-        element("h3", "Reading DNA", "ins-widget-kicker"),
-        element("p", data.archetype || "Uncharted", "ins-widget-value ins-widget-archetype"),
-        element(
-          "p",
-          [data.lengthLabel, data.timeLabel, data.rhythmLabel]
-            .filter((x) => x && x !== "—")
-            .join(" · ") || "Read a few sessions to shape this portrait.",
-          "fine",
-        ),
+        element("p", "Reading DNA", "ins-pulse-kicker"),
+        element("p", data.archetype || "Uncharted", "ins-pulse-value"),
+        tags.childNodes.length
+          ? tags
+          : element(
+              "p",
+              "Read a few sessions to shape this portrait.",
+              "fine",
+            ),
       );
     } else {
       continue;
@@ -926,6 +1189,59 @@ function renderCountBars(boxId, slices, valueKey, formatValue) {
   return rows.length;
 }
 
+function renderLanguageCloud(slices) {
+  const box = $("ins-language-bars");
+  if (!box) return 0;
+  box.replaceChildren();
+  const rows = [...(slices || [])].sort(
+    (a, b) => (Number(b.count) || 0) - (Number(a.count) || 0),
+  );
+  const max = Math.max(...rows.map((r) => Number(r.count) || 0), 1);
+  for (const slice of rows) {
+    const value = Number(slice.count) || 0;
+    if (value <= 0) continue;
+    const chip = element("div", undefined, "ins-lang-chip");
+    chip.setAttribute("role", "listitem");
+    const size = 0.85 + (value / max) * 1.1;
+    chip.style.setProperty("--chip-size", `${size.toFixed(2)}rem`);
+    chip.append(
+      element("strong", String(value)),
+      element("span", slice.key || "—"),
+    );
+    box.append(chip);
+  }
+  return rows.length;
+}
+
+function renderStorageTiles(slices) {
+  const box = $("ins-storage-bars");
+  if (!box) return 0;
+  box.replaceChildren();
+  const rows = [...(slices || [])]
+    .map((s) => ({ key: s.key || s.bucket || "—", bytes: Number(s.bytes) || 0 }))
+    .filter((s) => s.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes);
+  const total = rows.reduce((n, s) => n + s.bytes, 0) || 1;
+  const cells = 36;
+  let used = 0;
+  rows.forEach((slice, idx) => {
+    const share = slice.bytes / total;
+    let n = Math.max(1, Math.round(share * cells));
+    if (idx === rows.length - 1) n = Math.max(1, cells - used);
+    n = Math.min(n, cells - used);
+    used += n;
+    const tile = element("button", undefined, "ins-storage-tile");
+    tile.type = "button";
+    tile.style.gridColumn = `span ${Math.min(6, n)}`;
+    tile.style.gridRow = `span ${n > 6 ? 2 : 1}`;
+    tile.title = `${slice.key}: ${formatBytes(slice.bytes)}`;
+    tile.textContent = `${slice.key} · ${formatBytes(slice.bytes)}`;
+    tile.setAttribute("role", "listitem");
+    box.append(tile);
+  });
+  return rows.length;
+}
+
 function renderLibraryHealth(payload) {
   const empty = $("ins-library-empty");
   const meta = $("ins-library-meta");
@@ -938,17 +1254,8 @@ function renderLibraryHealth(payload) {
     payload?.formatDistribution?.slices,
     "count",
   );
-  const languages = renderCountBars(
-    "ins-language-bars",
-    payload?.languageDistribution?.slices,
-    "count",
-  );
-  const storage = renderCountBars(
-    "ins-storage-bars",
-    payload?.storageByFormat?.slices,
-    "bytes",
-    formatBytes,
-  );
+  const languages = renderLanguageCloud(payload?.languageDistribution?.slices);
+  const storage = renderStorageTiles(payload?.storageByFormat?.slices);
   const completeness = payload?.metadataCompleteness || {};
   const metaSlices = [
     { key: "language", count: Number(completeness.withLanguage) || 0 },
@@ -956,26 +1263,21 @@ function renderLibraryHealth(payload) {
     { key: "description", count: Number(completeness.withDescription) || 0 },
     { key: "cover", count: Number(completeness.withCover) || 0 },
     { key: "score ≥50", count: Number(completeness.scoreAtLeast50) || 0 },
-  ].map((row) => ({
-    ...row,
-    // Show against catalogue size so bars read as coverage, not share of filled fields.
-    count: total ? row.count : 0,
-    _max: total,
-  }));
+  ];
   const metaBox = $("ins-meta-bars");
   if (metaBox) {
     metaBox.replaceChildren();
     for (const slice of metaSlices) {
-      const row = element("div", undefined, "ins-bar-row");
+      const row = element("div", undefined, "ins-meta-row");
       row.setAttribute("role", "listitem");
-      const bar = element("progress");
-      bar.max = Math.max(1, total);
-      bar.value = Math.min(bar.max, slice.count);
+      const fill = element("div", undefined, "ins-meta-fill");
+      const i = element("i");
       const pct = total ? Math.round((slice.count / total) * 100) : 0;
-      bar.setAttribute("aria-label", `${slice.key}: ${slice.count}/${total} (${pct}%)`);
+      i.style.width = `${pct}%`;
+      fill.append(i);
       row.append(
-        element("span", slice.key, "ins-bar-label"),
-        bar,
+        element("span", slice.key),
+        fill,
         element("span", total ? `${pct}%` : "—", "fine"),
       );
       metaBox.append(row);
@@ -996,9 +1298,7 @@ function renderAchievements(payload) {
   const earned = payload?.totalEarned || 0;
   const available = payload?.totalAvailable || 0;
   if (summary) {
-    summary.textContent = available
-      ? `${earned} of ${available} unlocked`
-      : "";
+    summary.textContent = available ? `${earned} of ${available} unlocked` : "";
   }
   if (!categories.length) {
     if (empty) empty.hidden = false;
@@ -1010,53 +1310,52 @@ function renderAchievements(payload) {
     const head = element("div", undefined, "ins-ach-cat-head");
     head.append(
       element("h3", cat.label || cat.key || ""),
-      element(
-        "p",
-        `${cat.earnedCount || 0}/${cat.totalCount || 0}`,
-        "fine",
-      ),
+      element("p", `${cat.earnedCount || 0}/${cat.totalCount || 0}`, "fine"),
     );
-    const grid = element("div", undefined, "ins-ach-grid");
+    const ladder = element("div", undefined, "ins-ach-ladder");
     for (const item of cat.achievements || []) {
       const card = element("article", undefined, "ins-ach");
       card.dataset.earned = item.earned ? "true" : "false";
       const threshold = Number(item.threshold) || 0;
       const progress = Number(item.currentProgress) || 0;
-      card.append(
+      const left = element("div");
+      left.append(
         element("h4", item.name || item.key || "", "ins-ach-name"),
         element("p", item.description || "", "ins-ach-desc"),
       );
-      const meta = element("div", undefined, "ins-ach-meta");
-      meta.append(
-        element("span", item.rarity || "common"),
-        element(
-          "span",
-          item.earned
-            ? "Unlocked"
-            : threshold
-              ? `${Math.min(progress, threshold)} / ${threshold}`
-              : "—",
-        ),
-      );
-      card.append(meta);
+      const meter = element("div", undefined, "ins-ach-meter");
       if (!item.earned && threshold > 0) {
-        const bar = element("progress");
-        bar.max = threshold;
-        bar.value = Math.min(threshold, progress);
-        card.append(bar);
+        const i = element("i");
+        i.style.width = `${Math.min(100, (progress / threshold) * 100)}%`;
+        meter.append(i);
+      } else if (item.earned) {
+        const i = element("i");
+        i.style.width = "100%";
+        meter.append(i);
       }
-      grid.append(card);
+      const meta = element("div", undefined, "ins-ach-meta");
+      meta.textContent = item.earned
+        ? `${item.rarity || "common"} · Unlocked`
+        : threshold
+          ? `${item.rarity || "common"} · ${Math.min(progress, threshold)}/${threshold}`
+          : item.rarity || "common";
+      card.append(left, meter, meta);
+      ladder.append(card);
     }
-    section.append(head, grid);
+    section.append(head, ladder);
     root.append(section);
   }
 }
 
-async function renderReadingInsights() {
+async function renderReadingInsights(force = false) {
+  wireInsightsRange();
+  const panel = $("insights-panel");
+  if (panel) panel.dataset.loading = "true";
   try {
+    const q = rangeQuery();
     const [data, widgets, achievements, library] = await Promise.all([
-      loadReadingInsights(),
-      api("insights/widgets").catch(() => ({ widgets: [] })),
+      loadReadingInsights(force),
+      api(`insights/widgets${q}`).catch(() => ({ widgets: [] })),
       api("insights/achievements").catch(() => ({
         categories: [],
         totalEarned: 0,
@@ -1065,6 +1364,9 @@ async function renderReadingInsights() {
       api("insights/library").catch(() => null),
     ]);
     if (data) {
+      if (data.from) insightsRange.from = data.from;
+      if (data.to) insightsRange.to = data.to;
+      syncRangeControls();
       renderHeatmap(data);
       renderSourceBars(data);
       renderSessionTimeline(data);
@@ -1079,6 +1381,8 @@ async function renderReadingInsights() {
     renderWidgets({ widgets: [] });
     renderAchievements({ categories: [], totalEarned: 0, totalAvailable: 0 });
     renderLibraryHealth({});
+  } finally {
+    if (panel) panel.dataset.loading = "false";
   }
 }
 
@@ -2301,7 +2605,8 @@ function render() {
     renderCalendar();
   }
   $("progress-list").replaceChildren();
-  for (const book of shelfBooks()) {
+  const inProgress = shelfBooks().filter((book) => shelfState(book) === "reading");
+  for (const book of inProgress) {
     const row = element("div", undefined, "progress-row");
     const bar = element("progress");
     bar.max = 1;
@@ -2317,10 +2622,15 @@ function render() {
     );
     $("progress-list").append(row);
   }
-  if (!catalogue.length)
+  if (!catalogue.length) {
     $("progress-list").append(
       element("p", "Add a book to start recording your reading."),
     );
+  } else if (!inProgress.length) {
+    $("progress-list").append(
+      element("p", "Nothing in progress right now.", "fine"),
+    );
+  }
 }
 $("auth-form").addEventListener("submit", async (event) => {
   event.preventDefault();

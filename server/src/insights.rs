@@ -512,8 +512,8 @@ mod tests {
         assert_eq!(current, 2);
         assert_eq!(longest, 2);
         assert_eq!(last7.len(), 7);
-        assert!(!last7[6]); // today empty
-        assert!(last7[5]); // yesterday
+        // Chronological: index 0 = today-6 … index 6 = today (weekdot UI order).
+        assert_eq!(last7, vec![false, false, false, false, true, true, false]);
     }
 
     #[test]
