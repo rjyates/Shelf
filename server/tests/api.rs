@@ -3106,4 +3106,32 @@ async fn reading_sessions_idempotent_and_daily_rollup() {
     .1;
     assert_eq!(updated["timezone"], "America/Chicago");
     assert_eq!(updated["annualGoalBooks"], 24);
+
+    let insights = call(
+        &app,
+        "GET",
+        "/api/v1/insights/reading?from=2026-03-01&to=2026-03-31",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(insights["from"], "2026-03-01");
+    assert_eq!(insights["to"], "2026-03-31");
+    let heat = insights["heatmap"].as_array().expect("heatmap");
+    let day = heat
+        .iter()
+        .find(|row| row["day"] == "2026-03-15")
+        .expect("heatmap day");
+    assert_eq!(day["readingSeconds"], 900);
+    assert_eq!(day["sessionCount"], 1);
+    let slices = insights["sourceDistribution"]["slices"]
+        .as_array()
+        .expect("slices");
+    assert!(slices.iter().any(|s| s["bucket"] == "web" && s["readingSeconds"] == 900));
+    let timeline = insights["sessionTimeline"].as_array().expect("timeline");
+    assert_eq!(timeline.len(), 1);
+    assert_eq!(timeline[0]["durationSeconds"], 900);
+    assert!(insights["streak"]["longestStreak"].as_i64().unwrap_or(0) >= 1);
+    assert_eq!(insights["streak"]["lastSevenDays"].as_array().unwrap().len(), 7);
 }

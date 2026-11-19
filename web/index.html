@@ -282,20 +282,35 @@
           </section>
           <section class="panel ins-calendar" aria-labelledby="ins-calendar-title">
             <div class="section-head">
-              <h2 id="ins-calendar-title"><span>04 /</span> Reading calendar</h2>
+              <h2 id="ins-calendar-title"><span>04 /</span> Reading heatmap</h2>
+              <p id="ins-heatmap-range" class="fine section-meta"></p>
             </div>
             <div class="calendar-wrap">
               <div class="calendar-days" aria-hidden="true"><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span></div>
-              <div id="reading-calendar" class="calendar" role="img" aria-label="Reading calendar: no reading sessions recorded yet"></div>
+              <div id="reading-calendar" class="calendar" role="img" aria-label="Reading heatmap: no reading sessions recorded yet"></div>
             </div>
             <div class="calendar-foot">
               <p class="fine">
-                Daily reading fills this calendar once Shelf records reading
-                sessions. Progress above uses page counts for manual books and
-                EPUB percentage for imports.
+                Daily reading from recorded sessions. Empty days stay moss-dark;
+                brighter cells mean more minutes that day.
               </p>
+              <p id="ins-streak" class="ins-streak fine" hidden></p>
               <p class="calendar-legend" aria-hidden="true">Less <i></i><i></i><i></i><i></i> More</p>
             </div>
+          </section>
+          <section class="panel ins-sources" aria-labelledby="ins-sources-title">
+            <div class="section-head">
+              <h2 id="ins-sources-title"><span>05 /</span> Time by source</h2>
+            </div>
+            <div id="ins-source-bars" class="ins-bars" role="list"></div>
+            <p id="ins-source-empty" class="fine ins-empty" hidden>No sessions in this range yet.</p>
+          </section>
+          <section class="panel ins-timeline" aria-labelledby="ins-timeline-title">
+            <div class="section-head">
+              <h2 id="ins-timeline-title"><span>06 /</span> Recent sessions</h2>
+            </div>
+            <ol id="ins-session-timeline" class="ins-timeline-list"></ol>
+            <p id="ins-timeline-empty" class="fine ins-empty" hidden>Sessions appear here after you read or listen.</p>
           </section>
         </div>
         <section id="settings-panel" class="settings" hidden>

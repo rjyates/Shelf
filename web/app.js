@@ -644,10 +644,195 @@ function renderAuthorBreakdown() {
   });
 }
 
-function renderCalendar() {
+let insightsReading = null;
+let insightsReadingPromise = null;
+
+function formatDuration(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+
+function addDaysIso(iso, delta) {
+  const [y, m, d] = String(iso).split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + delta);
+  return dt.toISOString().slice(0, 10);
+}
+
+function weekdayMonday0(iso) {
+  const [y, m, d] = String(iso).split("-").map(Number);
+  const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun
+  return (wd + 6) % 7; // Mon=0
+}
+
+function heatmapLevel(seconds, maxSeconds) {
+  if (!seconds || seconds <= 0) return 0;
+  if (!maxSeconds || maxSeconds <= 0) return 1;
+  const ratio = seconds / maxSeconds;
+  if (ratio < 0.25) return 1;
+  if (ratio < 0.5) return 2;
+  if (ratio < 0.75) return 3;
+  return 4;
+}
+
+function renderHeatmap(payload) {
   const grid = $("reading-calendar");
-  if (grid.childElementCount) return;
-  for (let i = 0; i < 7 * 26; i += 1) grid.append(element("i"));
+  if (!grid) return;
+  const to = payload?.to || new Date().toISOString().slice(0, 10);
+  const from =
+    payload?.from || addDaysIso(to, -(7 * 26 - 1));
+  const byDay = new Map();
+  for (const row of payload?.heatmap || []) {
+    byDay.set(row.day, Number(row.readingSeconds) || 0);
+  }
+  let max = 0;
+  for (const v of byDay.values()) max = Math.max(max, v);
+
+  // Columns are weeks starting Monday; pad so the grid ends near `to`.
+  let cursor = addDaysIso(to, -(7 * 26 - 1));
+  cursor = addDaysIso(cursor, -weekdayMonday0(cursor));
+  grid.replaceChildren();
+  let activeDays = 0;
+  for (let i = 0; i < 7 * 26; i += 1) {
+    const day = addDaysIso(cursor, i);
+    const secs = byDay.get(day) || 0;
+    if (secs > 0) activeDays += 1;
+    const cell = element("i");
+    const level = heatmapLevel(secs, max);
+    if (level) cell.dataset.level = String(level);
+    cell.title =
+      secs > 0
+        ? `${day}: ${formatDuration(secs)}`
+        : `${day}: no reading`;
+    grid.append(cell);
+  }
+  grid.setAttribute(
+    "aria-label",
+    activeDays
+      ? `Reading heatmap from ${from} to ${to}: ${activeDays} days with reading`
+      : `Reading heatmap from ${from} to ${to}: no reading sessions recorded yet`,
+  );
+  const range = $("ins-heatmap-range");
+  if (range) range.textContent = `${from} → ${to}`;
+  const streakEl = $("ins-streak");
+  const streak = payload?.streak;
+  if (streakEl) {
+    if (streak && (streak.currentStreak || streak.longestStreak)) {
+      streakEl.hidden = false;
+      const dots = (streak.lastSevenDays || [])
+        .map((on) => (on ? "●" : "○"))
+        .join("");
+      streakEl.textContent = `Streak ${streak.currentStreak || 0} · best ${streak.longestStreak || 0} · ${dots}`;
+    } else {
+      streakEl.hidden = true;
+      streakEl.textContent = "";
+    }
+  }
+}
+
+function renderSourceBars(payload) {
+  const box = $("ins-source-bars");
+  const empty = $("ins-source-empty");
+  if (!box) return;
+  box.replaceChildren();
+  const slices = [...(payload?.sourceDistribution?.slices || [])].sort(
+    (a, b) => (b.readingSeconds || 0) - (a.readingSeconds || 0),
+  );
+  const total =
+    Number(payload?.sourceDistribution?.totalSeconds) ||
+    slices.reduce((n, s) => n + (Number(s.readingSeconds) || 0), 0);
+  if (!slices.length || total <= 0) {
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+  for (const slice of slices) {
+    const secs = Number(slice.readingSeconds) || 0;
+    const share = total ? secs / total : 0;
+    const row = element("div", undefined, "ins-bar-row");
+    row.setAttribute("role", "listitem");
+    const bar = element("progress");
+    bar.max = 1;
+    bar.value = share;
+    bar.setAttribute(
+      "aria-label",
+      `${slice.bucket}: ${formatDuration(secs)} (${Math.round(share * 100)}%)`,
+    );
+    row.append(
+      element("span", slice.bucket, "ins-bar-label"),
+      bar,
+      element("span", formatDuration(secs), "fine"),
+    );
+    box.append(row);
+  }
+}
+
+function renderSessionTimeline(payload) {
+  const list = $("ins-session-timeline");
+  const empty = $("ins-timeline-empty");
+  if (!list) return;
+  list.replaceChildren();
+  const rows = payload?.sessionTimeline || [];
+  if (!rows.length) {
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+  for (const row of rows) {
+    const li = element("li", undefined, "ins-session-row");
+    const title = displayTitle(row.bookTitle) || "Untitled";
+    const when = String(row.endedAt || "").replace("T", " ").replace(/Z$/, " UTC");
+    li.append(
+      element("span", title, "ins-session-title"),
+      element(
+        "span",
+        `${formatDuration(row.durationSeconds)} · ${row.bookSource || row.bookFormat || "session"}`,
+        "fine",
+      ),
+      element("span", when, "fine ins-session-when"),
+    );
+    list.append(li);
+  }
+}
+
+async function loadReadingInsights(force = false) {
+  if (!signedIn) return null;
+  if (insightsReading && !force) return insightsReading;
+  if (insightsReadingPromise && !force) return insightsReadingPromise;
+  insightsReadingPromise = api("insights/reading")
+    .then((data) => {
+      insightsReading = data;
+      insightsReadingPromise = null;
+      return data;
+    })
+    .catch((err) => {
+      insightsReadingPromise = null;
+      throw err;
+    });
+  return insightsReadingPromise;
+}
+
+async function renderReadingInsights() {
+  try {
+    const data = await loadReadingInsights();
+    if (!data) return;
+    renderHeatmap(data);
+    renderSourceBars(data);
+    renderSessionTimeline(data);
+  } catch {
+    renderHeatmap({ heatmap: [], from: "", to: "" });
+    renderSourceBars({ sourceDistribution: { slices: [], totalSeconds: 0 } });
+    renderSessionTimeline({ sessionTimeline: [] });
+  }
+}
+
+function renderCalendar() {
+  void renderReadingInsights();
 }
 
 function readerHref(book) {
@@ -925,6 +1110,8 @@ function showAuth(setup) {
   password.minLength = setup ? 12 : 1;
 }
 async function refresh() {
+  insightsReading = null;
+  insightsReadingPromise = null;
   const [books, workList] = await Promise.all([
     api(booksQuery(0, {}, "")),
     api("works").catch(() => []),
