@@ -1747,18 +1747,26 @@ body:not([data-view="overview"]) .celestial {
   width: min(44%, 540px);
   opacity: 0.55;
 }
+/* Insights masthead: v3-scale celestial wash (Hallmark big-or-not + Picasso quiet arcs). */
+body[data-view="insights"] .masthead {
+  min-height: clamp(240px, 30vh, 340px);
+  overflow: hidden;
+}
 body[data-view="insights"] .masthead .celestial {
   top: 0;
+  right: -8%;
   bottom: 0;
-  right: 0;
+  left: auto;
+  width: min(88%, 1080px);
   height: 100%;
-  width: auto;
-  min-width: min(58%, 640px);
+  min-width: 0;
   max-width: none;
   transform: none;
   object-fit: cover;
-  object-position: right center;
-  opacity: 0.5;
+  object-position: 70% center;
+  opacity: 0.88;
+  mask-image: linear-gradient(to right, transparent 0%, #fff 30%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #fff 30%);
 }
 .masthead > .masthead-actions {
   flex-direction: row;
