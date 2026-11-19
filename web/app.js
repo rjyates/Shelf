@@ -3405,3 +3405,26 @@ $("meta-cancel")?.addEventListener("click", () =>
   ),
 );
 
+function setNavOpen(open) {
+  document.body.classList.toggle("nav-open", open);
+  const toggle = $("nav-toggle");
+  const backdrop = $("nav-backdrop");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    const label = toggle.querySelector(".visually-hidden");
+    if (label) label.textContent = open ? "Close menu" : "Menu";
+  }
+  if (backdrop) backdrop.hidden = !open;
+}
+$("nav-toggle")?.addEventListener("click", () => {
+  setNavOpen(!document.body.classList.contains("nav-open"));
+});
+$("nav-backdrop")?.addEventListener("click", () => setNavOpen(false));
+document.querySelectorAll("#sidebar-panel a[data-view]").forEach((link) => {
+  link.addEventListener("click", () => setNavOpen(false));
+});
+$("signout")?.addEventListener("click", () => setNavOpen(false));
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setNavOpen(false);
+});
+

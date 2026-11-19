@@ -10,40 +10,55 @@
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
-    <aside class="sidebar">
-      <a class="brand" href="#overview"
-        ><svg viewBox="0 0 32 32" aria-hidden="true">
-          <path
-            d="M16 7C11 3 6 3 2 4v22c5-1 10 0 14 3 4-3 9-4 14-3V4c-4-1-9-1-14 3v22M6 9c3 0 5 1 7 2M6 14c3 0 5 1 7 2M19 11c2-1 4-2 7-2M19 16c2-1 4-2 7-2"
-          />
-        </svg>
-        <span>shelf</span></a
-      >
-      <nav aria-label="Main navigation">
-        <a href="#overview" data-view="overview"
-          ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#room" /></svg> Overview</a
+    <aside class="sidebar" id="sidebar">
+      <div class="shell-bar">
+        <a class="brand" href="#overview"
+          ><svg viewBox="0 0 32 32" aria-hidden="true">
+            <path
+              d="M16 7C11 3 6 3 2 4v22c5-1 10 0 14 3 4-3 9-4 14-3V4c-4-1-9-1-14 3v22M6 9c3 0 5 1 7 2M6 14c3 0 5 1 7 2M19 11c2-1 4-2 7-2M19 16c2-1 4-2 7-2"
+            />
+          </svg>
+          <span>shelf</span></a
         >
-        <a href="#library" data-view="library"
-          ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#spines" /></svg> Library</a
+        <button
+          type="button"
+          id="nav-toggle"
+          class="nav-toggle"
+          aria-expanded="false"
+          aria-controls="sidebar-panel"
         >
-        <a href="#insights" data-view="insights"
-          ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#chart" /></svg> Reading insights</a
-        >
-      </nav>
-      <div class="side-note">
-        <p>“Good books change<br />the shape of time.”</p>
-        <img class="sprig" src="/ornaments/sprig.png" alt="" width="64" height="134" />
+          <span class="nav-toggle-bars" aria-hidden="true"></span>
+          <span class="visually-hidden">Menu</span>
+        </button>
       </div>
-      <div class="sidebar-foot">
-        <nav aria-label="Preferences">
-          <a href="#settings" data-view="settings"
-            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#gear" /></svg> Settings</a
+      <div class="sidebar-panel" id="sidebar-panel">
+        <nav aria-label="Main navigation">
+          <a href="#overview" data-view="overview"
+            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#room" /></svg> Overview</a
+          >
+          <a href="#library" data-view="library"
+            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#spines" /></svg> Library</a
+          >
+          <a href="#insights" data-view="insights"
+            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#chart" /></svg> Reading insights</a
           >
         </nav>
-        <button id="signout" class="signout" hidden>Sign out</button>
+        <div class="side-note">
+          <p>“Good books change<br />the shape of time.”</p>
+          <img class="sprig" src="/ornaments/sprig.png" alt="" width="64" height="134" />
+        </div>
+        <div class="sidebar-foot">
+          <nav aria-label="Preferences">
+            <a href="#settings" data-view="settings"
+              ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#gear" /></svg> Settings</a
+            >
+          </nav>
+          <button id="signout" class="signout" hidden>Sign out</button>
+        </div>
+        <p class="edition">SHELF / FIRST EDITION</p>
       </div>
-      <p class="edition">SHELF / FIRST EDITION</p>
     </aside>
+    <div class="nav-backdrop" id="nav-backdrop" hidden></div>
     <main id="main">
       <header class="masthead">
         <img class="celestial" src="/ornaments/celestial.png" alt="" width="875" height="551" />

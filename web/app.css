@@ -34,11 +34,15 @@
 }
 html {
   height: 100%;
+  overflow-x: clip;
+  /* Reserve scrollbar space so showing/hiding it does not shove the shell. */
+  scrollbar-gutter: stable;
 }
 body {
   margin: 0;
   min-height: 100%;
   min-height: 100dvh;
+  overflow-x: clip;
   background: var(--ink);
   color: var(--text);
   font: 15px/1.6 var(--body);
@@ -114,6 +118,7 @@ input::placeholder {
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
+  z-index: 40;
   width: 228px;
   padding: 32px 20px 24px;
   border-right: 1px solid var(--line);
@@ -121,10 +126,97 @@ input::placeholder {
   flex-direction: column;
   background: #1b1f19;
 }
+.shell-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+}
+.sidebar-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.nav-toggle {
+  display: none;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.nav-toggle:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+.nav-toggle-bars,
+.nav-toggle-bars::before,
+.nav-toggle-bars::after {
+  display: block;
+  width: 18px;
+  height: 2px;
+  margin-inline: auto;
+  background: currentColor;
+  border-radius: 1px;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+.nav-toggle-bars {
+  position: relative;
+}
+.nav-toggle-bars::before,
+.nav-toggle-bars::after {
+  content: "";
+  position: absolute;
+  left: 0;
+}
+.nav-toggle-bars::before {
+  top: -6px;
+}
+.nav-toggle-bars::after {
+  top: 6px;
+}
+body.nav-open .nav-toggle-bars {
+  background: transparent;
+}
+body.nav-open .nav-toggle-bars::before {
+  top: 0;
+  transform: rotate(45deg);
+}
+body.nav-open .nav-toggle-bars::after {
+  top: 0;
+  transform: rotate(-45deg);
+}
+.nav-backdrop {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-panel,
+  .nav-backdrop,
+  .nav-toggle-bars,
+  .nav-toggle-bars::before,
+  .nav-toggle-bars::after {
+    transition: none;
+  }
+}
 .brand {
   font: italic 46px/1 var(--display);
   color: var(--text);
   margin-bottom: 42px;
+}
+.shell-bar .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0;
+}
+.sidebar-panel > nav {
+  margin-top: 42px;
 }
 .brand span {
   font-style: normal;
@@ -1183,45 +1275,103 @@ dialog p {
   }
 }
 @media (max-width: 650px) {
+  /* App chrome: sticky brand bar + drawer — no horizontal nav strip. */
   .sidebar {
-    position: static;
-    width: auto;
-    padding: 18px 20px 10px;
+    inset: 0 0 auto 0;
+    width: 100%;
+    height: calc(56px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) 16px 0;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--ink) 92%, #1b1f19);
+    backdrop-filter: blur(10px);
+  }
+  .shell-bar {
+    height: 56px;
+  }
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .brand {
-    font-size: 36px;
-    margin-bottom: 10px;
+    font-size: 28px;
   }
-  .sidebar > .eyebrow,
-  .side-note,
-  .edition {
-    display: none;
+  .brand svg {
+    width: 26px;
+    height: 26px;
   }
-  nav {
-    display: flex;
-    gap: 4px;
-    overflow-x: auto;
+  .sidebar-panel {
+    position: fixed;
+    top: calc(56px + env(safe-area-inset-top, 0px));
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 45;
+    width: min(100%, 360px);
+    max-width: 100%;
+    padding: 12px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    border-right: 1px solid var(--line);
+    background: #1b1f19;
+    transform: translateX(-104%);
+    transition: transform 0.2s ease;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
-  nav a {
+  body.nav-open .sidebar-panel {
+    transform: translateX(0);
+  }
+  .sidebar-panel > nav {
+    margin-top: 8px;
+  }
+  .sidebar-panel nav a {
+    min-height: 48px;
+    font-size: 15px;
     white-space: nowrap;
-    font-size: 13px;
-    padding: 7px 9px;
   }
-  nav a span {
+  .side-note {
     display: none;
   }
-  .sidebar #signout {
-    position: absolute;
-    top: 20px;
-    right: 20px;
+  .edition {
+    margin-top: 18px;
+  }
+  .sidebar-foot {
+    margin-top: auto;
+    padding-top: 16px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .sidebar-foot .signout {
+    position: static;
+    align-self: stretch;
+    min-height: 44px;
+    padding: 10px 12px;
+    text-align: left;
     font-size: 12px;
+  }
+  .nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: #0b100d80;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  body.nav-open .nav-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  body.nav-open {
+    overflow: hidden;
   }
   main {
     margin-left: 0;
     width: 100%;
     padding: 24px 18px;
+    padding-top: calc(24px + 56px + env(safe-area-inset-top, 0px));
     min-height: 0;
   }
   .masthead {
@@ -3381,19 +3531,16 @@ body[data-view="insights"] #main {
   }
 }
 @media (max-width: 650px) {
-  .sidebar-foot {
-    margin-top: 6px;
-    padding-top: 6px;
-  }
-  .sidebar .signout {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-  }
   .brand {
     display: flex;
     align-items: center;
     gap: 10px;
+    font-size: 28px;
+    margin-bottom: 0;
+  }
+  .brand svg {
+    width: 26px;
+    height: 26px;
   }
   .ledger-body {
     grid-template-columns: minmax(0, 1fr);
