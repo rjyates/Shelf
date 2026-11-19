@@ -102,6 +102,8 @@ class Book {
     this.position,
     this.conversionStatus,
     this.conversionError,
+    this.series,
+    this.seriesIndex,
   });
   factory Book.fromJson(Map<String, dynamic> json) {
     final id = json['id'];
@@ -110,6 +112,13 @@ class Book {
     final total = json['total_pages'];
     final read = json['pages_read'];
     final format = json['format'];
+    final seriesRaw = json['series'];
+    final seriesIndexRaw = json['series_index'];
+    // Missing series fields stay null (older servers); bad types ignored.
+    final series = seriesRaw is String ? seriesRaw : null;
+    final seriesIndex = seriesIndexRaw is num && seriesIndexRaw.isFinite
+        ? seriesIndexRaw.toDouble()
+        : null;
     final epub = format == 'epub';
     final comic =
         format == 'cbz' ||
@@ -199,6 +208,8 @@ class Book {
       readingStatus: status,
       conversionStatus: conversionStatus is String ? conversionStatus : null,
       conversionError: conversionError is String ? conversionError : null,
+      series: series,
+      seriesIndex: seriesIndex,
     );
   }
   final int id;
@@ -208,6 +219,8 @@ class Book {
   final bool isEpub;
   final bool isPdf;
   final bool isCbz;
+  final String? series;
+  final double? seriesIndex;
 
   /// Server format string for imported books (`epub` / `pdf` / comics / audio).
   final String? format;
@@ -338,6 +351,185 @@ String libraryReadingBlurb(List<Book> books) {
       started.map((book) => book.progressFraction).reduce((a, b) => a + b) /
       started.length;
   return '${books.length} books · ${(average * 100).round()}% average progress';
+}
+
+/// Optional filters for GET /api/v1/books.
+class BooksQuery {
+  const BooksQuery({
+    this.limit,
+    this.offset,
+    this.author,
+    this.series,
+    this.status,
+    this.format,
+    this.collectionId,
+    this.q,
+  });
+  final int? limit;
+  final int? offset;
+  final String? author;
+  final String? series;
+  final String? status;
+  final String? format;
+  final int? collectionId;
+  final String? q;
+
+  String toQueryString() {
+    final params = <String, String>{
+      if (limit != null) 'limit': '$limit',
+      if (offset != null) 'offset': '$offset',
+      if (author != null && author!.isNotEmpty) 'author': author!,
+      if (series != null && series!.isNotEmpty) 'series': series!,
+      if (status != null && status!.isNotEmpty) 'status': status!,
+      if (format != null && format!.isNotEmpty) 'format': format!,
+      if (collectionId != null) 'collection_id': '$collectionId',
+      if (q != null && q!.isNotEmpty) 'q': q!,
+    };
+    if (params.isEmpty) return '';
+    return '?${Uri(queryParameters: params).query}';
+  }
+}
+
+class AuthorInfo {
+  AuthorInfo({required this.name, required this.bookCount});
+  factory AuthorInfo.fromJson(Map<String, dynamic> json) {
+    final name = json['name'];
+    final count = json['book_count'];
+    if (name is! String || count is! num) {
+      throw ShelfException('Invalid author entry.');
+    }
+    return AuthorInfo(name: name, bookCount: count.toInt());
+  }
+  final String name;
+  final int bookCount;
+}
+
+class CollectionInfo {
+  CollectionInfo({
+    required this.id,
+    required this.name,
+    required this.bookIds,
+    required this.bookCount,
+  });
+  factory CollectionInfo.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final name = json['name'];
+    final bookIds = json['book_ids'];
+    final count = json['book_count'];
+    if (id is! int || name is! String || bookIds is! List || count is! num) {
+      throw ShelfException('Invalid collection entry.');
+    }
+    return CollectionInfo(
+      id: id,
+      name: name,
+      bookIds: [
+        for (final item in bookIds)
+          if (item is int) item,
+      ],
+      bookCount: count.toInt(),
+    );
+  }
+  final int id;
+  final String name;
+  final List<int> bookIds;
+  final int bookCount;
+}
+
+class ScopeFilter {
+  const ScopeFilter({
+    this.author,
+    this.series,
+    this.status,
+    this.format,
+    this.query,
+    this.collectionId,
+  });
+  factory ScopeFilter.fromJson(Map<String, dynamic> json) {
+    return ScopeFilter(
+      author: json['author'] is String ? json['author'] as String : null,
+      series: json['series'] is String ? json['series'] as String : null,
+      status: json['status'] is String ? json['status'] as String : null,
+      format: json['format'] is String ? json['format'] as String : null,
+      query: json['query'] is String ? json['query'] as String : null,
+      collectionId: json['collection_id'] is int
+          ? json['collection_id'] as int
+          : null,
+    );
+  }
+  final String? author;
+  final String? series;
+  final String? status;
+  final String? format;
+  final String? query;
+  final int? collectionId;
+
+  Map<String, dynamic> toJson() => {
+    if (author != null) 'author': author,
+    if (series != null) 'series': series,
+    if (status != null) 'status': status,
+    if (format != null) 'format': format,
+    if (query != null) 'query': query,
+    if (collectionId != null) 'collection_id': collectionId,
+  };
+
+  BooksQuery toBooksQuery() => BooksQuery(
+    author: author,
+    series: series,
+    status: status,
+    format: format,
+    collectionId: collectionId,
+    q: query,
+  );
+}
+
+class ScopeInfo {
+  ScopeInfo({required this.id, required this.name, required this.filter});
+  factory ScopeInfo.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final name = json['name'];
+    final filter = json['filter'];
+    if (id is! int || name is! String || filter is! Map<String, dynamic>) {
+      throw ShelfException('Invalid scope entry.');
+    }
+    return ScopeInfo(id: id, name: name, filter: ScopeFilter.fromJson(filter));
+  }
+  final int id;
+  final String name;
+  final ScopeFilter filter;
+}
+
+class LibraryScanResult {
+  LibraryScanResult({
+    required this.scanned,
+    required this.imported,
+    required this.duplicates,
+    required this.failed,
+  });
+  factory LibraryScanResult.fromJson(Map<String, dynamic> json) {
+    final scanned = json['scanned'];
+    final imported = json['imported'];
+    final duplicates = json['duplicates'];
+    final failed = json['failed'];
+    if (scanned is! num ||
+        imported is! num ||
+        duplicates is! num ||
+        failed is! List) {
+      throw ShelfException('Invalid library scan result.');
+    }
+    return LibraryScanResult(
+      scanned: scanned.toInt(),
+      imported: imported.toInt(),
+      duplicates: duplicates.toInt(),
+      failed: [
+        for (final item in failed)
+          if (item is Map<String, dynamic>) item,
+      ],
+    );
+  }
+  final int scanned;
+  final int imported;
+  final int duplicates;
+  final List<Map<String, dynamic>> failed;
 }
 
 class ShelfApi {
@@ -530,8 +722,8 @@ class ShelfApi {
     _token = token;
   }
 
-  Future<List<Book>> books() async {
-    final data = await request('books');
+  Future<List<Book>> books([BooksQuery? query]) async {
+    final data = await request('books${query?.toQueryString() ?? ''}');
     if (data is! List) {
       throw ShelfException(
         'Your server returned an invalid catalogue. Check the server version.',
@@ -610,6 +802,228 @@ class ShelfApi {
     );
   }
 
+  Future<void> updateBook(
+    int id, {
+    required String title,
+    required String author,
+    String? series,
+    double? seriesIndex,
+  }) async {
+    await request(
+      'books/$id',
+      method: 'PATCH',
+      body: {
+        'title': title,
+        'author': author,
+        // Empty series clears; null seriesIndex clears index when series sent.
+        'series': ?series,
+        if (series != null) 'series_index': seriesIndex,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> bookMetadata(int id) async {
+    final data = await request('books/$id/metadata');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not load book metadata.');
+    }
+    return data;
+  }
+
+  Future<void> patchBookMetadata(int id, Map<String, dynamic> body) async {
+    await request('books/$id/metadata', method: 'PATCH', body: body);
+  }
+
+  Future<Map<String, dynamic>> autofillBookMetadata(int id) async {
+    final data = await request('books/$id/metadata/autofill', method: 'POST');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Auto-fill failed.');
+    }
+    return data;
+  }
+
+  Future<void> refreshBookMetadata(int id) async {
+    await request('books/$id/metadata/refresh', method: 'POST');
+  }
+
+  Future<List<Map<String, dynamic>>> searchMetadata({
+    String? title,
+    String? author,
+    int limit = 8,
+  }) async {
+    final data = await request(
+      'metadata/search',
+      method: 'POST',
+      body: {'title': ?title, 'author': ?author, 'limit': limit},
+    );
+    if (data is! Map<String, dynamic> || data['results'] is! List) {
+      throw ShelfException('Metadata search failed.');
+    }
+    return [
+      for (final item in data['results'] as List)
+        if (item is Map<String, dynamic>) item,
+    ];
+  }
+
+  Future<Map<String, dynamic>> applyMetadataCandidate(
+    int id,
+    Map<String, dynamic> candidate,
+    List<String> fields,
+  ) async {
+    final data = await request(
+      'books/$id/metadata/apply',
+      method: 'POST',
+      body: {'candidate': candidate, 'fields': fields, 'respect_locks': true},
+    );
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not apply metadata.');
+    }
+    return data;
+  }
+
+  Future<int> syncLibraryMetadata({bool ignoreCache = false}) async {
+    final data = await request(
+      'metadata/fetch/run',
+      method: 'POST',
+      body: {'ignore_cache': ignoreCache},
+    );
+    if (data is! Map<String, dynamic> || data['queued'] is! int) {
+      throw ShelfException('Could not start metadata sync.');
+    }
+    return data['queued'] as int;
+  }
+
+  Future<Map<String, dynamic>> metadataFetchStatus() async {
+    final data = await request('metadata/fetch/status');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not read fetch status.');
+    }
+    return data;
+  }
+
+  Future<List<AuthorInfo>> authors() async {
+    final data = await request('authors');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid authors list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) AuthorInfo.fromJson(item),
+    ];
+  }
+
+  Future<List<CollectionInfo>> collections() async {
+    final data = await request('collections');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid collections list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) CollectionInfo.fromJson(item),
+    ];
+  }
+
+  Future<int> createCollection(String name) async {
+    final data = await request(
+      'collections',
+      method: 'POST',
+      body: {'name': name},
+    );
+    if (data is! Map<String, dynamic> || data['id'] is! int) {
+      throw ShelfException('Could not create collection.');
+    }
+    return data['id'] as int;
+  }
+
+  Future<void> updateCollection(
+    int id, {
+    String? name,
+    List<int>? addBookIds,
+    List<int>? removeBookIds,
+  }) async {
+    await request(
+      'collections/$id',
+      method: 'PATCH',
+      body: {
+        'name': ?name,
+        'add_book_ids': ?addBookIds,
+        'remove_book_ids': ?removeBookIds,
+      },
+    );
+  }
+
+  Future<void> deleteCollection(int id) async {
+    await request('collections/$id', method: 'DELETE');
+  }
+
+  Future<List<ScopeInfo>> listScopes() async {
+    final data = await request('scopes');
+    if (data is! List) {
+      throw ShelfException(
+        'Your server returned an invalid scopes list. Check the server version.',
+      );
+    }
+    return [
+      for (final item in data)
+        if (item is Map<String, dynamic>) ScopeInfo.fromJson(item),
+    ];
+  }
+
+  Future<int> createScope(String name, ScopeFilter filter) async {
+    final data = await request(
+      'scopes',
+      method: 'POST',
+      body: {'name': name, 'filter': filter.toJson()},
+    );
+    if (data is! Map<String, dynamic> || data['id'] is! int) {
+      throw ShelfException('Could not create scope.');
+    }
+    return data['id'] as int;
+  }
+
+  Future<void> updateScope(int id, {String? name, ScopeFilter? filter}) async {
+    await request(
+      'scopes/$id',
+      method: 'PATCH',
+      body: {'name': ?name, 'filter': ?filter?.toJson()},
+    );
+  }
+
+  Future<void> deleteScope(int id) async {
+    await request('scopes/$id', method: 'DELETE');
+  }
+
+  Future<List<String>> libraryRoots() async {
+    final data = await request('library/roots');
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Could not load library roots.');
+    }
+    final roots = data['roots'];
+    if (roots is! List) {
+      throw ShelfException('Could not load library roots.');
+    }
+    return [
+      for (final item in roots)
+        if (item is String) item,
+    ];
+  }
+
+  Future<LibraryScanResult> scanLibrary({String? root}) async {
+    final data = await request(
+      'library/scan',
+      method: 'POST',
+      body: {'root': ?root},
+    );
+    if (data is! Map<String, dynamic>) {
+      throw ShelfException('Library scan failed.');
+    }
+    return LibraryScanResult.fromJson(data);
+  }
+
   Future<void> progress(Book book, int pages) async {
     await request(
       'books/${book.id}/progress',
@@ -637,13 +1051,18 @@ class ShelfApi {
   Future<void> saveLocation(
     int bookId,
     String position,
-    double percentage,
-  ) async {
+    double percentage, {
+    String source = 'android',
+  }) async {
     await request(
       'books/$bookId/location',
       method: 'POST',
-      body: {'position': position, 'percentage': percentage},
+      body: {'position': position, 'percentage': percentage, 'source': source},
     );
+  }
+
+  Future<void> postReadingSession(int bookId, Map<String, dynamic> body) async {
+    await request('books/$bookId/sessions', method: 'POST', body: body);
   }
 
   Future<Map<String, dynamic>> audiobookManifest(int bookId) async {

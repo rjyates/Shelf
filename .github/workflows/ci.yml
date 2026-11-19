@@ -176,10 +176,43 @@ jobs:
         with:
           flutter-version: ${{ needs.plan.outputs.flutter_version }}
           cache: true
+      - name: Decode upload keystore when secrets are present
+        env:
+          SHELF_UPLOAD_KEYSTORE_BASE64: ${{ secrets.SHELF_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "${SHELF_UPLOAD_KEYSTORE_BASE64:-}" ]; then
+            echo "$SHELF_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/shelf-upload.jks"
+            echo "SHELF_UPLOAD_STORE_FILE=$RUNNER_TEMP/shelf-upload.jks" >> "$GITHUB_ENV"
+          else
+            echo "No SHELF_UPLOAD_KEYSTORE_BASE64 secret; APK will use debug signing."
+          fi
+      - name: Let Flutter Gradle resolve Kotlin from Maven Central
+        run: |
+          # Flutter 3.47's included flutter_tools/gradle uses kotlin-dsl / KGP
+          # 2.2.x. Plugin portal often lacks those artifacts; patch its settings
+          # so pluginManagement also checks Maven Central / Google.
+          settings="$FLUTTER_ROOT/packages/flutter_tools/gradle/settings.gradle.kts"
+          if [ -f "$settings" ] && ! grep -q 'pluginManagement' "$settings"; then
+            tmp="$(mktemp)"
+            {
+              echo 'pluginManagement {'
+              echo '    repositories {'
+              echo '        google()'
+              echo '        mavenCentral()'
+              echo '        gradlePluginPortal()'
+              echo '    }'
+              echo '}'
+              cat "$settings"
+            } > "$tmp"
+            mv "$tmp" "$settings"
+          fi
       - name: Build development-signed Android artifact
         working-directory: mobile
         env:
           VERSION: ${{ needs.plan.outputs.mobile_version }}
+          SHELF_UPLOAD_STORE_PASSWORD: ${{ secrets.SHELF_UPLOAD_STORE_PASSWORD }}
+          SHELF_UPLOAD_KEY_ALIAS: ${{ secrets.SHELF_UPLOAD_KEY_ALIAS }}
+          SHELF_UPLOAD_KEY_PASSWORD: ${{ secrets.SHELF_UPLOAD_KEY_PASSWORD }}
         run: |
           flutter pub get --enforce-lockfile
           flutter build apk --release --build-name="$VERSION" --build-number="$GITHUB_RUN_NUMBER"
@@ -233,10 +266,15 @@ jobs:
       # connection reset when ghost-story was OOM-killed mid-job.
       - name: Add swap for CTC model load
         run: |
-          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          # Runners sometimes already have /swapfile active from a prior job/image.
+          if ! swapon --show=NAME --noheadings | grep -qx /swapfile; then
+            sudo swapoff /swapfile 2>/dev/null || true
+            sudo rm -f /swapfile
+            sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+          fi
           free -h
       - name: Build shelf image (CTC in-image)
         run: |

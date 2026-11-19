@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,6 +16,19 @@ void main() {
     expect(DisplayProfile.tryParse('nope'), isNull);
     expect(DisplayProfile.eink.disableAnimations, isTrue);
     expect(DisplayProfile.lcd.disableAnimations, isFalse);
+  });
+
+  test('e-ink theme installs instant page transitions', () {
+    final eink = shelfTheme(disableAnimations: true);
+    final lcd = shelfTheme(disableAnimations: false);
+    expect(
+      eink.pageTransitionsTheme.builders[TargetPlatform.android],
+      isA<InstantPageTransitionsBuilder>(),
+    );
+    expect(
+      lcd.pageTransitionsTheme.builders[TargetPlatform.android],
+      isNot(isA<InstantPageTransitionsBuilder>()),
+    );
   });
 
   test('persists display profile choice', () async {

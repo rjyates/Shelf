@@ -534,14 +534,31 @@ pub(super) async fn put_playback_state(
                 ],
             )?;
             // Mirror into epub_files so the catalogue % stays useful.
+            let position = format!("audioms({})", body.position_ms);
             let _ = db.execute(
                 "UPDATE epub_files SET percentage=?,position=? WHERE book_id=?",
-                params![
-                    percentage,
-                    format!("audioms({})", body.position_ms),
-                    id
-                ],
+                params![percentage, position, id],
             );
+            reading_stats::record_progression(
+                db,
+                user,
+                id,
+                percentage,
+                Some(position.as_str()),
+                "audio",
+                "web",
+                None,
+            )?;
+            if completed {
+                reading_stats::record_event(
+                    db,
+                    user,
+                    id,
+                    "finished",
+                    "web",
+                    serde_json::json!({ "progression": percentage }),
+                )?;
+            }
             Ok(Json(serde_json::json!({
                 "assetId": body.asset_id,
                 "positionMs": body.position_ms,

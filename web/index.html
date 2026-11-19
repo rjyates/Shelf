@@ -17,29 +17,31 @@
             d="M16 7C11 3 6 3 2 4v22c5-1 10 0 14 3 4-3 9-4 14-3V4c-4-1-9-1-14 3v22M6 9c3 0 5 1 7 2M6 14c3 0 5 1 7 2M19 11c2-1 4-2 7-2M19 16c2-1 4-2 7-2"
           />
         </svg>
-        shelf</a
+        <span>shelf</span></a
       >
-      <p class="eyebrow">YOUR READING ROOM</p>
       <nav aria-label="Main navigation">
         <a href="#overview" data-view="overview"
-          ><span aria-hidden="true">⌂</span> Overview</a
+          ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#room" /></svg> Overview</a
         >
         <a href="#library" data-view="library"
-          ><span aria-hidden="true">▤</span> Library</a
+          ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#spines" /></svg> Library</a
         >
         <a href="#insights" data-view="insights"
-          ><span aria-hidden="true">⌁</span> Reading insights</a
-        >
-        <a href="#settings" data-view="settings"
-          ><span aria-hidden="true">⚙</span> Settings</a
+          ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#chart" /></svg> Reading insights</a
         >
       </nav>
       <div class="side-note">
+        <p>“Good books change<br />the shape of time.”</p>
         <img class="sprig" src="/ornaments/sprig.png" alt="" width="64" height="134" />
-        <img class="swallow" src="/ornaments/swallow.png" alt="" width="108" height="88" />
-        <p>A home for the books<br />that stay with you.</p>
       </div>
-      <button id="signout" class="quiet" hidden>Sign out</button>
+      <div class="sidebar-foot">
+        <nav aria-label="Preferences">
+          <a href="#settings" data-view="settings"
+            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#gear" /></svg> Settings</a
+          >
+        </nav>
+        <button id="signout" class="signout" hidden>Sign out</button>
+      </div>
       <p class="edition">SHELF / FIRST EDITION</p>
     </aside>
     <main id="main">
@@ -51,7 +53,17 @@
           A little further into another world.
         </p>
         <div class="masthead-actions">
-          <button id="open-add" class="primary" hidden>Add book</button>
+          <form id="masthead-search" class="masthead-search" role="search" hidden>
+            <label
+              ><svg class="field-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#search" /></svg><span class="visually-hidden">Search your library</span
+              ><input
+                id="masthead-q"
+                type="search"
+                placeholder="Search books, authors, series"
+                autocomplete="off" /><kbd id="search-key">Ctrl K</kbd></label
+            >
+          </form>
+          <button id="open-add" class="primary" hidden><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#plus" /></svg> Add book</button>
           <input
             id="epub-files"
             type="file"
@@ -60,6 +72,7 @@
             hidden
           />
         </div>
+        <p class="almanac" id="almanac" aria-hidden="true"></p>
       </header>
       <p id="message" role="status" aria-live="polite" hidden></p>
       <section id="auth" class="panel auth" hidden>
@@ -87,103 +100,350 @@
         <p class="fine">Your library stays on your server.</p>
       </section>
       <div id="content" hidden>
-        <section class="stats" aria-label="Library totals">
-          <div>
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#book" /></svg>
-            <span id="stat-books">0</span>
-            <p>Books on your shelf</p>
-          </div>
-          <div>
-            <span id="stat-reading">0</span>
-            <p>Currently reading</p>
-          </div>
-          <div>
-            <span id="stat-finished">0</span>
-            <p>Books finished</p>
-          </div>
-          <div>
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#pages" /></svg>
-            <span id="stat-pages">0%</span>
-            <p>Average progress</p>
-          </div>
-        </section>
+        <div class="room">
         <section class="panel" id="library-panel">
-          <img class="trail" src="/ornaments/sprig-trail.png" alt="" width="220" height="111" />
           <div class="section-head">
             <h2 id="section-title"><span>01 /</span> Currently reading</h2>
             <a href="#library" id="view-library">View library →</a>
           </div>
-          <label class="search" id="search-label" hidden
-            >Search your library<input
-              id="search"
-              type="search"
-              placeholder="Book title or author"
-          /></label>
+          <div id="library-toolbar" class="library-toolbar" hidden>
+            <label class="search" id="search-label"
+              ><svg class="field-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#search" /></svg><span class="visually-hidden">Search your library</span
+              ><input
+                id="search"
+                type="search"
+                placeholder="Search your library"
+                autocomplete="off"
+            /></label>
+            <div class="toolbar-row">
+            <div class="status-tabs" id="status-tabs" role="group" aria-label="Reading state">
+              <button type="button" data-tab="all" aria-pressed="true">All books <span id="tab-all">0</span></button>
+              <button type="button" data-tab="reading" aria-pressed="false">Reading <span id="tab-reading">0</span></button>
+              <button type="button" data-tab="unread" aria-pressed="false">Not started <span id="tab-unread">0</span></button>
+              <button type="button" data-tab="finished" aria-pressed="false">Finished <span id="tab-finished">0</span></button>
+            </div>
+            <div class="library-toolbar-actions">
+              <details id="library-filters" class="library-filters-disclosure">
+                <summary class="quiet filter-summary">
+                  Filters
+                  <span id="filter-count" class="filter-count" hidden>0</span>
+                </summary>
+                <div id="library-filter-fields" class="library-filters">
+            <div class="filter-row">
+              <label
+                >Author
+                <input id="filter-author" list="author-options" maxlength="300"
+              /></label>
+              <datalist id="author-options"></datalist>
+              <label
+                >Series
+                <input id="filter-series" maxlength="300"
+              /></label>
+              <label
+                >Status
+                <select id="filter-status">
+                  <option value="">Any</option>
+                  <option value="reading">Reading</option>
+                  <option value="finished">Finished</option>
+                  <option value="unfinished">Unfinished</option>
+                  <option value="rereading">Re-reading</option>
+                </select>
+              </label>
+              <label
+                >Format
+                <select id="filter-format">
+                  <option value="">Any</option>
+                  <option value="epub">EPUB</option>
+                  <option value="pdf">PDF</option>
+                  <option value="cbz">CBZ</option>
+                  <option value="cbr">CBR</option>
+                  <option value="djvu">DjVu</option>
+                  <option value="mp3">MP3</option>
+                  <option value="m4b">M4B</option>
+                </select>
+              </label>
+              <label
+                >Collection
+                <select id="filter-collection">
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <button type="button" class="primary" id="filter-apply">
+                Apply
+              </button>
+            </div>
+            <div class="filter-row scopes-row">
+              <label
+                >Save scope
+                <input id="scope-name" maxlength="120" placeholder="Name"
+              /></label>
+              <button type="button" class="quiet" id="scope-save">Save</button>
+              <div id="scope-chips" class="chip-row" aria-label="Saved scopes"></div>
+            </div>
+            <div
+              id="author-chips"
+              class="chip-row"
+              aria-label="Authors"
+              hidden
+            ></div>
+            <div
+              id="collection-chips"
+              class="chip-row"
+              aria-label="Collections"
+            ></div>
+            <form id="collection-create" class="filter-row">
+              <label
+                >New collection
+                <input id="collection-name" maxlength="120" required
+              /></label>
+              <button type="submit" class="quiet">Create</button>
+            </form>
+                </div>
+              </details>
+              <button type="button" class="quiet" id="filter-clear" hidden>
+                Clear
+              </button>
+            </div>
+            </div>
+          </div>
           <div id="books" class="book-grid"></div>
+          <button type="button" class="quiet load-more" id="load-more" hidden>
+            Load more
+          </button>
           <div id="empty" class="empty">
             <img class="sprig" src="/ornaments/sprig-corner.png" alt="" width="88" height="160" />
             <h3>Your next chapter starts here.</h3>
             <p>Add a book to begin building your library.</p>
           </div>
         </section>
-        <section id="insights-panel" class="panel" hidden>
+        <section id="ledger" class="panel ledger" aria-labelledby="ledger-title">
+          <img class="ledger-sprig" src="/ornaments/sprig.png" alt="" width="64" height="134" />
           <div class="section-head">
-            <h2><span>02 /</span> Reading progress</h2>
+            <h2 id="ledger-title"><span>Shelf</span> ledger</h2>
+            <a href="#insights">Insights →</a>
           </div>
-          <div id="progress-list"></div>
-          <p class="fine">
-            Totals use page progress for manual books and EPUB percentage for
-            imports. Session history, streaks, and annual goals are planned.
-          </p>
+          <div class="ledger-body">
+            <figure class="ring">
+              <svg viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="ring-track" cx="60" cy="60" r="52" />
+                <circle class="ring-value" id="ring-value" cx="60" cy="60" r="52" />
+              </svg>
+              <figcaption>
+                <span class="ring-count"><span id="stat-finished">0</span> / <span id="ring-total">0</span></span>
+                <span class="ring-label">finished</span>
+              </figcaption>
+            </figure>
+            <dl class="ledger-stats">
+              <div><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#book" /></svg><dt>Books on your shelf</dt><dd id="stat-books">0</dd></div>
+              <div><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#bookmark" /></svg><dt>Currently reading</dt><dd id="stat-reading">0</dd></div>
+              <div><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#pages" /></svg><dt>Average progress</dt><dd id="stat-pages">0%</dd></div>
+            </dl>
+          </div>
+          <p class="ring-note" id="ring-note"></p>
         </section>
-        <section id="settings-panel" class="panel" hidden>
+        <section id="shelf-panel" class="panel" aria-labelledby="shelf-title">
           <div class="section-head">
-            <h2><span>03 /</span> Text to speech</h2>
+            <h2 id="shelf-title"><span>02 /</span> On your shelf <em>Recently added to your library.</em></h2>
+            <a href="#library">View library →</a>
           </div>
-          <p class="fine">
-            Listen in the EPUB reader only appears after you add an enabled
-            OpenAI-compatible provider (for example Kokoro-FastAPI at
-            <code>http://127.0.0.1:8880/v1</code>). Shelf does not ship a speech
-            engine; point this at one you run yourself.
-          </p>
-          <div id="tts-providers" class="tts-provider-list"></div>
-          <p id="tts-empty" class="fine">No TTS providers yet.</p>
-          <form id="tts-form" class="tts-form">
-            <h3>Add provider</h3>
-            <label
-              >Name<input
-                name="name"
-                required
-                maxlength="120"
-                placeholder="Kokoro"
-            /></label>
-            <label
-              >Base URL<input
-                name="baseUrl"
-                type="url"
-                required
-                maxlength="500"
-                placeholder="http://127.0.0.1:8880/v1"
-            /></label>
-            <label
-              >API key
-              <span class="fine">(optional)</span
-              ><input name="apiKey" type="password" maxlength="500" autocomplete="off"
-            /></label>
-            <label
-              >Default model<input
-                name="defaultModel"
-                maxlength="120"
-                placeholder="kokoro"
-                value="kokoro"
-            /></label>
-            <label class="check"
-              ><input name="loadKokoroVoices" type="checkbox" checked /> Load
-              Kokoro voice list</label
-            >
-            <p id="tts-error" role="alert" hidden></p>
-            <button class="primary" type="submit">Save provider</button>
-          </form>
+          <div id="shelf-strip" class="shelf-strip"></div>
+        </section>
+        <section id="finished-panel" class="panel finished" aria-labelledby="finished-title">
+          <img class="swallow" src="/ornaments/swallow.png" alt="" width="108" height="88" />
+          <div class="section-head">
+            <h2 id="finished-title"><span>03 /</span> Recently finished</h2>
+          </div>
+          <div id="finished-list" class="finished-list"></div>
+        </section>
+        </div>
+        <div id="insights-panel" class="insights" hidden>
+          <section class="panel ins-progress" aria-labelledby="ins-progress-title">
+            <div class="section-head">
+              <h2 id="ins-progress-title"><span>01 /</span> Reading progress</h2>
+            </div>
+            <div id="progress-list"></div>
+          </section>
+          <section class="panel ins-totals" aria-labelledby="ins-totals-title">
+            <div class="section-head">
+              <h2 id="ins-totals-title"><span>02 /</span> To date</h2>
+            </div>
+            <dl class="totals">
+              <div><dt>Books on your shelf</dt><dd id="ins-books">0</dd></div>
+              <div><dt>Books finished</dt><dd id="ins-finished">0</dd></div>
+              <div class="minor"><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#bookmark" /></svg><dt>Currently reading</dt><dd id="ins-reading">0</dd></div>
+              <div class="minor"><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#pages" /></svg><dt>Average progress</dt><dd id="ins-progress">0%</dd></div>
+            </dl>
+          </section>
+          <section class="panel ins-authors" aria-labelledby="ins-authors-title">
+            <div class="section-head">
+              <h2 id="ins-authors-title"><span>03 /</span> Authors on your shelf</h2>
+            </div>
+            <div id="author-breakdown" class="breakdown"></div>
+          </section>
+          <section class="panel ins-calendar" aria-labelledby="ins-calendar-title">
+            <div class="section-head">
+              <h2 id="ins-calendar-title"><span>04 /</span> Reading calendar</h2>
+            </div>
+            <div class="calendar-wrap">
+              <div class="calendar-days" aria-hidden="true"><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span></div>
+              <div id="reading-calendar" class="calendar" role="img" aria-label="Reading calendar: no reading sessions recorded yet"></div>
+            </div>
+            <div class="calendar-foot">
+              <p class="fine">
+                Daily reading fills this calendar once Shelf records reading
+                sessions. Progress above uses page counts for manual books and
+                EPUB percentage for imports.
+              </p>
+              <p class="calendar-legend" aria-hidden="true">Less <i></i><i></i><i></i><i></i> More</p>
+            </div>
+          </section>
+        </div>
+        <section id="settings-panel" class="settings" hidden>
+          <nav class="settings-index" aria-label="Settings sections">
+            <p class="fine">On this page</p>
+            <a href="#settings-activity">Activity</a>
+            <a href="#settings-metadata">Metadata</a>
+            <a href="#settings-tts">Text to speech</a>
+            <a href="#settings-library">Library folders</a>
+          </nav>
+          <div class="settings-body">
+            <section id="settings-activity" class="setting" aria-labelledby="activity-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Background work</p>
+                  <h2 id="activity-heading" tabindex="-1">Activity</h2>
+                </div>
+                <p id="activity-summary" class="activity-summary" data-state="idle">
+                  <span class="activity-dot" aria-hidden="true"></span>
+                  <span id="activity-summary-text">Checking…</span>
+                </p>
+              </header>
+              <p class="fine setting-lede">
+                What the server is doing for you right now. Updates every few seconds while this page is open.
+              </p>
+              <ul id="activity-list" class="activity-list" aria-live="polite" aria-busy="true">
+                <li class="activity-row" id="activity-meta" data-state="idle">
+                  <div class="activity-what">
+                    <h3>Metadata fetch</h3>
+                    <p class="fine" id="activity-meta-detail">Checking…</p>
+                  </div>
+                  <dl class="activity-counts" id="activity-meta-counts"></dl>
+                  <div class="activity-controls">
+                    <button type="button" class="quiet" id="meta-pause" hidden>Pause</button>
+                    <button type="button" class="quiet" id="meta-resume" hidden>Resume</button>
+                    <button type="button" class="quiet" id="meta-cancel" hidden>Cancel queue</button>
+                  </div>
+                </li>
+                <li class="activity-row" id="activity-align" data-state="idle">
+                  <div class="activity-what">
+                    <h3>Read-aloud alignment</h3>
+                    <p class="fine" id="activity-align-detail">Checking…</p>
+                  </div>
+                  <div class="activity-progress" id="activity-align-items"></div>
+                </li>
+                <li class="activity-row" id="activity-convert" data-state="idle">
+                  <div class="activity-what">
+                    <h3>Audiobook conversion</h3>
+                    <p class="fine" id="activity-convert-detail">Checking…</p>
+                  </div>
+                  <div class="activity-progress" id="activity-convert-items"></div>
+                </li>
+              </ul>
+            </section>
+
+            <section id="settings-metadata" class="setting" aria-labelledby="metadata-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Catalogue enrichment</p>
+                  <h2 id="metadata-heading" tabindex="-1">Metadata</h2>
+                </div>
+                <div class="setting-action">
+                  <button type="button" class="primary" id="meta-run">Sync library metadata</button>
+                  <label class="check"
+                    ><input id="meta-ignore-cache" type="checkbox" /> Ignore cache</label
+                  >
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Providers enrich titles, descriptions, covers, and more. Auto-fetch
+                fills eligible books after import; Sync queues the whole library.
+                Progress appears under Activity.
+              </p>
+              <div id="meta-providers" class="provider-list"></div>
+            </section>
+
+            <section id="settings-tts" class="setting" aria-labelledby="tts-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Listening</p>
+                  <h2 id="tts-heading" tabindex="-1">Text to speech</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Listen in the EPUB reader only appears after you add an enabled
+                OpenAI-compatible provider (for example Kokoro-FastAPI at
+                <code>http://127.0.0.1:8880/v1</code>). Shelf does not ship a speech
+                engine; point this at one you run yourself.
+              </p>
+              <div id="tts-providers" class="provider-list"></div>
+              <p id="tts-empty" class="fine setting-empty">No TTS providers yet.</p>
+              <details class="setting-disclosure" id="tts-add">
+                <summary>Add a provider</summary>
+                <form id="tts-form" class="tts-form">
+                  <label
+                    >Name<input
+                      name="name"
+                      required
+                      maxlength="120"
+                      placeholder="Kokoro"
+                  /></label>
+                  <label
+                    >Base URL<input
+                      name="baseUrl"
+                      type="url"
+                      required
+                      maxlength="500"
+                      placeholder="http://127.0.0.1:8880/v1"
+                  /></label>
+                  <label
+                    >API key
+                    <span class="fine">(optional)</span
+                    ><input name="apiKey" type="password" maxlength="500" autocomplete="off"
+                  /></label>
+                  <label
+                    >Default model<input
+                      name="defaultModel"
+                      maxlength="120"
+                      placeholder="kokoro"
+                      value="kokoro"
+                  /></label>
+                  <label class="check"
+                    ><input name="loadKokoroVoices" type="checkbox" checked /> Load
+                    Kokoro voice list</label
+                  >
+                  <p id="tts-error" role="alert" hidden></p>
+                  <button class="primary" type="submit">Save provider</button>
+                </form>
+              </details>
+            </section>
+
+            <section id="settings-library" class="setting" aria-labelledby="library-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Folder scan</p>
+                  <h2 id="library-heading" tabindex="-1">Library folders</h2>
+                </div>
+                <div class="setting-action">
+                  <button type="button" class="primary" id="library-scan">Scan folders</button>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Import books from configured library roots on this server. Duplicates are skipped.
+              </p>
+              <ul id="library-roots" class="library-roots"></ul>
+              <p id="library-roots-empty" class="fine setting-empty">No library roots configured.</p>
+            </section>
+          </div>
         </section>
         <footer>
           YOUR BOOKS. YOUR SERVER. YOUR READING ROOM.<span
@@ -235,6 +495,81 @@
         Catalogue tools for this book.
       </p>
       <p id="manage-error" role="alert" hidden></p>
+      <p id="manage-status" class="fine manage-status" role="status" aria-live="polite" hidden></p>
+      <form id="manage-meta" class="manage-merge">
+        <p class="fine">Edit the title and author shown on your shelf.</p>
+        <label
+          >Title
+          <input
+            id="manage-meta-title"
+            name="title"
+            maxlength="500"
+            required
+        /></label>
+        <label
+          >Author
+          <input id="manage-meta-author" name="author" maxlength="300"
+        /></label>
+        <label
+          >Series
+          <input id="manage-meta-series" name="series" maxlength="300"
+        /></label>
+        <label
+          >Series index
+          <input
+            id="manage-meta-series-index"
+            name="series_index"
+            type="number"
+            step="any"
+            min="0"
+        /></label>
+        <label
+          >Description
+          <textarea id="manage-meta-description" rows="3" maxlength="8000"></textarea>
+        </label>
+        <label
+          >Add to collection
+          <select id="manage-collection">
+            <option value="">None</option>
+          </select>
+        </label>
+        <p class="fine">
+          Collections are your shelves — metadata providers do not assign them.
+        </p>
+        <div class="tts-actions">
+          <button type="button" class="quiet" id="manage-meta-search">Search online</button>
+          <button type="button" class="quiet" id="manage-meta-autofill">Auto-fill</button>
+          <button type="button" class="quiet" id="manage-meta-refresh" title="Queue a fresh provider fetch for this book">Refresh from providers</button>
+        </div>
+        <div id="manage-meta-match" class="meta-match" hidden>
+          <div id="manage-meta-results" class="meta-match-tiers"></div>
+          <div id="manage-meta-compare" class="meta-match-compare" hidden>
+            <p class="fine" id="manage-meta-compare-heading">Compare</p>
+            <div id="manage-meta-compare-fields" class="meta-match-fields"></div>
+            <div class="tts-actions">
+              <button type="button" class="primary" id="manage-meta-apply-all">
+                Apply all
+              </button>
+              <button type="button" class="quiet" id="manage-meta-apply-missing">
+                Apply missing
+              </button>
+              <button type="button" class="quiet" id="manage-meta-apply-selected" hidden>
+                Apply selected
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="tts-actions">
+          <button type="button" class="quiet" id="manage-meta-cover-search">
+            Find covers
+          </button>
+        </div>
+        <div id="manage-meta-cover-results" class="meta-covers" hidden></div>
+        <div id="manage-meta-covers" class="meta-covers"></div>
+        <button type="submit" class="primary" id="manage-meta-submit">
+          Save metadata
+        </button>
+      </form>
       <form id="manage-merge" class="manage-merge" hidden>
         <p class="fine">
           Pair an EPUB with an audiobook when titles differ, set the shared
@@ -333,6 +668,18 @@
           Remove permanently
         </button>
       </div>
+    </dialog>
+
+    <dialog id="cover-lightbox" class="cover-lightbox" aria-label="Cover preview">
+      <button
+        type="button"
+        class="quiet cover-lightbox-close"
+        id="close-cover-lightbox"
+        aria-label="Close cover preview"
+      >
+        ✕
+      </button>
+      <img id="cover-lightbox-image" alt="" />
     </dialog>
   </body>
 </html>

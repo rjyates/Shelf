@@ -4,18 +4,21 @@ mod audio_meta;
 mod audiobook;
 mod epub;
 mod epub_package;
+mod library_org;
 mod media_overlay;
+mod metadata;
 mod reader_data;
+mod reading_stats;
 mod tts;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
 use axum::{
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::{get, patch, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use rand::{rngs::OsRng, RngCore};
@@ -412,6 +415,8 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ = db.execute_batch("ALTER TABLE annotations ADD COLUMN pdf TEXT");
     let _ = db
         .execute_batch("ALTER TABLE books ADD COLUMN reading_status TEXT NOT NULL DEFAULT 'open'");
+    let _ = db.execute_batch("ALTER TABLE books ADD COLUMN series TEXT");
+    let _ = db.execute_batch("ALTER TABLE books ADD COLUMN series_index REAL");
     // Backfill finished from progress for libraries that only had % / pages.
     let _ = db.execute_batch(
         "UPDATE books SET reading_status='finished'
@@ -427,6 +432,29 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
            activation_bytes TEXT NOT NULL CHECK(length(activation_bytes) = 8)
          )",
     );
+    let _ = db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS collections (
+           id INTEGER PRIMARY KEY,
+           user_id INTEGER NOT NULL REFERENCES users(id),
+           name TEXT NOT NULL,
+           UNIQUE(user_id, name)
+         );
+         CREATE TABLE IF NOT EXISTS collection_books (
+           collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+           book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+           PRIMARY KEY (collection_id, book_id)
+         );
+         CREATE TABLE IF NOT EXISTS smart_scopes (
+           id INTEGER PRIMARY KEY,
+           user_id INTEGER NOT NULL REFERENCES users(id),
+           name TEXT NOT NULL,
+           filter TEXT NOT NULL,
+           UNIQUE(user_id, name)
+         )",
+    );
+    // M11/M17 metadata tables come from schema.sql; backfill entities/covers.
+    metadata::migrate(&db);
+    let _ = reading_stats::migrate(&db);
     let state = AppState {
         data_dir: database
             .parent()
@@ -437,6 +465,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     };
     aax::resume_pending(&state);
     align::resume_pending(&state);
+    metadata::resume_pending(&state);
     Ok(Router::new()
         .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
         .route("/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/app.css")) }))
@@ -456,7 +485,68 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/login", post(login))
         .route("/api/v1/logout", post(logout))
         .route("/api/v1/books", get(books).post(add_book))
-        .route("/api/v1/books/{id}", axum::routing::delete(epub::delete_book))
+        .route(
+            "/api/v1/books/{id}",
+            patch(patch_book).delete(epub::delete_book),
+        )
+        .route("/api/v1/authors", get(library_org::list_authors))
+        .route(
+            "/api/v1/collections",
+            get(library_org::list_collections).post(library_org::create_collection),
+        )
+        .route(
+            "/api/v1/collections/{id}",
+            patch(library_org::patch_collection).delete(library_org::delete_collection),
+        )
+        .route(
+            "/api/v1/scopes",
+            get(library_org::list_scopes).post(library_org::create_scope),
+        )
+        .route(
+            "/api/v1/scopes/{id}",
+            patch(library_org::patch_scope).delete(library_org::delete_scope),
+        )
+        .route("/api/v1/library/roots", get(library_org::library_roots))
+        .route("/api/v1/library/scan", post(library_org::library_scan))
+        .route("/api/v1/metadata/search", post(metadata::search))
+        .route("/api/v1/meta/image", get(metadata::proxy_image))
+        .route(
+            "/api/v1/metadata/providers",
+            get(metadata::list_providers).post(metadata::add_external_provider),
+        )
+        .route("/api/v1/metadata/providers/{id}", patch(metadata::patch_provider))
+        .route(
+            "/api/v1/metadata/settings",
+            get(metadata::get_settings).put(metadata::put_settings),
+        )
+        .route("/api/v1/metadata/fetch/status", get(metadata::fetch_status))
+        .route("/api/v1/metadata/fetch/run", post(metadata::fetch_run))
+        .route("/api/v1/metadata/fetch/pause", post(metadata::fetch_pause))
+        .route("/api/v1/metadata/fetch/resume", post(metadata::fetch_resume))
+        .route("/api/v1/metadata/fetch/cancel", post(metadata::fetch_cancel))
+        .route(
+            "/api/v1/books/{id}/metadata",
+            get(metadata::get_book_metadata).patch(metadata::patch_book_metadata),
+        )
+        .route("/api/v1/books/{id}/metadata/apply", post(metadata::apply))
+        .route("/api/v1/books/{id}/metadata/autofill", post(metadata::autofill))
+        .route("/api/v1/books/{id}/metadata/refresh", post(metadata::refresh_book))
+        .route(
+            "/api/v1/books/{id}/covers",
+            get(metadata::list_covers).post(metadata::add_cover_url),
+        )
+        .route(
+            "/api/v1/books/{id}/covers/search",
+            post(metadata::search_covers),
+        )
+        .route(
+            "/api/v1/books/{id}/covers/{cover_id}",
+            get(metadata::cover_bytes),
+        )
+        .route(
+            "/api/v1/books/{id}/covers/{cover_id}/activate",
+            post(metadata::activate_cover),
+        )
         .route("/api/v1/books/{id}/progress", post(update_progress))
         .route("/api/v1/books/{id}/finished", post(mark_finished))
         .route("/api/v1/books/{id}/unfinished", post(mark_unfinished))
@@ -527,6 +617,24 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             get(tts::admin_discover_voices),
         )
         .route("/api/v1/books/{id}/location", post(epub::location))
+        .route(
+            "/api/v1/books/files/{id}/sessions",
+            post(reading_stats::post_file_session),
+        )
+        .route(
+            "/api/v1/books/{id}/sessions",
+            get(reading_stats::list_book_sessions).post(reading_stats::post_book_session),
+        )
+        .route(
+            "/api/v1/books/{id}/sessions/{client_session_id}",
+            delete(reading_stats::delete_book_session),
+        )
+        .route("/api/v1/reading-sessions", get(reading_stats::list_sessions))
+        .route("/api/v1/reading-daily", get(reading_stats::list_daily))
+        .route(
+            "/api/v1/reading-prefs",
+            get(reading_stats::get_prefs).put(reading_stats::put_prefs),
+        )
         .route(
             "/api/v1/books/{id}/bookmarks",
             get(reader_data::list_bookmarks).post(reader_data::create_bookmark),
@@ -745,6 +853,10 @@ struct Book {
     total_pages: Option<i64>,
     pages_read: i64,
     reading_status: String,
+    series: Option<String>,
+    series_index: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    genres: Vec<String>,
     #[serde(flatten)]
     epub: Option<EpubInfo>,
 }
@@ -770,54 +882,136 @@ struct NewBook {
     total_pages: i64,
 }
 
-async fn books(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Vec<Book>>> {
-    state.db(move |db| {
-        let user = authenticate(db, &headers)?;
-        let mut query = db.prepare("SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END,b.pages_read,b.reading_status,f.book_id,f.percentage,f.position,f.cover IS NOT NULL,f.format,f.digest,f.conversion_status,f.conversion_error FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? ORDER BY b.id DESC")?;
-        let books = query.query_map([user], |r| {
-            let imported = r.get::<_, Option<i64>>(6)?.is_some();
-            let format = r.get::<_, Option<String>>(10)?;
-            let digest = r.get::<_, Option<String>>(11)?;
-            let conversion_status: Option<String> = r.get(12)?;
-            let conversion_error: Option<String> = r.get(13)?;
-            Ok(Book {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                author: r.get(2)?,
-                total_pages: r.get(3)?,
-                pages_read: r.get(4)?,
-                reading_status: r.get(5)?,
-                epub: if imported {
-                    Some(EpubInfo {
-                        format: match format.as_deref() {
-                            Some("pdf") => "pdf",
-                            Some("cbz") => "cbz",
-                            Some("cbr") => "cbr",
-                            Some("cb7") => "cb7",
-                            Some("djvu") => "djvu",
-                            Some("mp3") => "mp3",
-                            Some("m4b") => "m4b",
-                            Some("opus") => "opus",
-                            Some("ogg") => "ogg",
-                            Some("flac") => "flac",
-                            Some("audiozip") => "audiozip",
-                            Some("aax") => "aax",
-                            _ => "epub",
-                        },
-                        digest: digest.unwrap_or_default(),
-                        percentage: r.get(7)?,
-                        position: r.get(8)?,
-                        has_cover: r.get(9)?,
-                        conversion_status,
-                        conversion_error,
-                    })
-                } else {
-                    None
+#[derive(Deserialize)]
+struct BooksQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    author: Option<String>,
+    series: Option<String>,
+    status: Option<String>,
+    format: Option<String>,
+    collection_id: Option<i64>,
+    q: Option<String>,
+}
+
+fn map_book_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Book> {
+    let imported = r.get::<_, Option<i64>>(6)?.is_some();
+    let format = r.get::<_, Option<String>>(10)?;
+    let digest = r.get::<_, Option<String>>(11)?;
+    let conversion_status: Option<String> = r.get(12)?;
+    let conversion_error: Option<String> = r.get(13)?;
+    Ok(Book {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        author: r.get(2)?,
+        total_pages: r.get(3)?,
+        pages_read: r.get(4)?,
+        reading_status: r.get(5)?,
+        series: r.get(14)?,
+        series_index: r.get(15)?,
+        genres: r
+            .get::<_, Option<String>>(16)?
+            .map(|joined| joined.split('\u{1f}').map(str::to_string).collect())
+            .unwrap_or_default(),
+        epub: if imported {
+            Some(EpubInfo {
+                format: match format.as_deref() {
+                    Some("pdf") => "pdf",
+                    Some("cbz") => "cbz",
+                    Some("cbr") => "cbr",
+                    Some("cb7") => "cb7",
+                    Some("djvu") => "djvu",
+                    Some("mp3") => "mp3",
+                    Some("m4b") => "m4b",
+                    Some("opus") => "opus",
+                    Some("ogg") => "ogg",
+                    Some("flac") => "flac",
+                    Some("audiozip") => "audiozip",
+                    Some("aax") => "aax",
+                    _ => "epub",
                 },
+                digest: digest.unwrap_or_default(),
+                percentage: r.get(7)?,
+                position: r.get(8)?,
+                has_cover: r.get(9)?,
+                conversion_status,
+                conversion_error,
             })
-        })?.collect::<Result<Vec<_>,_>>()?;
-        Ok(Json(books))
-    }).await
+        } else {
+            None
+        },
+    })
+}
+
+async fn books(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<BooksQuery>,
+) -> ApiResult<Json<Vec<Book>>> {
+    let limit = query.limit.unwrap_or(500).clamp(1, 1000);
+    let offset = query.offset.unwrap_or(0).max(0);
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            if let Some(collection_id) = query.collection_id {
+                let owned: bool = db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM collections WHERE id=? AND user_id=?)",
+                    params![collection_id, user],
+                    |r| r.get(0),
+                )?;
+                if !owned {
+                    return Err(ApiError(StatusCode::NOT_FOUND, "Collection not found."));
+                }
+            }
+            let mut sql = String::from(
+                "SELECT b.id,b.title,b.author,CASE WHEN f.book_id IS NULL THEN b.total_pages END, \
+                 b.pages_read,b.reading_status,f.book_id,f.percentage,f.position,f.cover IS NOT NULL, \
+                 f.format,f.digest,f.conversion_status,f.conversion_error,b.series,b.series_index, \
+                 (SELECT group_concat(name, char(31)) FROM (SELECT g.name FROM book_genres bg \
+                 JOIN genres g ON g.id=bg.genre_id WHERE bg.book_id=b.id ORDER BY g.name)) \
+                 FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=?",
+            );
+            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user)];
+            if let Some(ref author) = query.author {
+                sql.push_str(" AND b.author=?");
+                params_vec.push(Box::new(author.clone()));
+            }
+            if let Some(ref series) = query.series {
+                sql.push_str(" AND b.series=?");
+                params_vec.push(Box::new(series.clone()));
+            }
+            if let Some(ref status) = query.status {
+                sql.push_str(" AND b.reading_status=?");
+                params_vec.push(Box::new(status.clone()));
+            }
+            if let Some(ref format) = query.format {
+                sql.push_str(" AND f.format=?");
+                params_vec.push(Box::new(format.clone()));
+            }
+            if let Some(collection_id) = query.collection_id {
+                sql.push_str(
+                    " AND b.id IN (SELECT book_id FROM collection_books WHERE collection_id=?)",
+                );
+                params_vec.push(Box::new(collection_id));
+            }
+            if let Some(ref q) = query.q {
+                let needle = format!("%{}%", q);
+                sql.push_str(" AND (b.title LIKE ? COLLATE NOCASE OR b.author LIKE ? COLLATE NOCASE)");
+                params_vec.push(Box::new(needle.clone()));
+                params_vec.push(Box::new(needle));
+            }
+            sql.push_str(" ORDER BY b.id DESC LIMIT ? OFFSET ?");
+            params_vec.push(Box::new(limit));
+            params_vec.push(Box::new(offset));
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params_vec.iter().map(|p| p.as_ref()).collect();
+            let mut stmt = db.prepare(&sql)?;
+            let books = stmt
+                .query_map(param_refs.as_slice(), map_book_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Json(books))
+        })
+        .await
 }
 
 async fn add_book(
@@ -851,6 +1045,102 @@ async fn add_book(
                 StatusCode::CREATED,
                 Json(serde_json::json!({"id":db.last_insert_rowid()})),
             ))
+        })
+        .await
+}
+
+fn null_as_clear_str<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Option<String>>, D::Error> {
+    Ok(Some(Option::<String>::deserialize(d)?))
+}
+
+fn null_as_clear_f64<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Option<f64>>, D::Error> {
+    Ok(Some(Option::<f64>::deserialize(d)?))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateBook {
+    title: String,
+    author: String,
+    #[serde(default, deserialize_with = "null_as_clear_str")]
+    series: Option<Option<String>>,
+    #[serde(default, deserialize_with = "null_as_clear_f64")]
+    series_index: Option<Option<f64>>,
+}
+
+/// Edit catalogue metadata without re-importing the file.
+async fn patch_book(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(value): Json<UpdateBook>,
+) -> ApiResult<StatusCode> {
+    if value.title.trim().is_empty() || value.title.len() > 500 || value.author.len() > 300 {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Enter a title up to 500 characters and an author up to 300 characters.",
+        ));
+    }
+    if let Some(Some(ref series)) = value.series {
+        if series.len() > 300 {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "Series name must be at most 300 characters.",
+            ));
+        }
+    }
+    if let Some(Some(index)) = value.series_index {
+        if !index.is_finite() {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "series_index must be a finite number.",
+            ));
+        }
+    }
+    let title = value.title.trim().to_string();
+    let author = value.author.trim().to_string();
+    let series_patch = value.series.map(|s| {
+        s.and_then(|raw| {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+    });
+    let series_index_patch = value.series_index;
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            let (cur_series, cur_index): (Option<String>, Option<f64>) = db
+                .query_row(
+                    "SELECT series, series_index FROM books WHERE id=? AND user_id=?",
+                    params![id, user],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?
+                .ok_or(ApiError(StatusCode::NOT_FOUND, "Book not found."))?;
+            let series = match series_patch {
+                Some(v) => v,
+                None => cur_series,
+            };
+            let series_index = match series_index_patch {
+                Some(v) => v,
+                None => cur_index,
+            };
+            let changed = db.execute(
+                "UPDATE books SET title=?, author=?, series=?, series_index=? WHERE id=? AND user_id=?",
+                params![title, author, series, series_index, id, user],
+            )?;
+            if changed == 0 {
+                return Err(ApiError(StatusCode::NOT_FOUND, "Book not found."));
+            }
+            Ok(StatusCode::NO_CONTENT)
         })
         .await
 }
@@ -1002,6 +1292,14 @@ fn set_reading_status(db: &Connection, user: i64, id: i64, status: &str) -> ApiR
     db.execute(
         "UPDATE books SET reading_status=? WHERE id=? AND user_id=?",
         params![status, id, user],
+    )?;
+    reading_stats::record_event(
+        db,
+        user,
+        id,
+        status,
+        "manual",
+        serde_json::json!({ "status": status }),
     )?;
     let pct = match status {
         "finished" => Some(1.0),

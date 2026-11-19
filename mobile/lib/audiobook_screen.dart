@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'audiobook_handler.dart';
+import 'reading_session.dart';
 
 const _paper = Color(0xffffffff);
 const _ink = Color(0xff111111);
@@ -55,6 +56,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   Timer? _sleepTimer;
   int? _sleepRemainingSec;
   int? _sleepPresetMin;
+  ReadingSessionTracker? _readingSession;
 
   static const _rates = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
   static const _sleepPresets = [5, 10, 15, 30, 60];
@@ -65,6 +67,21 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     _title = widget.book.title;
     _author = widget.book.author;
     _hasCover = widget.book.hasCover;
+    _readingSession = ReadingSessionTracker(
+      bookId: widget.book.id,
+      sessionType: 'listen',
+      source: 'android',
+      getProgressPercent: () {
+        final total = _duration.inMilliseconds;
+        if (total <= 0) return widget.book.percentage * 100;
+        return (_position.inMilliseconds / total * 100).clamp(0.0, 100.0);
+      },
+      onSessionEnd: (payload) async {
+        try {
+          await widget.api.postReadingSession(widget.book.id, payload.toJson());
+        } catch (_) {}
+      },
+    )..attach();
     unawaited(_start());
   }
 
@@ -375,6 +392,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     }
     _saving = true;
     _lastSave = DateTime.now();
+    _readingSession?.onActivity();
     try {
       final assetId = _assets[_assetIndex]['assetId'] as String;
       final ms = handler.player.position.inMilliseconds.clamp(0, 1 << 31);
@@ -584,6 +602,10 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
 
   @override
   void dispose() {
+    final session = _readingSession;
+    _readingSession = null;
+    session?.detach();
+    unawaited(session?.endSession() ?? Future<void>.value());
     _sleepTimer?.cancel();
     unawaited(_persist());
     unawaited(_positionSub?.cancel() ?? Future<void>.value());

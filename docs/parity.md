@@ -15,7 +15,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 | Capability | Shelf status |
 | --- | --- |
-| First-account setup, login, session revocation | Implemented; mobile stores the session token in platform secure storage; server uses a 30-day sliding idle window renewed on authenticated requests |
+| First-account setup, login, session revocation | Implemented; mobile stores session token + password in platform secure storage (silent re-login after idle expiry); server uses a 30-day sliding idle window renewed on authenticated requests |
 | Manual catalogue entries and persisted page progress | Implemented on web and shared mobile |
 | Overview, library search, real catalogue/progress totals | Implemented on web; catalogue/totals on mobile |
 | Android and iPhone shared client | Foundation with login, persisted secure session, catalogue, add book, record progress, Readium EPUB/PDF reader |
@@ -24,9 +24,9 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | EPUB upload/import and authenticated downloads | Implemented; exact-byte deduplication and embedded raster covers; single **Add book** action |
 | EPUB reading (Book Orbit Foliate: chapters, settings, search, shortcuts, CFI/%) | Web host done; bookmarks/annotations/prefs persist on Shelf SQLite |
 | Mobile EPUB reading (Readium) | Done: Read downloads/caches EPUB if needed, opens `flutter_readium`; progress/bookmarks/annotations via Shelf APIs. Foliate WebView removed from mobile. |
-| Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations |
+| Display profile onboarding (`eink` default / `lcd`) | Done on mobile: first-run question, persisted preference, settings retoggle; e-ink disables animations (`MediaQuery` + instant page transitions) |
 | Offline book download + progress/annotation outbox | Done: Save offline / auto-cache on Read (EPUB/PDF/CBZ) and Listen (audio formats + ZIP); catalogue local-copy icon; outbox (transport + HTTP 5xx); flush on refresh and connectivity; pre-M4 localStorage one-shot migrate |
-| Native mobile EPUB navigator (Readium) | Done: sole mobile reader; auto-cache on Read; bookmarks/highlights UI; Locator ↔ CFI/% sync |
+| Native mobile EPUB navigator (Readium) | Done: sole mobile reader; auto-cache on Read; bookmarks/highlights UI; Locator ↔ CFI/% sync; chapter+% chrome. Further Kindle-shaped enrichment: [`docs/research/mobile-reader-future.md`](research/mobile-reader-future.md) |
 | Stylus / freehand ink on pages (native overlay) | **M7–M8 complete** (2026-11-04): Nomad SPEED+A2+tip lead (~0.15–0.2s); Flutter `noop` elsewhere. Mid-stroke fill-in experiments closed. Drawing G1/G2 is milestone 13. |
 | Folder scanning and multiple libraries | Planned |
 | KEPUB, MOBI, AZW, FB2 reading | Planned (Foliate and/or native navigator once EPUB path is solid) |
@@ -42,9 +42,9 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Reader preference sync across devices | Per-book + account defaults on Shelf; chrome pin stays local |
 | Kobo and KOReader integrations | Planned |
 | OPDS and Send-to-Kindle | Planned |
-| Metadata providers and cover enrichment | Planned (**M17**) — providers to enrich title/author/series/etc.; multi-cover gallery and switch which cover is active |
-| Authors, series, smart scopes, collections | Planned |
-| Session-based statistics, heatmaps, streaks, Reading DNA | Planned; overview average progress; catalogue `reading_status` (`open`/`finished`/`unfinished`/`rereading`) stored for later reopen metrics |
+| Metadata providers and cover enrichment | **Usable (M11)** — Full BO provider set (OL/Google/iTunes/AudNexus/Goodreads/Amazon + Audible/Hardcover/ComicVine/Kobo/Libro.fm/RanobeDB off-by-default or key-gated; cover search iTunes/OL/DDG/AudiobookCovers) + field rules, auto-fetch queue, Sync/Refresh; multi-cover activate; web Manage search/apply; mobile autofill/search/sync. Fly path: [`docs/research/m11-library-scale.md`](research/m11-library-scale.md) |
+| Authors, series, smart scopes, collections | **Usable (M11)** — series/`series_index` (+ series entities); authors browse/entities; collections + smart scopes; folder roots/scan; catalogue pagination + filters; web + mobile Manage/library UI. Fly path: [`docs/research/m11-library-scale.md`](research/m11-library-scale.md) |
+| Session-based statistics, heatmaps, streaks, Reading DNA | Session capture **usable** (web + mobile POST sessions, daily rollups, progression history, lifecycle events, prefs/goals); heatmap/streak/DNA **graphs Planned**; overview average progress + catalogue `reading_status` remain |
 | Annual goals, monthly challenges, achievements | Planned |
 | Hardcover, Readwise, StoryGraph | Planned; external accounts remain unconfigured |
 | Multiple users, roles, OIDC/SSO | Planned (**M16**) — Jellyfin-like household/server: many accounts; admin controls for library visibility and whether users must request titles vs auto-approved (admins); OIDC/SSO as needed. Foundation today is one account |
@@ -52,7 +52,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Reading journal | Planned; approved design includes a journal panel |
 | Localization | Planned; vendored reader ships English from Book Orbit |
 | Storyteller-style synced narration, PiP, sleep timer | **Usable (M10 slice 7)** — sleep timer (web/mobile audiobook; BO TTS already); MO sync offset (±2s) on mobile; Document PiP on web audiobook; paired EPUB+audiobook (+readaloud) fold into **one library card and one shelf count** (web `libraryStats` + `/stats` hide work audio/readaloud; mobile list folds companions) with Open → Read/Listen; Manage → Merge & Combine when titles differ (`POST /api/v1/works` optional `title`); after Combine, Read opens the MO readaloud. **Rust STAlign pipeline** (`server/src/align/`) + Combine on web; CTC emit via in-image ghost-story (Compose only; no Whisper production path). **EN Foliate CTC→MO production path at Storyteller parity (2026-11-16)** vs ST pin `2de166da` — Four Lamps gate PASS (90 clips) + RotK SoT live PASS (~12.9k clips, median ~4.5s, not SMIL-collapse). Living gap map `docs/research/storyteller-align-parity.md`: quality residuals **shipped** (CLDR/words, BacktraceGraph + token-span, model.ts/`ResolvedPos`, Intl, report, WebPub roles/`inferPageCount`/toc·landmarks, VAD + UTF-16 timeline, STEM `blocks()`). Intentional leftovers: Shelf soft-fail, ICU/CJK (ST default off), grapheme Unicode-scalar shortcut, Whisper production omit, package-file streaming deferred. Mobile plays MO + lists `/works`, folds by `book_works`, Manage → Merge & Combine |
-| Signed Android/iOS distribution and stores | Deferred by user; artifacts first |
+| Signed Android/iOS distribution and stores | Android sideload self-update via GitHub `mobile-v*` Releases (Settings → Check for updates); optional CI upload keystore secrets for stable signing. Play/TestFlight/App Store still deferred; iOS remains unsigned IPA |
 
 ## Implementation milestones (ordered for mutual benefit)
 
@@ -78,9 +78,9 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 10. **TTS and media overlays** — fly path in [`docs/research/m10-tts-listen-leverage.md`](research/m10-tts-listen-leverage.md): (1) dropped browser SpeechSynthesis, (2) OpenAI-compatible/Kokoro, (3) web media overlays, (4) mobile server TTS, (5) mobile media overlays, (6) standalone audiobook player, (7) Storyteller extras (sleep timer, sync offset, PiP, alignment).
 
-11. **Library scale and organization** — folder scanning, editable metadata, authors/series/scopes/collections, storage/performance.
+11. **Library scale and organization + metadata enrichment** — folder scanning, editable metadata, authors/series/scopes/collections, storage/performance, providers, multi-cover, auto-fetch/sync (absorbs former M17). **Fly path:** [`docs/research/m11-library-scale.md`](research/m11-library-scale.md). **Shipped** on `feat/m11-library-scale`.
 
-12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph. Multi-user/OIDC lives in M16; *arr request UX in M15.
+12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph. Multi-user/OIDC lives in M16; *arr request UX in M15. **Inventory (BO + Storyteller capture map, pinned source links):** [`docs/research/m12-stats-inventory.md`](research/m12-stats-inventory.md).
 
 13. **Post-M8 drawing: generic tablet ink → golden OEM backends (G1 → G2)** — final drawing milestone. G1: portable mid-stroke path (Surface/Flutter) without OEM refresh APIs, same `EinkRefresh` contract. G2: deepen devices we can physically hack (Nomad already golden; e.g. Onyx `EpdController` only with hardware + smoke). Ledger: `docs/research/nomad-stylus.md`.
 
@@ -90,7 +90,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 16. **Multi-user (Jellyfin-like) + admin request policy** — many accounts on one Shelf instance; admin controls for what users can see (library visibility / scopes) and whether requests require approval or auto-approve (e.g. admins auto-approved, members request). OIDC/SSO as needed. Builds on M15 request flow when both ship.
 
-17. **Metadata providers + multi-cover select** — enrich catalogue entries from external metadata providers (title/author/series/description/etc.); keep multiple candidate covers and let the user pick/switch the active cover (gallery), rather than only the first embedded raster.
+17. **Metadata providers + multi-cover select** — **Absorbed into M11** (providers, field rules, auto-fetch/sync, multi-cover gallery).
 
 **Explicitly out of milestones (REA closed):** clone `ThreadSampleEmr`; ship OpenCV/`librPainter`; port Wacom G12/G14/Lamy LUT catalogs; Notes HandWrite/PWCore EMR. Raw `/dev/ebc` DISPAREA is an **optional Nomad experiment** (`debug.shelf.ink.ebc`), not the default product path.
 

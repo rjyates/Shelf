@@ -452,11 +452,11 @@ async function handleLocal(url: URL, init: RequestInit | undefined): Promise<Res
   ) {
     return null
   }
-  // Sessions and remaining stubbed EPUB paths stay local until implemented.
+  // Remaining stubbed EPUB paths stay local until implemented.
+  // Reading sessions POST to Shelf (M12 capture).
   if (
     path.startsWith('/api/v1/fonts') ||
     path.startsWith('/api/v1/server-fonts') ||
-    path.includes('/sessions') ||
     path.startsWith('/api/v1/epub/')
   ) {
     if (method === 'GET') {

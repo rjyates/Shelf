@@ -7,10 +7,12 @@ import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : AudioServiceFragmentActivity() {
   private val einkRefresh = EinkRefreshPlugin()
+  private val apkInstall = ApkInstallPlugin()
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
     flutterEngine.plugins.add(einkRefresh)
+    flutterEngine.plugins.add(apkInstall)
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {

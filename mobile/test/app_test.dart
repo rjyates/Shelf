@@ -216,13 +216,20 @@ class _RealHttpOverrides extends HttpOverrides {}
 class _CatalogueApi extends ShelfApi {
   _CatalogueApi() : super(Uri.parse('https://example.invalid'));
   @override
-  Future<List<Book>> books() async => [
+  Future<List<Book>> books([BooksQuery? query]) async => [
     Book(
       id: 1,
       title: 'Piranesi',
       author: 'Susanna Clarke',
       totalPages: 245,
       pagesRead: 163,
+      series: 'Clarke',
+      seriesIndex: 1,
     ),
+  ];
+
+  @override
+  Future<List<AuthorInfo>> authors() async => [
+    AuthorInfo(name: 'Susanna Clarke', bookCount: 1),
   ];
 }
