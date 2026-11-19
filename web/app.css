@@ -1793,6 +1793,7 @@ button[aria-busy="true"] {
 
 /* Cover zoom preview (nested over Manage) */
 .cover-lightbox {
+  position: relative;
   width: min(36rem, calc(100vw - 1.5rem));
   max-height: min(94dvh, 100%);
   margin: auto;
@@ -1807,12 +1808,13 @@ button[aria-busy="true"] {
 .cover-lightbox::backdrop {
   background: #050705e6;
 }
+/* Absolute inside the dialog — sticky top:0 collided with Insights .ins-mast (Hallmark 56). */
 .cover-lightbox-close {
-  position: sticky;
-  top: 0;
-  float: right;
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
   z-index: 1;
-  margin: 0 0 0.4rem 0.4rem;
+  margin: 0;
 }
 .cover-lightbox img {
   display: block;
@@ -1921,6 +1923,7 @@ nav a {
   font: 11px/1.4 var(--mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .signout:hover {
   color: var(--brass);
