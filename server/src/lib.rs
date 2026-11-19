@@ -1,4 +1,5 @@
 mod aax;
+mod achievements;
 mod align;
 mod audio_meta;
 mod audiobook;
@@ -638,6 +639,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         )
         .route("/api/v1/insights/reading", get(insights::reading_insights))
         .route("/api/v1/insights/widgets", get(insights::reading_widgets))
+        .route("/api/v1/insights/achievements", get(achievements::list_achievements))
         .route(
             "/api/v1/books/{id}/bookmarks",
             get(reader_data::list_bookmarks).post(reader_data::create_bookmark),

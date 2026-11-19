@@ -885,11 +885,82 @@ function renderWidgets(payload) {
   }
 }
 
+function renderAchievements(payload) {
+  const root = $("ins-achievements");
+  const empty = $("ins-achievements-empty");
+  const summary = $("ins-achievements-summary");
+  if (!root) return;
+  root.replaceChildren();
+  const categories = payload?.categories || [];
+  const earned = payload?.totalEarned || 0;
+  const available = payload?.totalAvailable || 0;
+  if (summary) {
+    summary.textContent = available
+      ? `${earned} of ${available} unlocked`
+      : "";
+  }
+  if (!categories.length) {
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+  for (const cat of categories) {
+    const section = element("section", undefined, "ins-ach-cat");
+    const head = element("div", undefined, "ins-ach-cat-head");
+    head.append(
+      element("h3", cat.label || cat.key || ""),
+      element(
+        "p",
+        `${cat.earnedCount || 0}/${cat.totalCount || 0}`,
+        "fine",
+      ),
+    );
+    const grid = element("div", undefined, "ins-ach-grid");
+    for (const item of cat.achievements || []) {
+      const card = element("article", undefined, "ins-ach");
+      card.dataset.earned = item.earned ? "true" : "false";
+      const threshold = Number(item.threshold) || 0;
+      const progress = Number(item.currentProgress) || 0;
+      card.append(
+        element("h4", item.name || item.key || "", "ins-ach-name"),
+        element("p", item.description || "", "ins-ach-desc"),
+      );
+      const meta = element("div", undefined, "ins-ach-meta");
+      meta.append(
+        element("span", item.rarity || "common"),
+        element(
+          "span",
+          item.earned
+            ? "Unlocked"
+            : threshold
+              ? `${Math.min(progress, threshold)} / ${threshold}`
+              : "—",
+        ),
+      );
+      card.append(meta);
+      if (!item.earned && threshold > 0) {
+        const bar = element("progress");
+        bar.max = threshold;
+        bar.value = Math.min(threshold, progress);
+        card.append(bar);
+      }
+      grid.append(card);
+    }
+    section.append(head, grid);
+    root.append(section);
+  }
+}
+
 async function renderReadingInsights() {
   try {
-    const [data, widgets] = await Promise.all([
+    const [data, widgets, achievements] = await Promise.all([
       loadReadingInsights(),
       api("insights/widgets").catch(() => ({ widgets: [] })),
+      api("insights/achievements").catch(() => ({
+        categories: [],
+        totalEarned: 0,
+        totalAvailable: 0,
+      })),
     ]);
     if (data) {
       renderHeatmap(data);
@@ -897,11 +968,13 @@ async function renderReadingInsights() {
       renderSessionTimeline(data);
     }
     renderWidgets(widgets);
+    renderAchievements(achievements);
   } catch {
     renderHeatmap({ heatmap: [], from: "", to: "" });
     renderSourceBars({ sourceDistribution: { slices: [], totalSeconds: 0 } });
     renderSessionTimeline({ sessionTimeline: [] });
     renderWidgets({ widgets: [] });
+    renderAchievements({ categories: [], totalEarned: 0, totalAvailable: 0 });
   }
 }
 

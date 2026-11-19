@@ -1688,6 +1688,37 @@
         }
       }
     },
+    "/insights/achievements": {
+      "get": {
+        "summary": "Achievement catalogue with live unlock evaluation",
+        "responses": {
+          "200": {
+            "description": "Achievement categories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "categories": {
+                      "type": "array"
+                    },
+                    "totalEarned": {
+                      "type": "integer"
+                    },
+                    "totalAvailable": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
     "/reading-prefs": {
       "get": {
         "summary": "Reading timezone and current-year goal",

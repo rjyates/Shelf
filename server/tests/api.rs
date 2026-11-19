@@ -3151,4 +3151,26 @@ async fn reading_sessions_idempotent_and_daily_rollup() {
     assert!(list.iter().any(|w| w["type"] == "reading-dna"));
     let goal = list.iter().find(|w| w["type"] == "reading-goal").unwrap();
     assert_eq!(goal["data"]["goalBooks"], 24);
+
+    let achievements = call(
+        &app,
+        "GET",
+        "/api/v1/insights/achievements",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(achievements["totalAvailable"].as_i64().unwrap(), 10);
+    assert!(achievements["totalEarned"].as_i64().unwrap() >= 1);
+    let cats = achievements["categories"].as_array().expect("categories");
+    assert!(cats.iter().any(|c| c["key"] == "reading"));
+    let reading = cats.iter().find(|c| c["key"] == "reading").unwrap();
+    let first = reading["achievements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["key"] == "first_session")
+        .unwrap();
+    assert_eq!(first["earned"], true);
 }
