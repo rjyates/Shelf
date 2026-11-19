@@ -1,9 +1,12 @@
 mod aax;
+mod achievements;
 mod align;
 mod audio_meta;
 mod audiobook;
 mod epub;
 mod epub_package;
+mod insights;
+mod library_health;
 mod library_org;
 mod media_overlay;
 mod metadata;
@@ -635,6 +638,10 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             "/api/v1/reading-prefs",
             get(reading_stats::get_prefs).put(reading_stats::put_prefs),
         )
+        .route("/api/v1/insights/reading", get(insights::reading_insights))
+        .route("/api/v1/insights/widgets", get(insights::reading_widgets))
+        .route("/api/v1/insights/achievements", get(achievements::list_achievements))
+        .route("/api/v1/insights/library", get(library_health::library_insights))
         .route(
             "/api/v1/books/{id}/bookmarks",
             get(reader_data::list_bookmarks).post(reader_data::create_bookmark),

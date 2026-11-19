@@ -3106,4 +3106,95 @@ async fn reading_sessions_idempotent_and_daily_rollup() {
     .1;
     assert_eq!(updated["timezone"], "America/Chicago");
     assert_eq!(updated["annualGoalBooks"], 24);
+
+    let insights = call(
+        &app,
+        "GET",
+        "/api/v1/insights/reading?from=2026-03-01&to=2026-03-31",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(insights["from"], "2026-03-01");
+    assert_eq!(insights["to"], "2026-03-31");
+    let heat = insights["heatmap"].as_array().expect("heatmap");
+    let day = heat
+        .iter()
+        .find(|row| row["day"] == "2026-03-15")
+        .expect("heatmap day");
+    assert_eq!(day["readingSeconds"], 900);
+    assert_eq!(day["sessionCount"], 1);
+    let slices = insights["sourceDistribution"]["slices"]
+        .as_array()
+        .expect("slices");
+    assert!(slices
+        .iter()
+        .any(|s| s["bucket"] == "web" && s["readingSeconds"] == 900));
+    let timeline = insights["sessionTimeline"].as_array().expect("timeline");
+    assert_eq!(timeline.len(), 1);
+    assert_eq!(timeline[0]["durationSeconds"], 900);
+    assert!(insights["streak"]["longestStreak"].as_i64().unwrap_or(0) >= 1);
+    assert_eq!(
+        insights["streak"]["lastSevenDays"]
+            .as_array()
+            .unwrap()
+            .len(),
+        7
+    );
+
+    let widgets = call(
+        &app,
+        "GET",
+        "/api/v1/insights/widgets",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    let list = widgets["widgets"].as_array().expect("widgets");
+    assert!(list.iter().any(|w| w["type"] == "reading-streak"));
+    assert!(list.iter().any(|w| w["type"] == "reading-goal"));
+    assert!(list.iter().any(|w| w["type"] == "monthly-challenge"));
+    assert!(list.iter().any(|w| w["type"] == "reading-dna"));
+    let goal = list.iter().find(|w| w["type"] == "reading-goal").unwrap();
+    assert_eq!(goal["data"]["goalBooks"], 24);
+
+    let achievements = call(
+        &app,
+        "GET",
+        "/api/v1/insights/achievements",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(achievements["totalAvailable"].as_i64().unwrap(), 10);
+    assert!(achievements["totalEarned"].as_i64().unwrap() >= 1);
+    let cats = achievements["categories"].as_array().expect("categories");
+    assert!(cats.iter().any(|c| c["key"] == "reading"));
+    let reading = cats.iter().find(|c| c["key"] == "reading").unwrap();
+    let first = reading["achievements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["key"] == "first_session")
+        .unwrap();
+    assert_eq!(first["earned"], true);
+
+    let library = call(
+        &app,
+        "GET",
+        "/api/v1/insights/library",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert!(library["formatDistribution"]["total"].as_i64().unwrap() >= 1);
+    let formats = library["formatDistribution"]["slices"].as_array().unwrap();
+    assert!(formats
+        .iter()
+        .any(|s| s["count"].as_i64().unwrap_or(0) >= 1));
+    assert!(library["metadataCompleteness"]["total"].as_i64().unwrap() >= 1);
 }

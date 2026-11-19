@@ -40,13 +40,13 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 | Annotations, highlights, searchable/exportable notes | Persisted on Shelf; BO + e-ink Readium UI; export/search still Planned |
 | Bookmarks | Persisted on Shelf; BO + e-ink Readium UI |
 | Reader preference sync across devices | Per-book + account defaults on Shelf; chrome pin stays local |
-| Kobo and KOReader integrations | Planned |
-| OPDS and Send-to-Kindle | Planned |
+| Kobo and KOReader integrations | Planned — fly path [`m12-stats-and-integrations.md`](research/m12-stats-and-integrations.md) (session `source` reserved) |
+| OPDS and Send-to-Kindle | Planned — fly path [`m12-stats-and-integrations.md`](research/m12-stats-and-integrations.md) |
 | Metadata providers and cover enrichment | **Usable (M11)** — Full BO provider set (OL/Google/iTunes/AudNexus/Goodreads/Amazon + Audible/Hardcover/ComicVine/Kobo/Libro.fm/RanobeDB off-by-default or key-gated; cover search iTunes/OL/DDG/AudiobookCovers) + field rules, auto-fetch queue, Sync/Refresh; multi-cover activate; web Manage search/apply; mobile autofill/search/sync. Fly path: [`docs/research/m11-library-scale.md`](research/m11-library-scale.md) |
 | Authors, series, smart scopes, collections | **Usable (M11)** — series/`series_index` (+ series entities); authors browse/entities; collections + smart scopes; folder roots/scan; catalogue pagination + filters; web + mobile Manage/library UI. Fly path: [`docs/research/m11-library-scale.md`](research/m11-library-scale.md) |
-| Session-based statistics, heatmaps, streaks, Reading DNA | Session capture **usable** (web + mobile POST sessions, daily rollups, progression history, lifecycle events, prefs/goals); heatmap/streak/DNA **graphs Planned**; overview average progress + catalogue `reading_status` remain |
-| Annual goals, monthly challenges, achievements | Planned |
-| Hardcover, Readwise, StoryGraph | Planned; external accounts remain unconfigured |
+| Session-based statistics, heatmaps, streaks, Reading DNA | Session capture **usable**; Insights charts **usable** — heatmap, source bars, session timeline, streak/goal/challenge/DNA widgets, library-health (format/language/storage/metadata) via `/api/v1/insights/*`; fly path [`m12-stats-and-integrations.md`](research/m12-stats-and-integrations.md); overview average progress + catalogue `reading_status` remain |
+| Annual goals, monthly challenges, achievements | **Usable (Insights)** — annual goal + monthly challenge widgets; achievements seed/evaluate + journal catalogue (`/api/v1/insights/achievements`); prefs/goal capture already shipped. Fly path [`m12-stats-and-integrations.md`](research/m12-stats-and-integrations.md) |
+| Hardcover, Readwise, StoryGraph | Planned; external accounts remain unconfigured — fly path [`m12-stats-and-integrations.md`](research/m12-stats-and-integrations.md) |
 | Multiple users, roles, OIDC/SSO | Planned (**M16**) — Jellyfin-like household/server: many accounts; admin controls for library visibility and whether users must request titles vs auto-approved (admins); OIDC/SSO as needed. Foundation today is one account |
 | Automated ingestion and book/comic requests (*arr / Prowlarr) | Planned (**M15**) — Seerr-shaped request/discovery UX inside Shelf for books and comics ([Seerr](https://github.com/seerr-team/seerr) as the functional reference); wire Prowlarr indexers + the rest of the *arr download-client stack rather than inventing a parallel indexer path |
 | Reading journal | Planned; approved design includes a journal panel |
@@ -80,7 +80,7 @@ Shelf's shared EPUB reader is Book Orbit's Foliate/Vue reader hosted under `web/
 
 11. **Library scale and organization + metadata enrichment** — folder scanning, editable metadata, authors/series/scopes/collections, storage/performance, providers, multi-cover, auto-fetch/sync (absorbs former M17). **Fly path:** [`docs/research/m11-library-scale.md`](research/m11-library-scale.md). **Shipped** on `feat/m11-library-scale`.
 
-12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph. Multi-user/OIDC lives in M16; *arr request UX in M15. **Inventory (BO + Storyteller capture map, pinned source links):** [`docs/research/m12-stats-inventory.md`](research/m12-stats-inventory.md).
+12. **Rich stats and external integrations** — session heatmaps, streaks, goals; Kobo/KOReader/OPDS; Hardcover/Readwise/StoryGraph. Multi-user/OIDC lives in M16; *arr request UX in M15. Capture **shipped**; Insights chart slices **1–4 usable** (reading charts, widgets, achievements, library health); injectors/OPDS/outbound sync still open — fly path [`docs/research/m12-stats-and-integrations.md`](research/m12-stats-and-integrations.md). Capture inventory: [`docs/research/m12-stats-inventory.md`](research/m12-stats-inventory.md).
 
 13. **Post-M8 drawing: generic tablet ink → golden OEM backends (G1 → G2)** — final drawing milestone. G1: portable mid-stroke path (Surface/Flutter) without OEM refresh APIs, same `EinkRefresh` contract. G2: deepen devices we can physically hack (Nomad already golden; e.g. Onyx `EpdController` only with hardware + smoke). Ledger: `docs/research/nomad-stylus.md`.
 

@@ -257,45 +257,141 @@
         </section>
         </div>
         <div id="insights-panel" class="insights" hidden>
-          <section class="panel ins-progress" aria-labelledby="ins-progress-title">
-            <div class="section-head">
-              <h2 id="ins-progress-title"><span>01 /</span> Reading progress</h2>
+          <header class="ins-mast">
+            <div class="ins-mast-copy">
+              <h1 id="insights-title">Reading insights</h1>
+              <p>Sessions, shelf health, and habits on one ledger.</p>
+            </div>
+            <div class="ins-range" role="group" aria-labelledby="ins-range-label">
+              <p id="ins-range-label" class="ins-range-label">Range</p>
+              <div class="ins-range-presets" role="radiogroup" aria-label="Preset ranges">
+                <button type="button" class="ins-chip" data-range-preset="7d" aria-pressed="false">7 days</button>
+                <button type="button" class="ins-chip" data-range-preset="30d" aria-pressed="false">30 days</button>
+                <button type="button" class="ins-chip" data-range-preset="90d" aria-pressed="false">90 days</button>
+                <button type="button" class="ins-chip" data-range-preset="26w" aria-pressed="true">26 weeks</button>
+                <button type="button" class="ins-chip" data-range-preset="1y" aria-pressed="false">1 year</button>
+                <button type="button" class="ins-chip" data-range-preset="all" aria-pressed="false">All time</button>
+                <button type="button" class="ins-chip" data-range-preset="custom" aria-pressed="false">Custom</button>
+              </div>
+              <div class="ins-range-custom" id="ins-range-custom" hidden>
+                <label class="ins-field">From
+                  <input id="ins-range-from" type="date" />
+                </label>
+                <label class="ins-field">To
+                  <input id="ins-range-to" type="date" />
+                </label>
+                <button type="button" class="ins-btn" id="ins-range-apply">Apply</button>
+              </div>
+              <p id="ins-range-status" class="ins-range-status" aria-live="polite"></p>
+            </div>
+          </header>
+
+          <section class="ins-band ins-pulse" aria-labelledby="ins-widgets-title">
+            <div class="ins-band-head">
+              <h2 id="ins-widgets-title">Pulse</h2>
+              <p class="ins-band-meta">Live reading rhythm</p>
+            </div>
+            <div id="ins-widget-grid" class="ins-pulse-rail"></div>
+          </section>
+
+          <section class="ins-band ins-season" aria-labelledby="ins-calendar-title">
+            <div class="ins-band-head">
+              <h2 id="ins-calendar-title">Reading activity</h2>
+              <p id="ins-heatmap-range" class="ins-band-meta"></p>
+            </div>
+            <div class="calendar-wrap">
+              <div class="calendar-days" aria-hidden="true"><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span></span></div>
+              <div class="calendar-graph">
+                <div id="ins-month-labels" class="calendar-months" aria-hidden="true"></div>
+                <div id="reading-calendar" class="calendar" role="grid" aria-label="Reading heatmap: no reading sessions recorded yet"></div>
+              </div>
+            </div>
+            <div class="calendar-foot">
+              <p class="fine">Each square is a day. Drag across days to set the range. Brighter means more minutes.</p>
+              <p id="ins-streak" class="ins-streak" hidden></p>
+              <p class="calendar-legend" aria-hidden="true">Less <i></i><i></i><i></i><i></i> More</p>
+            </div>
+            <div id="ins-day-tip" class="ins-tip" hidden role="tooltip"></div>
+          </section>
+
+          <section class="ins-band ins-sources" aria-labelledby="ins-sources-title">
+            <div class="ins-band-head">
+              <h2 id="ins-sources-title">Where you read</h2>
+              <p class="ins-band-meta">Share of minutes in range</p>
+            </div>
+            <div id="ins-source-stack" class="ins-stack" role="img" aria-label="Time by source"></div>
+            <div id="ins-source-bars" class="ins-source-legend" role="list"></div>
+            <p id="ins-source-empty" class="fine ins-empty" hidden>No sessions in this range yet.</p>
+          </section>
+
+          <section class="ins-band ins-timeline" aria-labelledby="ins-timeline-title">
+            <div class="ins-band-head">
+              <h2 id="ins-timeline-title">Session spine</h2>
+              <p class="ins-band-meta">Duration along the day</p>
+            </div>
+            <ol id="ins-session-timeline" class="ins-spine"></ol>
+            <p id="ins-timeline-empty" class="fine ins-empty" hidden>Sessions appear here after you read or listen.</p>
+          </section>
+
+          <section class="ins-band ins-shelf-stats" aria-labelledby="ins-totals-title">
+            <div class="ins-band-head">
+              <h2 id="ins-totals-title">Shelf figures</h2>
+            </div>
+            <dl class="ins-figures">
+              <div><dt>Books on your shelf</dt><dd id="ins-books">0</dd></div>
+              <div><dt>Books finished</dt><dd id="ins-finished">0</dd></div>
+              <div><dt>Currently reading</dt><dd id="ins-reading">0</dd></div>
+              <div><dt>Average progress</dt><dd id="ins-progress">0%</dd></div>
+            </dl>
+          </section>
+
+          <section class="ins-band ins-progress" aria-labelledby="ins-progress-title">
+            <div class="ins-band-head">
+              <h2 id="ins-progress-title">In progress</h2>
             </div>
             <div id="progress-list"></div>
           </section>
-          <section class="panel ins-totals" aria-labelledby="ins-totals-title">
-            <div class="section-head">
-              <h2 id="ins-totals-title"><span>02 /</span> To date</h2>
-            </div>
-            <dl class="totals">
-              <div><dt>Books on your shelf</dt><dd id="ins-books">0</dd></div>
-              <div><dt>Books finished</dt><dd id="ins-finished">0</dd></div>
-              <div class="minor"><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#bookmark" /></svg><dt>Currently reading</dt><dd id="ins-reading">0</dd></div>
-              <div class="minor"><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#pages" /></svg><dt>Average progress</dt><dd id="ins-progress">0%</dd></div>
-            </dl>
-          </section>
-          <section class="panel ins-authors" aria-labelledby="ins-authors-title">
-            <div class="section-head">
-              <h2 id="ins-authors-title"><span>03 /</span> Authors on your shelf</h2>
+
+          <section class="ins-band ins-authors" aria-labelledby="ins-authors-title">
+            <div class="ins-band-head">
+              <h2 id="ins-authors-title">Authors</h2>
             </div>
             <div id="author-breakdown" class="breakdown"></div>
           </section>
-          <section class="panel ins-calendar" aria-labelledby="ins-calendar-title">
-            <div class="section-head">
-              <h2 id="ins-calendar-title"><span>04 /</span> Reading calendar</h2>
+
+          <section class="ins-band ins-achievements" aria-labelledby="ins-achievements-title">
+            <div class="ins-band-head">
+              <h2 id="ins-achievements-title">Achievements</h2>
+              <p id="ins-achievements-summary" class="ins-band-meta"></p>
             </div>
-            <div class="calendar-wrap">
-              <div class="calendar-days" aria-hidden="true"><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span></div>
-              <div id="reading-calendar" class="calendar" role="img" aria-label="Reading calendar: no reading sessions recorded yet"></div>
+            <div id="ins-achievements" class="ins-achievements-list"></div>
+            <p id="ins-achievements-empty" class="fine ins-empty" hidden>Achievements unlock as you read, finish, and grow the shelf.</p>
+          </section>
+
+          <section class="ins-band ins-library" aria-labelledby="ins-library-title">
+            <div class="ins-band-head">
+              <h2 id="ins-library-title">Library health</h2>
+              <p id="ins-library-meta" class="ins-band-meta"></p>
             </div>
-            <div class="calendar-foot">
-              <p class="fine">
-                Daily reading fills this calendar once Shelf records reading
-                sessions. Progress above uses page counts for manual books and
-                EPUB percentage for imports.
-              </p>
-              <p class="calendar-legend" aria-hidden="true">Less <i></i><i></i><i></i><i></i> More</p>
+            <div class="ins-library-grid">
+              <div class="ins-library-col">
+                <h3 class="ins-library-kicker">Formats</h3>
+                <div id="ins-format-bars" class="ins-bars" role="list"></div>
+              </div>
+              <div class="ins-library-col">
+                <h3 class="ins-library-kicker">Languages</h3>
+                <div id="ins-language-bars" class="ins-lang-cloud" role="list"></div>
+              </div>
+              <div class="ins-library-col">
+                <h3 class="ins-library-kicker">Storage</h3>
+                <div id="ins-storage-bars" class="ins-storage-tiles" role="list"></div>
+              </div>
+              <div class="ins-library-col">
+                <h3 class="ins-library-kicker">Metadata</h3>
+                <div id="ins-meta-bars" class="ins-meta-sheet" role="list"></div>
+              </div>
             </div>
+            <p id="ins-library-empty" class="fine ins-empty" hidden>Import books to see format, language, and metadata health.</p>
           </section>
         </div>
         <section id="settings-panel" class="settings" hidden>

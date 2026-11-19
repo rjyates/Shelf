@@ -1,6 +1,6 @@
 # M12 research: reading stats inventory (Book Orbit + Storyteller)
 
-**Status:** capture **shipped** (sessions, daily rollups, progression history, lifecycle events, prefs/goals); charts / heatmap / streak UI still Planned.
+**Status:** capture **shipped** (sessions, daily rollups, progression history, lifecycle events, prefs/goals); charts / integrations **todo** on `feat/m12-stats-and-integrations` — ordered slices + BO/ST leverage: [`m12-stats-and-integrations.md`](m12-stats-and-integrations.md).
 **Roadmap home:** Implementation milestone **12** (Rich stats and external integrations) in [`docs/parity.md`](../parity.md). Milestone **11** remains library scale/organization.
 **Pins:**
 
@@ -9,7 +9,7 @@
 | Book Orbit | [`c77966cc`](https://github.com/bookorbit/bookorbit/commit/c77966cc529423e993fae8a298aa77048b43bba2) (`main` as of 2026-11-17) |
 | Storyteller | [`2de166da`](https://gitlab.com/storyteller-platform/storyteller/-/commit/2de166daa9eb5b2b120fd639434f856c19cad823) (same pin as align parity) |
 
-Shelf stores Book Orbit–shaped reading sessions (web Foliate + Flutter) plus daily rollups and lifecycle events. Catalogue totals (`GET /api/v1/stats`) remain; heatmaps/streaks/charts are still Planned. See [Shelf baseline](#shelf-baseline-today).
+Shelf stores Book Orbit–shaped reading sessions (web Foliate + Flutter) plus daily rollups and lifecycle events. Catalogue totals (`GET /api/v1/stats`) remain; heatmaps/streaks/charts/integrations are the active M12 fly path ([`m12-stats-and-integrations.md`](m12-stats-and-integrations.md)). See [Shelf baseline](#shelf-baseline-today).
 
 ---
 
@@ -203,9 +203,9 @@ Legacy `position` table + `/api/v2/books/…/positions` still exist for older cl
 | `progression_history` | throttled ≤1 / 5 min on location/playback save | **Capture shipped** |
 | `reading_events` | opened / finished / unfinished / rereading / progress milestones | **Capture shipped** |
 | `user_reading_defaults` + `reading_goals` | timezone + annual goal books | **Capture shipped** |
-| Heatmap / streak / DNA / chart UI | Insights empty until aggregation slice | Planned |
+| Heatmap / streak / DNA / chart UI | Insights empty until aggregation slice | Planned — [fly path](m12-stats-and-integrations.md) |
 
-Parity: session capture usable; graphs Planned ([parity.md](../parity.md)).
+Parity: session capture usable; graphs Planned ([parity.md](../parity.md)). Remaining work: [m12-stats-and-integrations.md](m12-stats-and-integrations.md).
 
 ---
 
@@ -218,18 +218,15 @@ Parity: session capture usable; graphs Planned ([parity.md](../parity.md)).
 3. **Progression history + lifecycle events** — location/playback throttle; mark-finished/unfinished/rereading + milestones.
 4. **Prefs/goals** — `GET/PUT /reading-prefs` (timezone + annual goal).
 
-**Still Planned (charts / presentation):**
+**Still Planned — current milestone todo** (ordered slices, Book Orbit leverage cites, Storyteller N/A except progression already used):
 
-1. Heatmap, streak widget, source distribution, session timeline UI
-2. Goals / challenges / DNA / achievements evaluators + chrome
-3. Library-health charts (mostly M11/M17 metadata)
-4. KOReader / Kobo session injectors (`source` values reserved)
+See **[`m12-stats-and-integrations.md`](m12-stats-and-integrations.md)** — charts/Insights → streak/goal/DNA/achievements → library-health → KOReader/Kobo injectors → OPDS → Send-to-Kindle → Hardcover/Readwise/StoryGraph. Implement in Rust against Shelf capture tables; do not port Nest.
 
 ---
 
 ## 5. Explicit non-goals of this note
 
-- No heatmap / streak / DNA chart UI in the capture foundation (charts stay later M12).
+- No heatmap / streak / DNA chart UI in the capture foundation (charts stay later M12 — tracked in the fly path above).
 - No milestone reorder (M11 stays library scale).
 - No claim of pin-for-pin BO chart parity until aggregation + presentation land on this data.
 

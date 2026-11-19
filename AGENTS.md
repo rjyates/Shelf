@@ -7,6 +7,7 @@ Shelf is a Rust server with an embedded web frontend and a shared Flutter/Dart A
 - Use feature branches and Conventional Commit subjects and PR titles: `type(scope): description`.
 - Prefer small complete changes, existing components, and meaningful tests. Use the ponytail skill for coding and Picasso for UI work when available.
 - Follow `.picasso.md` and `docs/design/v3.md`. Version 3 is approved; preserve its palette and layout direction.
+- Project skills live under `.agents/skills/` (locked by `skills-lock.json`). Hermes/Claude/Cursor entrypoints are relative symlinks under `.hermes/skills/`, `.claude/skills/`, and `.cursor/skills/`. Restore with `npx skills experimental_install`. Hallmark (`hallmark`) is installed for anti-slop design builds/redesigns/audits; journal Insights and product chrome still follow Picasso + v3 — do not replace the locked Shelf direction with a Hallmark theme deal unless the user asks.
 - Book Orbit is the functional reference, not an assertion of implemented parity. Update `docs/parity.md` whenever a capability becomes usable.
 - Keep private paths, books, credentials, generated signing keys, local databases, and SDK/build caches out of Git.
 - Do not provision paid services or buy accounts. Store signing and store publishing remain deferred.
@@ -15,6 +16,7 @@ Shelf is a Rust server with an embedded web frontend and a shared Flutter/Dart A
 
 - Server: `npm ci --prefix web/orbit-reader`, `npm run build --prefix web/orbit-reader`, then `cargo fmt --manifest-path server/Cargo.toml --check`, `cargo clippy --manifest-path server/Cargo.toml --locked --all-targets -- -D warnings`, `cargo test --manifest-path server/Cargo.toml --locked`.
 - Mobile, from `mobile/`: `flutter pub get --enforce-lockfile`, `dart format --output=none --set-exit-if-changed lib test`, `flutter analyze --fatal-infos`, `flutter test`.
+- M12 remaining stats/integrations (charts, injectors, OPDS, Kindle email, Hardcover/Readwise/StoryGraph): `docs/research/m12-stats-and-integrations.md` (capture inventory: `docs/research/m12-stats-inventory.md`).
 - Mobile reader future enrichment (Kindle-shaped wishlist): `docs/research/mobile-reader-future.md`.
 - Physical e-ink Android (Nomad) against a local server: follow `.cursor/skills/shelf-eink-android/SKILL.md` (`adb reverse`, debug cleartext, device login helper). Do not invent a parallel sideload path. Live ink lessons and do-not-retread: `docs/research/nomad-stylus.md`.
 - CI policy: `python3 -m unittest discover -s tests -v`. The Book Orbit reader host is `web/orbit-reader/` (AGPL attribution in tree; do not restyle it to the journal theme while aligning behavior).

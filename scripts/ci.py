@@ -23,6 +23,7 @@ def affected(paths):
         if path in {
             "tests/web.test.mjs",
             "tests/reader.test.mjs",
+            "tests/insights.test.mjs",
             "scripts/smoke.py",
             "scripts/compose_smoke.py",
             "scripts/four_lamps_combine_gate.py",

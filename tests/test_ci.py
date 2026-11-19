@@ -34,7 +34,16 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(any(ci.affected(["docs/architecture.md", "README.md"]).values()))
 
     def test_web_tests_do_not_rebuild_mobile(self):
-        self.assertFalse(ci.affected(["tests/web.test.mjs", "scripts/smoke.py", "scripts/compose_smoke.py"])["mobile"])
+        self.assertFalse(
+            ci.affected(
+                [
+                    "tests/web.test.mjs",
+                    "tests/insights.test.mjs",
+                    "scripts/smoke.py",
+                    "scripts/compose_smoke.py",
+                ]
+            )["mobile"]
+        )
 
     def test_independent_versions_and_internal_patch(self):
         self.assertEqual(ci.bump("server-v1.2.3", ["feat(server): add uploads"]), "1.3.0")

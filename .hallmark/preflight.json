@@ -1,0 +1,12 @@
+{
+  "scanned": "2026-11-19",
+  "findings": {
+    "fonts": "Instrument Serif + IBM Plex everywhere after comment pass (Prata/Manrope removed)",
+    "palette": "v3 journal tokens on shell and Insights (--ins-* maps to --ink/--text/--brass/--moss)",
+    "motion": "CSS only; state transitions",
+    "spacing": "app 18px grid; Insights keeps Hallmark density/layout",
+    "framework": "vanilla HTML/CSS/JS embedded via axum include_str"
+  },
+  "preserve": ["Shelf shell/nav", "API contracts", "insights element ids", "reading/widgets/achievements/library payloads", "v3 palette/fonts"],
+  "introduce": ["Hallmark Insights layout/structure", "global from/to range", "distinct chart forms", "brushable GitHub-style heatmap", "Custom range chip"]
+}
