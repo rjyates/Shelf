@@ -1747,26 +1747,49 @@ body:not([data-view="overview"]) .celestial {
   width: min(44%, 540px);
   opacity: 0.55;
 }
-/* Insights masthead: v3-scale celestial wash (Hallmark big-or-not + Picasso quiet arcs). */
+/* Insights: v3 poster wash — bleed to main top/right; bottom tucked under cards. */
+body[data-view="insights"] #main {
+  position: relative;
+  overflow-x: clip;
+}
 body[data-view="insights"] .masthead {
-  min-height: clamp(240px, 30vh, 340px);
-  overflow: hidden;
+  min-height: clamp(200px, 24vh, 280px);
+  overflow: visible;
+  margin-bottom: -28px;
+  padding-bottom: 56px;
 }
 body[data-view="insights"] .masthead .celestial {
-  top: 0;
-  right: -8%;
-  bottom: 0;
+  top: -36px;
+  right: calc(-1 * clamp(20px, 3vw, 56px));
+  bottom: auto;
   left: auto;
-  width: min(88%, 1080px);
-  height: 100%;
+  width: min(78%, 1100px);
+  height: clamp(380px, 58vh, 620px);
   min-width: 0;
   max-width: none;
   transform: none;
   object-fit: cover;
-  object-position: 70% center;
-  opacity: 0.88;
-  mask-image: linear-gradient(to right, transparent 0%, #fff 30%);
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, #fff 30%);
+  object-position: 68% 22%;
+  opacity: 0.94;
+  z-index: 0;
+  /* Soft left + bottom so the PNG frame never reads as a stamp. */
+  mask-image:
+    linear-gradient(to right, transparent 0%, #fff 26%),
+    linear-gradient(to bottom, #fff 42%, transparent 92%);
+  mask-composite: intersect;
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0%, #fff 26%),
+    linear-gradient(to bottom, #fff 42%, transparent 92%);
+  -webkit-mask-composite: source-in;
+}
+body[data-view="insights"] #content,
+body[data-view="insights"] .room {
+  position: relative;
+  z-index: 2;
+}
+body[data-view="insights"] .insights > .ins-mast {
+  background: var(--ins-paper);
+  backdrop-filter: none;
 }
 .masthead > .masthead-actions {
   flex-direction: row;

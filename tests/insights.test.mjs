@@ -29,14 +29,18 @@ test("Insights styles stay on Shelf v3 tokens with weekdot labels and celestial 
   assert.match(css, /--ins-body:\s*var\(--body\)/);
   assert.match(css, /\.ins-weekdot-day\s*\{/);
   assert.match(css, /\.calendar-months\s*\{/);
-  assert.match(css, /body\[data-view="insights"\]\s*\.masthead\s*\{[\s\S]*?min-height:\s*clamp\(/);
+  assert.match(css, /body\[data-view="insights"\]\s*\.masthead\s*\{[\s\S]*?overflow:\s*visible/);
   assert.match(
     css,
-    /body\[data-view="insights"\]\s*\.masthead\s*\.celestial\s*\{[\s\S]*?object-fit:\s*cover[\s\S]*?opacity:\s*0\.88/,
+    /body\[data-view="insights"\]\s*\.masthead\s*\.celestial\s*\{[\s\S]*?object-fit:\s*cover[\s\S]*?opacity:\s*0\.94/,
   );
   assert.match(
     css,
-    /body\[data-view="insights"\]\s*\.masthead\s*\.celestial\s*\{[\s\S]*?width:\s*min\(88%,\s*1080px\)/,
+    /body\[data-view="insights"\]\s*\.masthead\s*\.celestial\s*\{[\s\S]*?height:\s*clamp\(380px/,
+  );
+  assert.match(
+    css,
+    /body\[data-view="insights"\]\s*#content[\s\S]*?z-index:\s*2/,
   );
   assert.doesNotMatch(css, /--ins-display:\s*"Prata"/);
 });
