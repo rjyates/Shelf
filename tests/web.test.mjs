@@ -68,14 +68,19 @@ test("shell nav uses a drawer chrome and reserves scrollbar gutter", () => {
   assert.match(html, /id="nav-toggle"/);
   assert.match(html, /id="sidebar-panel"/);
   assert.match(html, /id="nav-backdrop"/);
+  assert.match(html, /class="auth-brand"/);
   assert.match(css, /scrollbar-gutter:\s*stable/);
   assert.match(css, /@media\s*\(max-width:\s*650px\)\s*\{[\s\S]*?\.nav-toggle\s*\{/);
   assert.match(css, /body\.nav-open\s*\.sidebar-panel/);
+  assert.match(css, /body\.auth-open \.sidebar/);
+  assert.match(css, /body\.auth-open \.masthead/);
   assert.doesNotMatch(
     css,
     /@media\s*\(max-width:\s*650px\)\s*\{[\s\S]*?\.sidebar\s+#signout\s*\{[\s\S]*?position:\s*absolute/,
   );
   assert.match(js, /function setNavOpen\(/);
+  assert.match(js, /classList\.add\("auth-open"\)/);
+  assert.match(js, /classList\.remove\("auth-open"\)/);
 });
 
 test("nav toggle opens and closes the mobile drawer", async () => {

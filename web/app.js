@@ -1640,6 +1640,8 @@ function showAuth(setup) {
   lastView = null;
   setupRequired = setup;
   signedIn = false;
+  setNavOpen(false);
+  document.body.classList.add("auth-open");
   $("auth").hidden = false;
   $("content").hidden = true;
   $("open-add").hidden = true;
@@ -1677,6 +1679,7 @@ async function refresh() {
   hasMoreBooks = catalogue.length === BOOK_LIMIT;
   libraryResults = null;
   signedIn = true;
+  document.body.classList.remove("auth-open");
   $("auth").hidden = true;
   $("content").hidden = false;
   $("open-add").hidden = false;

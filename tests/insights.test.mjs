@@ -25,8 +25,18 @@ test("Insights markup gates custom range and uses a GitHub-style heatmap shell",
 
 test("Insights styles stay on Shelf v3 tokens with weekdot labels and shared celestial wash", () => {
   assert.match(css, /--ins-paper:\s*var\(--ink\)/);
+  assert.match(css, /--ins-paper-3:\s*var\(--surface\)/);
   assert.match(css, /--ins-display:\s*var\(--display\)/);
   assert.match(css, /--ins-body:\s*var\(--body\)/);
+  // Comment 9: sticky range mast reads as a surface card like bands below.
+  assert.match(
+    css,
+    /\.insights \.ins-mast\s*\{[\s\S]*?background:\s*var\(--ins-paper-3\)/,
+  );
+  assert.match(
+    css,
+    /\.insights \.ins-mast\s*\{[\s\S]*?border-radius:\s*var\(--ins-radius\)/,
+  );
   assert.match(css, /\.ins-weekdot-day\s*\{/);
   assert.match(css, /\.calendar-months\s*\{/);
   // One wash for every view — no per-view shrink / Insights-only fork.
