@@ -23,25 +23,23 @@ test("Insights markup gates custom range and uses a GitHub-style heatmap shell",
   assert.doesNotMatch(html, /fonts\.googleapis\.com|family=Prata|family=Manrope/);
 });
 
-test("Insights styles stay on Shelf v3 tokens with weekdot labels and celestial fill", () => {
+test("Insights styles stay on Shelf v3 tokens with weekdot labels and shared celestial wash", () => {
   assert.match(css, /--ins-paper:\s*var\(--ink\)/);
   assert.match(css, /--ins-display:\s*var\(--display\)/);
   assert.match(css, /--ins-body:\s*var\(--body\)/);
   assert.match(css, /\.ins-weekdot-day\s*\{/);
   assert.match(css, /\.calendar-months\s*\{/);
-  assert.match(css, /body\[data-view="insights"\]\s*\.masthead\s*\{[\s\S]*?overflow:\s*visible/);
+  // One wash for every view — no per-view shrink / Insights-only fork.
+  assert.doesNotMatch(css, /body:not\(\[data-view="overview"\]\)\s*\.celestial/);
+  assert.doesNotMatch(css, /body\[data-view="insights"\]\s*\.masthead\s*\.celestial/);
+  assert.match(css, /\.masthead\s*\{[\s\S]*?overflow:\s*visible/);
   assert.match(
     css,
-    /body\[data-view="insights"\]\s*\.masthead\s*\.celestial\s*\{[\s\S]*?object-fit:\s*cover[\s\S]*?opacity:\s*0\.94/,
+    /\.celestial\s*\{[\s\S]*?object-fit:\s*cover[\s\S]*?opacity:\s*0\.94/,
   );
-  assert.match(
-    css,
-    /body\[data-view="insights"\]\s*\.masthead\s*\.celestial\s*\{[\s\S]*?height:\s*clamp\(380px/,
-  );
-  assert.match(
-    css,
-    /body\[data-view="insights"\]\s*#content[\s\S]*?z-index:\s*2/,
-  );
+  assert.match(css, /\.celestial\s*\{[\s\S]*?height:\s*clamp\(260px/);
+  assert.match(css, /#content[\s\S]*?z-index:\s*2/);
+  assert.match(css, /@media\s*\(max-width:\s*650px\)\s*\{[\s\S]*?\.celestial\s*\{[\s\S]*?height:\s*clamp\(200px/);
   assert.doesNotMatch(css, /--ins-display:\s*"Prata"/);
 });
 

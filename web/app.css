@@ -193,9 +193,9 @@ main {
 }
 .masthead {
   position: relative;
-  min-height: 220px;
+  min-height: clamp(180px, 22vh, 260px);
   padding: 10px 220px 36px 0;
-  overflow: hidden;
+  overflow: visible;
 }
 .masthead > *:not(.celestial):not(.masthead-actions):not(.almanac) {
   position: relative;
@@ -206,15 +206,27 @@ main {
   position: absolute;
   pointer-events: none;
 }
+/* Shared v3 celestial wash — one treatment every view; fluid via clamp + later MQ. */
 .celestial {
-  top: 50%;
-  right: -8%;
-  width: min(84%, 1080px);
-  height: auto;
-  transform: translateY(-50%);
-  object-fit: contain;
-  object-position: right center;
-  mask-image: linear-gradient(to right, transparent, #fff 24%);
+  top: clamp(-48px, -4vh, -24px);
+  right: calc(-1 * clamp(12px, 3vw, 56px));
+  bottom: auto;
+  left: auto;
+  width: min(78%, 1100px);
+  height: clamp(260px, 48vh, 620px);
+  transform: none;
+  object-fit: cover;
+  object-position: 68% 22%;
+  opacity: 0.94;
+  z-index: 0;
+  mask-image:
+    linear-gradient(to right, transparent 0%, #fff 26%),
+    linear-gradient(to bottom, #fff 42%, transparent 92%);
+  mask-composite: intersect;
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0%, #fff 26%),
+    linear-gradient(to bottom, #fff 42%, transparent 92%);
+  -webkit-mask-composite: source-in;
 }
 .subtitle {
   font: italic 24px/1.3 var(--display);
@@ -1213,15 +1225,20 @@ dialog p {
     min-height: 0;
   }
   .masthead {
-    min-height: 185px;
+    min-height: clamp(160px, 20vh, 220px);
+    padding-bottom: 40px;
+    margin-bottom: -20px;
   }
   .subtitle {
     font-size: 21px;
   }
   .celestial {
-    width: min(92%, 520px);
-    right: -18%;
-    opacity: 0.62;
+    top: clamp(-32px, -3vh, -16px);
+    right: calc(-1 * clamp(8px, 5vw, 28px));
+    width: min(100%, 640px);
+    height: clamp(200px, 38vh, 360px);
+    object-position: 75% 15%;
+    opacity: 0.9;
   }
   .trail {
     display: none;
@@ -1729,42 +1746,27 @@ nav a {
   margin-top: 14px;
 }
 
-/* Masthead */
+/* Masthead — shared v3 celestial wash on every view (fluid; MQ below wins). */
+#main {
+  position: relative;
+  overflow-x: clip;
+}
 .masthead {
-  min-height: 0;
-  padding: 6px 0 30px;
-  margin-bottom: 4px;
+  min-height: clamp(180px, 22vh, 260px);
+  padding: 6px 0 56px;
+  margin-bottom: -28px;
+  overflow: visible;
 }
 .masthead h1 {
   margin-bottom: 6px;
 }
 .celestial {
-  right: 4%;
-  width: min(62%, 760px);
-  opacity: 0.9;
-}
-body:not([data-view="overview"]) .celestial {
-  width: min(44%, 540px);
-  opacity: 0.55;
-}
-/* Insights: v3 poster wash — bleed to main top/right; bottom tucked under cards. */
-body[data-view="insights"] #main {
-  position: relative;
-  overflow-x: clip;
-}
-body[data-view="insights"] .masthead {
-  min-height: clamp(200px, 24vh, 280px);
-  overflow: visible;
-  margin-bottom: -28px;
-  padding-bottom: 56px;
-}
-body[data-view="insights"] .masthead .celestial {
-  top: -36px;
-  right: calc(-1 * clamp(20px, 3vw, 56px));
+  top: clamp(-48px, -4vh, -24px);
+  right: calc(-1 * clamp(12px, 3vw, 56px));
   bottom: auto;
   left: auto;
   width: min(78%, 1100px);
-  height: clamp(380px, 58vh, 620px);
+  height: clamp(260px, 48vh, 620px);
   min-width: 0;
   max-width: none;
   transform: none;
@@ -1772,7 +1774,6 @@ body[data-view="insights"] .masthead .celestial {
   object-position: 68% 22%;
   opacity: 0.94;
   z-index: 0;
-  /* Soft left + bottom so the PNG frame never reads as a stamp. */
   mask-image:
     linear-gradient(to right, transparent 0%, #fff 26%),
     linear-gradient(to bottom, #fff 42%, transparent 92%);
@@ -1782,14 +1783,36 @@ body[data-view="insights"] .masthead .celestial {
     linear-gradient(to bottom, #fff 42%, transparent 92%);
   -webkit-mask-composite: source-in;
 }
-body[data-view="insights"] #content,
-body[data-view="insights"] .room {
+#content,
+.room {
   position: relative;
   z-index: 2;
 }
 body[data-view="insights"] .insights > .ins-mast {
   background: var(--ins-paper);
   backdrop-filter: none;
+}
+@media (max-width: 1000px) {
+  .celestial {
+    width: min(88%, 900px);
+    height: clamp(240px, 44vh, 480px);
+    object-position: 70% 20%;
+  }
+}
+@media (max-width: 650px) {
+  .masthead {
+    min-height: clamp(160px, 20vh, 220px);
+    padding-bottom: 40px;
+    margin-bottom: -20px;
+  }
+  .celestial {
+    top: clamp(-32px, -3vh, -16px);
+    right: calc(-1 * clamp(8px, 5vw, 28px));
+    width: min(100%, 640px);
+    height: clamp(200px, 38vh, 360px);
+    object-position: 75% 15%;
+    opacity: 0.9;
+  }
 }
 .masthead > .masthead-actions {
   flex-direction: row;
