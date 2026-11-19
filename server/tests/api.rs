@@ -3128,12 +3128,20 @@ async fn reading_sessions_idempotent_and_daily_rollup() {
     let slices = insights["sourceDistribution"]["slices"]
         .as_array()
         .expect("slices");
-    assert!(slices.iter().any(|s| s["bucket"] == "web" && s["readingSeconds"] == 900));
+    assert!(slices
+        .iter()
+        .any(|s| s["bucket"] == "web" && s["readingSeconds"] == 900));
     let timeline = insights["sessionTimeline"].as_array().expect("timeline");
     assert_eq!(timeline.len(), 1);
     assert_eq!(timeline[0]["durationSeconds"], 900);
     assert!(insights["streak"]["longestStreak"].as_i64().unwrap_or(0) >= 1);
-    assert_eq!(insights["streak"]["lastSevenDays"].as_array().unwrap().len(), 7);
+    assert_eq!(
+        insights["streak"]["lastSevenDays"]
+            .as_array()
+            .unwrap()
+            .len(),
+        7
+    );
 
     let widgets = call(
         &app,
@@ -3173,4 +3181,20 @@ async fn reading_sessions_idempotent_and_daily_rollup() {
         .find(|a| a["key"] == "first_session")
         .unwrap();
     assert_eq!(first["earned"], true);
+
+    let library = call(
+        &app,
+        "GET",
+        "/api/v1/insights/library",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert!(library["formatDistribution"]["total"].as_i64().unwrap() >= 1);
+    let formats = library["formatDistribution"]["slices"].as_array().unwrap();
+    assert!(formats
+        .iter()
+        .any(|s| s["count"].as_i64().unwrap_or(0) >= 1));
+    assert!(library["metadataCompleteness"]["total"].as_i64().unwrap() >= 1);
 }

@@ -16,7 +16,7 @@ pub(super) struct InsightsRangeQuery {
 fn default_range(from: Option<String>, to: Option<String>) -> (String, String) {
     let to = to
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| chrono_today_utc());
+        .unwrap_or_else(chrono_today_utc);
     let from = from.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| {
         // ~26 weeks of heatmap columns (GitHub-style).
         add_days(&to, -(7 * 26 - 1)).unwrap_or_else(|| "1970-01-01".into())
@@ -232,8 +232,7 @@ pub(super) async fn reading_insights(
         .db(move |db| {
             let user = authenticate(db, &headers)?;
             let (from, to) = default_range(q.from, q.to);
-            let (heatmap, source_distribution, read_days) =
-                aggregate_daily(db, user, &from, &to)?;
+            let (heatmap, source_distribution, read_days) = aggregate_daily(db, user, &from, &to)?;
             // Streak uses all-time read days so a short heatmap window cannot truncate it.
             let mut all_days = BTreeSet::new();
             {
@@ -312,9 +311,7 @@ fn reading_dna(db: &Connection, user: i64) -> ApiResult<Value> {
          LIMIT 200",
     )?;
     let rows: Vec<(i64, String, String)> = stmt
-        .query_map(params![user], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })?
+        .query_map(params![user], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<Result<Vec<_>, _>>()?;
     let books_analyzed = rows.len() as i64;
     if books_analyzed == 0 {
@@ -413,7 +410,7 @@ fn weekday_monday0(day: &str) -> i32 {
     // Actually civil z here matches days since 0000-03-01; epoch_to_date uses same.
     // Use difference from 1970-01-05 (Monday, unix day 4).
     let unix_days = z; // our epoch_to_date_key uses z*86400 with z = days since epoch after +719468 dance
-    // Recompute unix days: from epoch_to_date inverse we already have z as days since Unix epoch when z was computed as era*... -719468.
+                       // Recompute unix days: from epoch_to_date inverse we already have z as days since Unix epoch when z was computed as era*... -719468.
     ((unix_days + 3).rem_euclid(7)) as i32
 }
 

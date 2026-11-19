@@ -885,6 +885,107 @@ function renderWidgets(payload) {
   }
 }
 
+function formatBytes(bytes) {
+  const n = Math.max(0, Number(bytes) || 0);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function renderCountBars(boxId, slices, valueKey, formatValue) {
+  const box = $(boxId);
+  if (!box) return 0;
+  box.replaceChildren();
+  const rows = [...(slices || [])].sort(
+    (a, b) => (Number(b[valueKey]) || 0) - (Number(a[valueKey]) || 0),
+  );
+  const total = rows.reduce((n, s) => n + (Number(s[valueKey]) || 0), 0);
+  for (const slice of rows) {
+    const value = Number(slice[valueKey]) || 0;
+    if (value <= 0) continue;
+    const share = total ? value / total : 0;
+    const row = element("div", undefined, "ins-bar-row");
+    row.setAttribute("role", "listitem");
+    const bar = element("progress");
+    bar.max = 1;
+    bar.value = share;
+    const label = slice.key || slice.bucket || "—";
+    const shown = formatValue ? formatValue(value) : String(value);
+    bar.setAttribute(
+      "aria-label",
+      `${label}: ${shown} (${Math.round(share * 100)}%)`,
+    );
+    row.append(
+      element("span", label, "ins-bar-label"),
+      bar,
+      element("span", shown, "fine"),
+    );
+    box.append(row);
+  }
+  return rows.length;
+}
+
+function renderLibraryHealth(payload) {
+  const empty = $("ins-library-empty");
+  const meta = $("ins-library-meta");
+  const total = Number(payload?.metadataCompleteness?.total) || 0;
+  if (meta) {
+    meta.textContent = total ? `${total} shelf books` : "";
+  }
+  const formats = renderCountBars(
+    "ins-format-bars",
+    payload?.formatDistribution?.slices,
+    "count",
+  );
+  const languages = renderCountBars(
+    "ins-language-bars",
+    payload?.languageDistribution?.slices,
+    "count",
+  );
+  const storage = renderCountBars(
+    "ins-storage-bars",
+    payload?.storageByFormat?.slices,
+    "bytes",
+    formatBytes,
+  );
+  const completeness = payload?.metadataCompleteness || {};
+  const metaSlices = [
+    { key: "language", count: Number(completeness.withLanguage) || 0 },
+    { key: "isbn", count: Number(completeness.withIsbn) || 0 },
+    { key: "description", count: Number(completeness.withDescription) || 0 },
+    { key: "cover", count: Number(completeness.withCover) || 0 },
+    { key: "score ≥50", count: Number(completeness.scoreAtLeast50) || 0 },
+  ].map((row) => ({
+    ...row,
+    // Show against catalogue size so bars read as coverage, not share of filled fields.
+    count: total ? row.count : 0,
+    _max: total,
+  }));
+  const metaBox = $("ins-meta-bars");
+  if (metaBox) {
+    metaBox.replaceChildren();
+    for (const slice of metaSlices) {
+      const row = element("div", undefined, "ins-bar-row");
+      row.setAttribute("role", "listitem");
+      const bar = element("progress");
+      bar.max = Math.max(1, total);
+      bar.value = Math.min(bar.max, slice.count);
+      const pct = total ? Math.round((slice.count / total) * 100) : 0;
+      bar.setAttribute("aria-label", `${slice.key}: ${slice.count}/${total} (${pct}%)`);
+      row.append(
+        element("span", slice.key, "ins-bar-label"),
+        bar,
+        element("span", total ? `${pct}%` : "—", "fine"),
+      );
+      metaBox.append(row);
+    }
+  }
+  if (empty) {
+    empty.hidden = !!(formats || languages || storage || total);
+  }
+}
+
 function renderAchievements(payload) {
   const root = $("ins-achievements");
   const empty = $("ins-achievements-empty");
@@ -953,7 +1054,7 @@ function renderAchievements(payload) {
 
 async function renderReadingInsights() {
   try {
-    const [data, widgets, achievements] = await Promise.all([
+    const [data, widgets, achievements, library] = await Promise.all([
       loadReadingInsights(),
       api("insights/widgets").catch(() => ({ widgets: [] })),
       api("insights/achievements").catch(() => ({
@@ -961,6 +1062,7 @@ async function renderReadingInsights() {
         totalEarned: 0,
         totalAvailable: 0,
       })),
+      api("insights/library").catch(() => null),
     ]);
     if (data) {
       renderHeatmap(data);
@@ -969,12 +1071,14 @@ async function renderReadingInsights() {
     }
     renderWidgets(widgets);
     renderAchievements(achievements);
+    renderLibraryHealth(library || {});
   } catch {
     renderHeatmap({ heatmap: [], from: "", to: "" });
     renderSourceBars({ sourceDistribution: { slices: [], totalSeconds: 0 } });
     renderSessionTimeline({ sessionTimeline: [] });
     renderWidgets({ widgets: [] });
     renderAchievements({ categories: [], totalEarned: 0, totalAvailable: 0 });
+    renderLibraryHealth({});
   }
 }
 

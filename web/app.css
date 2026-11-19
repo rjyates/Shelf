@@ -2303,6 +2303,32 @@ body[data-view="library"] .load-more {
 .ins-authors {
   grid-column: 1 / 6;
 }
+.ins-library {
+  grid-column: 1 / 13;
+}
+.ins-library-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px 20px;
+  padding: 4px 20px 20px;
+}
+.ins-library-col {
+  min-width: 0;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+.ins-library-kicker {
+  margin: 0 0 10px;
+  font: 11px/1.2 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+@media (max-width: 1100px) {
+  .ins-library-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .ins-achievements {
   grid-column: 1 / 13;
 }

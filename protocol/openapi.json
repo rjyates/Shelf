@@ -1719,6 +1719,26 @@
         }
       }
     },
+    "/insights/library": {
+      "get": {
+        "summary": "Library health charts (format, language, storage, metadata)",
+        "responses": {
+          "200": {
+            "description": "Library chart aggregates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
     "/reading-prefs": {
       "get": {
         "summary": "Reading timezone and current-year goal",
