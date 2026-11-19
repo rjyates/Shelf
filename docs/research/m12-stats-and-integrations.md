@@ -73,3 +73,4 @@ Ship as incremental PRs on this branch (or stacked PRs). Each slice: **Rust API 
 2. Book Orbit README / modules @ `c77966cc`  
 3. Shelf vendor types under `web/orbit-reader/vendor/bookorbit/types/`  
 4. Storyteller @ `2de166da` — progression only (see inventory §2)  
+5. Platform badge ideas (GR / Letterboxd / StoryGraph / BO → Shelf): [`achievements-inspiration.md`](achievements-inspiration.md)  

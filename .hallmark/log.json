@@ -1,0 +1,31 @@
+[
+  {
+    "scanned": "2026-11-19",
+    "shape": "app-screen-workbench",
+    "theme": "custom-hedgerow-x-furrow",
+    "genre": "atmospheric",
+    "axes": "dark/high-contrast-serif/chromatic-green",
+    "hero": "sticky global range + season grid",
+    "nav": "kept Shelf shell",
+    "footer": "n/a app screen",
+    "imagery": "none \u2014 data viz only",
+    "photos": [],
+    "entry": "insights redesign",
+    "fingerprint": "hedgerow-furrow-insights-v1",
+    "sections": [
+      "mast+range",
+      "pulse",
+      "season-grid",
+      "sources",
+      "spine",
+      "figures",
+      "progress",
+      "authors",
+      "achievements",
+      "library"
+    ],
+    "signature": "brushable season heatmap driving global range",
+    "waived": [],
+    "prompt": "Hallmark redesign Insights; ignore Picasso; interactive unique charts; global time range"
+  }
+]
