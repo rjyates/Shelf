@@ -1660,6 +1660,34 @@
         }
       }
     },
+    "/insights/widgets": {
+      "get": {
+        "summary": "Reading streak, annual goal, monthly challenge, and DNA widgets",
+        "responses": {
+          "200": {
+            "description": "Widget batch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "widgets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
     "/reading-prefs": {
       "get": {
         "summary": "Reading timezone and current-year goal",

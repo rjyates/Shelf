@@ -637,6 +637,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             get(reading_stats::get_prefs).put(reading_stats::put_prefs),
         )
         .route("/api/v1/insights/reading", get(insights::reading_insights))
+        .route("/api/v1/insights/widgets", get(insights::reading_widgets))
         .route(
             "/api/v1/books/{id}/bookmarks",
             get(reader_data::list_bookmarks).post(reader_data::create_bookmark),

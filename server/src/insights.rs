@@ -266,6 +266,235 @@ pub(super) async fn reading_insights(
         .await
 }
 
+fn year_from_day(day: &str) -> i32 {
+    day.get(0..4).and_then(|s| s.parse().ok()).unwrap_or(1970)
+}
+
+fn month_from_day(day: &str) -> i32 {
+    day.get(5..7).and_then(|s| s.parse().ok()).unwrap_or(1)
+}
+
+fn finished_books_in_year(db: &Connection, user: i64, year: i32) -> ApiResult<i64> {
+    // Prefer lifecycle events; fall back to current finished status.
+    let from_events: i64 = db.query_row(
+        "SELECT count(DISTINCT book_id) FROM reading_events
+         WHERE user_id=? AND event_type='finished' AND substr(at,1,4)=?",
+        params![user, year.to_string()],
+        |r| r.get(0),
+    )?;
+    if from_events > 0 {
+        return Ok(from_events);
+    }
+    Ok(db.query_row(
+        "SELECT count(*) FROM books WHERE user_id=? AND reading_status='finished'",
+        params![user],
+        |r| r.get(0),
+    )?)
+}
+
+fn finished_books_in_month(db: &Connection, user: i64, year: i32, month: i32) -> ApiResult<i64> {
+    let prefix = format!("{year:04}-{month:02}");
+    Ok(db.query_row(
+        "SELECT count(DISTINCT book_id) FROM reading_events
+         WHERE user_id=? AND event_type='finished' AND substr(at,1,7)=?",
+        params![user, prefix],
+        |r| r.get(0),
+    )?)
+}
+
+fn reading_dna(db: &Connection, user: i64) -> ApiResult<Value> {
+    let mut stmt = db.prepare(
+        "SELECT s.duration_seconds, coalesce(f.format, 'manual'), s.started_at
+         FROM reading_sessions s
+         LEFT JOIN epub_files f ON f.book_id = s.book_id
+         WHERE s.user_id=?
+         ORDER BY s.ended_at DESC
+         LIMIT 200",
+    )?;
+    let rows: Vec<(i64, String, String)> = stmt
+        .query_map(params![user], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let books_analyzed = rows.len() as i64;
+    if books_analyzed == 0 {
+        return Ok(json!({
+            "archetype": "Uncharted",
+            "lengthScore": 0.0,
+            "varietyScore": 0.0,
+            "rhythmScore": 0.0,
+            "timeScore": 0.0,
+            "speedScore": 0.0,
+            "lengthLabel": "—",
+            "varietyLabel": "—",
+            "rhythmLabel": "—",
+            "timeLabel": "—",
+            "speedLabel": "—",
+            "booksAnalyzed": 0,
+        }));
+    }
+    let mut formats = BTreeSet::new();
+    let mut total_secs = 0_i64;
+    let mut evening = 0_i64;
+    let mut weekend = 0_i64;
+    for (secs, format, started) in &rows {
+        total_secs += secs;
+        formats.insert(format.clone());
+        if let Some(hour) = started.get(11..13).and_then(|h| h.parse::<i64>().ok()) {
+            if (18..24).contains(&hour) || (0..5).contains(&hour) {
+                evening += 1;
+            }
+        }
+        if let Some(day) = started.get(0..10) {
+            let wd = weekday_monday0(day);
+            if wd >= 5 {
+                weekend += 1;
+            }
+        }
+    }
+    let avg = total_secs as f64 / books_analyzed as f64;
+    let length_score = (avg / 3600.0).clamp(0.0, 1.0);
+    let variety_score = (formats.len() as f64 / 5.0).clamp(0.0, 1.0);
+    let rhythm_score = (weekend as f64 / books_analyzed as f64).clamp(0.0, 1.0);
+    let time_score = (evening as f64 / books_analyzed as f64).clamp(0.0, 1.0);
+    let speed_score = (1.0 - (avg / 7200.0)).clamp(0.0, 1.0);
+    let archetype = if length_score > 0.55 && time_score > 0.45 {
+        "Night Marathoner"
+    } else if variety_score > 0.5 {
+        "Format Explorer"
+    } else if rhythm_score > 0.45 {
+        "Weekend Reader"
+    } else if speed_score > 0.55 {
+        "Sprint Reader"
+    } else {
+        "Steady Companion"
+    };
+    Ok(json!({
+        "archetype": archetype,
+        "lengthScore": (length_score * 100.0).round() / 100.0,
+        "varietyScore": (variety_score * 100.0).round() / 100.0,
+        "rhythmScore": (rhythm_score * 100.0).round() / 100.0,
+        "timeScore": (time_score * 100.0).round() / 100.0,
+        "speedScore": (speed_score * 100.0).round() / 100.0,
+        "lengthLabel": if length_score > 0.5 { "long sessions" } else { "short sessions" },
+        "varietyLabel": if variety_score > 0.4 { "mixed formats" } else { "one format" },
+        "rhythmLabel": if rhythm_score > 0.4 { "weekend-heavy" } else { "weekday rhythm" },
+        "timeLabel": if time_score > 0.4 { "evening / night" } else { "daylight hours" },
+        "speedLabel": if speed_score > 0.5 { "quick sits" } else { "slow burns" },
+        "booksAnalyzed": books_analyzed,
+    }))
+}
+
+fn weekday_monday0(day: &str) -> i32 {
+    // Sakamoto for Monday=0 via civil math using add_days relative to a known Monday.
+    // 1970-01-05 was a Monday.
+    let Some(parts) = (|| {
+        let p: Vec<_> = day.split('-').collect();
+        if p.len() != 3 {
+            return None;
+        }
+        Some((
+            p[0].parse::<i64>().ok()?,
+            p[1].parse::<i64>().ok()?,
+            p[2].parse::<i64>().ok()?,
+        ))
+    })() else {
+        return 0;
+    };
+    let (y, m, d) = parts;
+    let y = y - i64::from(m <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = m + if m > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let z = era * 146_097 + doe - 719_468;
+    // Unix day 0 = 1970-01-01 Thursday; Monday=0 => (z + 3) % 7 with z as days since epoch.
+    // Actually civil z here matches days since 0000-03-01; epoch_to_date uses same.
+    // Use difference from 1970-01-05 (Monday, unix day 4).
+    let unix_days = z; // our epoch_to_date_key uses z*86400 with z = days since epoch after +719468 dance
+    // Recompute unix days: from epoch_to_date inverse we already have z as days since Unix epoch when z was computed as era*... -719468.
+    ((unix_days + 3).rem_euclid(7)) as i32
+}
+
+/// `GET /api/v1/insights/widgets` — streak / goal / monthly challenge / reading DNA.
+pub(super) async fn reading_widgets(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            let today = chrono_today_utc();
+            let year = year_from_day(&today);
+            let month = month_from_day(&today);
+
+            let mut all_days = BTreeSet::new();
+            {
+                let mut stmt = db.prepare(
+                    "SELECT DISTINCT day_local FROM reading_daily_stats
+                     WHERE user_id=? AND (reading_seconds > 0 OR session_count > 0)",
+                )?;
+                for day in stmt.query_map(params![user], |r| r.get::<_, String>(0))? {
+                    all_days.insert(day?);
+                }
+            }
+            let (current_streak, longest_streak, last_seven_days) =
+                compute_streak_data(&all_days, &today);
+
+            let goal: Option<i64> = db
+                .query_row(
+                    "SELECT target_books FROM reading_goals WHERE user_id=? AND year=?",
+                    params![user, year],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let completed = finished_books_in_year(db, user, year)?;
+
+            let challenge_target = 2_i64;
+            let challenge_progress = finished_books_in_month(db, user, year, month)?;
+
+            Ok(Json(json!({
+                "widgets": [
+                    {
+                        "type": "reading-streak",
+                        "data": {
+                            "currentStreak": current_streak,
+                            "longestStreak": longest_streak,
+                            "lastSevenDays": last_seven_days,
+                        }
+                    },
+                    {
+                        "type": "reading-goal",
+                        "data": {
+                            "goalBooks": goal,
+                            "completedBooks": completed,
+                            "year": year,
+                        }
+                    },
+                    {
+                        "type": "monthly-challenge",
+                        "data": {
+                            "challengeType": "page-milestone",
+                            "title": "Finish two books",
+                            "description": "Close two titles before the month ends.",
+                            "progress": challenge_progress,
+                            "target": challenge_target,
+                            "completed": challenge_progress >= challenge_target,
+                            "month": month,
+                            "year": year,
+                        }
+                    },
+                    {
+                        "type": "reading-dna",
+                        "data": reading_dna(db, user)?,
+                    }
+                ]
+            })))
+        })
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

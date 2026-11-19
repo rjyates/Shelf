@@ -3134,4 +3134,21 @@ async fn reading_sessions_idempotent_and_daily_rollup() {
     assert_eq!(timeline[0]["durationSeconds"], 900);
     assert!(insights["streak"]["longestStreak"].as_i64().unwrap_or(0) >= 1);
     assert_eq!(insights["streak"]["lastSevenDays"].as_array().unwrap().len(), 7);
+
+    let widgets = call(
+        &app,
+        "GET",
+        "/api/v1/insights/widgets",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    let list = widgets["widgets"].as_array().expect("widgets");
+    assert!(list.iter().any(|w| w["type"] == "reading-streak"));
+    assert!(list.iter().any(|w| w["type"] == "reading-goal"));
+    assert!(list.iter().any(|w| w["type"] == "monthly-challenge"));
+    assert!(list.iter().any(|w| w["type"] == "reading-dna"));
+    let goal = list.iter().find(|w| w["type"] == "reading-goal").unwrap();
+    assert_eq!(goal["data"]["goalBooks"], 24);
 }

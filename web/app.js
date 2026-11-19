@@ -817,17 +817,91 @@ async function loadReadingInsights(force = false) {
   return insightsReadingPromise;
 }
 
+function renderWidgets(payload) {
+  const grid = $("ins-widget-grid");
+  if (!grid) return;
+  grid.replaceChildren();
+  const widgets = payload?.widgets || [];
+  for (const widget of widgets) {
+    const card = element("article", undefined, "ins-widget");
+    card.dataset.type = widget.type || "";
+    const data = widget.data || {};
+    if (widget.type === "reading-streak") {
+      card.append(
+        element("h3", "Streak", "ins-widget-kicker"),
+        element("p", String(data.currentStreak || 0), "ins-widget-value"),
+        element(
+          "p",
+          `Best ${data.longestStreak || 0} · ${(data.lastSevenDays || []).map((on) => (on ? "●" : "○")).join("")}`,
+          "fine",
+        ),
+      );
+    } else if (widget.type === "reading-goal") {
+      const goal = data.goalBooks;
+      const done = data.completedBooks || 0;
+      const label =
+        goal == null
+          ? `${done} finished in ${data.year || ""} · set a goal in prefs`
+          : `${done} / ${goal} books · ${data.year || ""}`;
+      const bar = element("progress");
+      bar.max = Math.max(1, Number(goal) || 1);
+      bar.value = Math.min(bar.max, done);
+      card.append(
+        element("h3", "Annual goal", "ins-widget-kicker"),
+        element("p", goal == null ? String(done) : `${done}/${goal}`, "ins-widget-value"),
+        bar,
+        element("p", label, "fine"),
+      );
+    } else if (widget.type === "monthly-challenge") {
+      const bar = element("progress");
+      bar.max = Math.max(1, Number(data.target) || 1);
+      bar.value = Math.min(bar.max, Number(data.progress) || 0);
+      card.append(
+        element("h3", data.title || "Challenge", "ins-widget-kicker"),
+        element(
+          "p",
+          `${data.progress || 0} / ${data.target || 0}`,
+          "ins-widget-value",
+        ),
+        bar,
+        element("p", data.description || "", "fine"),
+      );
+    } else if (widget.type === "reading-dna") {
+      card.append(
+        element("h3", "Reading DNA", "ins-widget-kicker"),
+        element("p", data.archetype || "Uncharted", "ins-widget-value ins-widget-archetype"),
+        element(
+          "p",
+          [data.lengthLabel, data.timeLabel, data.rhythmLabel]
+            .filter((x) => x && x !== "—")
+            .join(" · ") || "Read a few sessions to shape this portrait.",
+          "fine",
+        ),
+      );
+    } else {
+      continue;
+    }
+    grid.append(card);
+  }
+}
+
 async function renderReadingInsights() {
   try {
-    const data = await loadReadingInsights();
-    if (!data) return;
-    renderHeatmap(data);
-    renderSourceBars(data);
-    renderSessionTimeline(data);
+    const [data, widgets] = await Promise.all([
+      loadReadingInsights(),
+      api("insights/widgets").catch(() => ({ widgets: [] })),
+    ]);
+    if (data) {
+      renderHeatmap(data);
+      renderSourceBars(data);
+      renderSessionTimeline(data);
+    }
+    renderWidgets(widgets);
   } catch {
     renderHeatmap({ heatmap: [], from: "", to: "" });
     renderSourceBars({ sourceDistribution: { slices: [], totalSeconds: 0 } });
     renderSessionTimeline({ sessionTimeline: [] });
+    renderWidgets({ widgets: [] });
   }
 }
 
