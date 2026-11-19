@@ -186,6 +186,29 @@ jobs:
           else
             echo "No SHELF_UPLOAD_KEYSTORE_BASE64 secret; APK will use debug signing."
           fi
+      - name: Prefer Maven Central for Flutter Gradle Kotlin deps
+        run: |
+          # Flutter's included :gradle buildscript sometimes only probes the
+          # plugin portal; kotlin-stdlib can 404 there while Maven Central has it.
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/init.gradle <<'EOF'
+          settingsEvaluated { settings ->
+            settings.pluginManagement.repositories.mavenCentral()
+            settings.pluginManagement.repositories.google()
+          }
+          gradle.beforeProject { project ->
+            project.buildscript.repositories {
+              mavenCentral()
+              google()
+              gradlePluginPortal()
+            }
+            project.repositories {
+              mavenCentral()
+              google()
+              gradlePluginPortal()
+            }
+          }
+          EOF
       - name: Build development-signed Android artifact
         working-directory: mobile
         env:
