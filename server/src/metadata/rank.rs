@@ -331,7 +331,7 @@ pub fn filter_and_rank(
         .map(|c| (score_candidate(&c, title, author, isbn), c))
         .filter(|(score, _)| *score >= MIN_RELEVANCE_SCORE)
         .collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
     ranked.into_iter().take(limit).map(|(_, c)| c).collect()
 }
 
@@ -519,21 +519,18 @@ pub fn assess_match(candidate: &Candidate, subject: &MatchSubject) -> MatchAsses
         book_authors.iter().any(|b| b == &n) || book_last.contains(&last_name(author))
     });
 
-    let series_match = match (
-        candidate.series_name.as_deref(),
-        subject.series_name.as_deref(),
-    ) {
+    let series_match = matches!(
+        (
+            candidate.series_name.as_deref(),
+            subject.series_name.as_deref(),
+        ),
         (Some(c), Some(s))
             if !c.is_empty()
                 && !s.is_empty()
                 && normalize_title_text(c) == normalize_title_text(s)
                 && candidate.series_index.as_deref().unwrap_or("")
-                    == subject.series_index.as_deref().unwrap_or("") =>
-        {
-            true
-        }
-        _ => false,
-    };
+                    == subject.series_index.as_deref().unwrap_or("")
+    );
 
     let filled = filled_fields(candidate);
     let tier = if linked || isbn_match {

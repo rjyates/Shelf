@@ -271,14 +271,15 @@ pub(super) fn collect_provider_candidates(
     let mut stmt = db.prepare(
         "SELECT key, enabled, kind, base_url, api_key, config_json FROM metadata_providers WHERE user_id=?",
     )?;
-    let rows: Vec<(
+    type ProviderRow = (
         String,
         bool,
         String,
         Option<String>,
         Option<String>,
         Option<String>,
-    )> = stmt
+    );
+    let rows: Vec<ProviderRow> = stmt
         .query_map(params![user], |r| {
             Ok((
                 r.get(0)?,

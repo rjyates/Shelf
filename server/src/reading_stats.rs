@@ -247,6 +247,7 @@ pub(crate) fn record_event(
 }
 
 /// Throttled progression history (≤1 row / 5 min / user+book+format).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn record_progression(
     db: &Connection,
     user: i64,
@@ -362,6 +363,7 @@ fn upsert_daily(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn recompute_daily_for_session(
     db: &Connection,
     user: i64,
@@ -452,7 +454,7 @@ fn save_session(
         (Some(e), Some(d)) => Some((e - d).clamp(0.0, 100.0)),
         _ => None,
     });
-    let progress_delta = delta.or_else(|| match (end_pct, start_pct) {
+    let progress_delta = delta.or(match (end_pct, start_pct) {
         (Some(e), Some(s)) => Some(e - s),
         _ => None,
     });
@@ -624,7 +626,7 @@ pub(super) async fn list_book_sessions(
                 "{SESSION_SELECT} WHERE user_id=? AND book_id=? ORDER BY ended_at DESC LIMIT 100"
             ))?;
             let rows = stmt
-                .query_map(params![user, id], |r| session_json(r))?
+                .query_map(params![user, id], session_json)?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Json(json!(rows)))
         })
@@ -678,13 +680,13 @@ pub(super) async fn list_sessions(
                 let mut stmt = db.prepare(&format!(
                     "{SESSION_SELECT} WHERE user_id=? AND ended_at < ? ORDER BY ended_at DESC LIMIT ?"
                 ))?;
-                let mapped = stmt.query_map(params![user, before, limit], |r| session_json(r))?;
+                let mapped = stmt.query_map(params![user, before, limit], session_json)?;
                 mapped.collect::<Result<Vec<_>, _>>()?
             } else {
                 let mut stmt = db.prepare(&format!(
                     "{SESSION_SELECT} WHERE user_id=? ORDER BY ended_at DESC LIMIT ?"
                 ))?;
-                let mapped = stmt.query_map(params![user, limit], |r| session_json(r))?;
+                let mapped = stmt.query_map(params![user, limit], session_json)?;
                 mapped.collect::<Result<Vec<_>, _>>()?
             };
             Ok(Json(json!(rows)))

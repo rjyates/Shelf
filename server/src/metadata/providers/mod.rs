@@ -617,6 +617,7 @@ fn search_google(q: &SearchQuery, api_key: Option<&str>) -> ApiResult<Vec<Candid
         .collect())
 }
 
+#[allow(clippy::unnecessary_map_on_constructor)]
 fn search_itunes(q: &SearchQuery) -> ApiResult<Vec<Candidate>> {
     let term = q
         .query
@@ -829,6 +830,7 @@ fn search_audnexus(q: &SearchQuery) -> ApiResult<Vec<Candidate>> {
 
 /// Goodreads autocomplete JSON — BO's reliable path (detail HTML is often WAF-gated).
 /// Ported from bookorbit goodreads.provider / goodreads.mapper (AGPL).
+#[allow(clippy::unnecessary_map_on_constructor)]
 fn search_goodreads(q: &SearchQuery) -> ApiResult<Vec<Candidate>> {
     let terms = query_terms(q);
     if terms.trim().is_empty() {

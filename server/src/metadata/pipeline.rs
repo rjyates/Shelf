@@ -564,7 +564,7 @@ fn should_write(strategy: &str, empty: bool, provided: bool) -> bool {
     }
 }
 
-fn candidate_field<'a>(c: &'a Candidate, field: &str) -> Option<Value> {
+fn candidate_field(c: &Candidate, field: &str) -> Option<Value> {
     match field {
         "title" => c.title.as_ref().map(|s| json!(s)),
         "subtitle" => c.subtitle.as_ref().map(|s| json!(s)),

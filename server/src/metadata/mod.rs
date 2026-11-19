@@ -219,7 +219,16 @@ pub(super) async fn search(
                 "SELECT key, name, enabled, kind, base_url, api_key, config_json FROM metadata_providers
                  WHERE user_id=? ORDER BY display_order, id",
             )?;
-            let rows: Vec<(String, String, bool, String, Option<String>, Option<String>, Option<String>)> = stmt
+            type ProviderListRow = (
+                String,
+                String,
+                bool,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            );
+            let rows: Vec<ProviderListRow> = stmt
                 .query_map(params![user], |r| {
                     Ok((
                         r.get(0)?,
@@ -1013,9 +1022,8 @@ pub(super) async fn refresh_book(
             Ok(Json(json!({"queued": true})))
         })
         .await
-        .map(|v| {
+        .inspect(|_| {
             fetch::kick(spawn);
-            v
         })
 }
 
@@ -1052,9 +1060,8 @@ pub(super) async fn fetch_resume(
             Ok(StatusCode::NO_CONTENT)
         })
         .await
-        .map(|v| {
+        .inspect(|_| {
             fetch::kick(spawn);
-            v
         })
 }
 
