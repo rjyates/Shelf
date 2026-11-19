@@ -36,9 +36,37 @@ android {
         }
     }
 
+    // Stable sideload identity for in-app updates. When SHELF_UPLOAD_STORE_FILE
+    // (and passwords/alias) are set — CI secrets decoded onto the runner — release
+    // APKs share one certificate. Otherwise fall back to the debug keystore so
+    // local/CI builds without secrets still succeed.
+    val uploadStoreFile = System.getenv("SHELF_UPLOAD_STORE_FILE")
+    val uploadStorePassword = System.getenv("SHELF_UPLOAD_STORE_PASSWORD")
+    val uploadKeyAlias = System.getenv("SHELF_UPLOAD_KEY_ALIAS")
+    val uploadKeyPassword = System.getenv("SHELF_UPLOAD_KEY_PASSWORD")
+    val hasUploadKey =
+        !uploadStoreFile.isNullOrBlank() &&
+            !uploadStorePassword.isNullOrBlank() &&
+            !uploadKeyAlias.isNullOrBlank() &&
+            !uploadKeyPassword.isNullOrBlank() &&
+            file(uploadStoreFile).isFile
+    if (hasUploadKey) {
+        signingConfigs.create("upload") {
+            storeFile = file(uploadStoreFile!!)
+            storePassword = uploadStorePassword
+            keyAlias = uploadKeyAlias
+            keyPassword = uploadKeyPassword
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig =
+                if (hasUploadKey) {
+                    signingConfigs.getByName("upload")
+                } else {
+                    signingConfigs.getByName("debug")
+                }
         }
     }
 }

@@ -133,6 +133,19 @@ void main() {
       ),
       '42%',
     );
+    expect(
+      readerProgressLabel(
+        paged: null,
+        locator: Locator(
+          href: '/ch.xhtml',
+          type: 'application/xhtml+xml',
+          title: 'A Long-Expected Party',
+          locations: Locations(totalProgression: 0.12),
+        ),
+        bookPercentage: 0,
+      ),
+      'A Long-Expected Party · 12%',
+    );
   });
 
   test('PDF page= fragments encode as pdfpage(N)', () {

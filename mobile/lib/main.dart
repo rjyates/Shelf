@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'android_update.dart';
 import 'api.dart';
 import 'audiobook_screen.dart';
 import 'companion.dart';
@@ -68,7 +70,7 @@ class _ShelfAppState extends State<ShelfApp> {
       return MaterialApp(
         title: 'Shelf',
         debugShowCheckedModeBanner: false,
-        theme: _shelfTheme,
+        theme: shelfTheme(disableAnimations: false),
         home: DisplayProfileOnboarding(onChosen: _chooseProfile),
       );
     }
@@ -82,13 +84,41 @@ class _ShelfAppState extends State<ShelfApp> {
           child: child ?? const SizedBox.shrink(),
         );
       },
-      theme: _shelfTheme,
+      theme: shelfTheme(disableAnimations: profile.disableAnimations),
       home: ConnectScreen(profile: profile, onProfileChanged: _chooseProfile),
     );
   }
 }
 
-ThemeData get _shelfTheme => ThemeData(
+/// Instant routes when e-ink asks for no motion (MediaQuery alone still lets
+/// MaterialPageRoute animate on some platforms).
+class InstantPageTransitionsBuilder extends PageTransitionsBuilder {
+  const InstantPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) => child;
+}
+
+ThemeData shelfTheme({required bool disableAnimations}) {
+  final base = _shelfThemeBase;
+  if (!disableAnimations) return base;
+  return base.copyWith(
+    pageTransitionsTheme: PageTransitionsTheme(
+      builders: {
+        for (final platform in TargetPlatform.values)
+          platform: const InstantPageTransitionsBuilder(),
+      },
+    ),
+  );
+}
+
+ThemeData get _shelfThemeBase => ThemeData(
   brightness: Brightness.light,
   scaffoldBackgroundColor: paper,
   fontFamily: 'Plex',
@@ -334,6 +364,25 @@ Future<void> showShelfSettings({
                       setLocal(() {});
                     },
                   ),
+                  if (Platform.isAndroid) ...[
+                    const SizedBox(height: 20),
+                    Text(
+                      'App updates',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Checks GitHub Releases for a newer mobile-v APK.',
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: () async {
+                        Navigator.pop(context);
+                        await runAndroidUpdateCheck(context);
+                      },
+                      child: const Text('Check for updates'),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -348,6 +397,68 @@ Future<void> showShelfSettings({
       );
     },
   );
+}
+
+Future<void> runAndroidUpdateCheck(BuildContext context) async {
+  if (!Platform.isAndroid) return;
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final checker = AndroidUpdateChecker();
+  try {
+    messenger?.showSnackBar(
+      const SnackBar(content: Text('Checking for updates…')),
+    );
+    final installed = await checker.installedVersion();
+    final latest = await checker.fetchLatest();
+    if (!context.mounted) return;
+    if (latest == null) {
+      messenger?.showSnackBar(
+        const SnackBar(content: Text('No mobile release found on GitHub.')),
+      );
+      return;
+    }
+    final current = installed?.versionName ?? '';
+    if (current.isNotEmpty && !isNewerSemver(latest.version, current)) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text('You are on the latest version ($current).')),
+      );
+      return;
+    }
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Update to ${latest.version}?'),
+        content: Text(
+          current.isEmpty
+              ? 'Download and install ${latest.tag} from GitHub Releases.'
+              : 'Installed $current → ${latest.version}. Shelf downloads the APK, verifies the checksum when present, then opens the system installer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Download'),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !context.mounted) return;
+    messenger?.showSnackBar(
+      const SnackBar(content: Text('Downloading update…')),
+    );
+    final apk = await checker.downloadApk(latest);
+    await checker.installApk(apk);
+  } catch (error) {
+    if (!context.mounted) return;
+    final message = error is PlatformException
+        ? (error.message ?? error.code)
+        : error.toString();
+    messenger?.showSnackBar(SnackBar(content: Text('Update failed: $message')));
+  } finally {
+    checker.close();
+  }
 }
 
 class ConnectScreen extends StatefulWidget {
@@ -411,8 +522,33 @@ class _ConnectScreenState extends State<ConnectScreen> {
         await api.books();
       } on ShelfException catch (error) {
         if (error.statusCode == 401) {
+          final password = saved.password;
+          if (password != null && password.isNotEmpty) {
+            try {
+              await api.login(saved.username, password);
+              final token = api.sessionToken;
+              if (token != null) {
+                await _sessions.save(
+                  SavedSession(
+                    server: saved.server,
+                    username: saved.username,
+                    token: token,
+                    password: password,
+                  ),
+                );
+                if (!mounted) {
+                  api.close();
+                  return;
+                }
+                await _openLibrary(api);
+                return;
+              }
+            } catch (_) {
+              // Fall through to clear credentials and show the form.
+            }
+          }
           api.close();
-          await _sessions.clearToken();
+          await _sessions.clearCredentials();
           if (mounted) {
             setState(() {
               _restoring = false;
@@ -476,14 +612,20 @@ class _ConnectScreenState extends State<ConnectScreen> {
       final server = Uri.parse(_server.text.trim());
       final username = _username.text.trim();
       api = ShelfApi(server);
-      await api.login(username, _password.text);
+      final password = _password.text;
+      await api.login(username, password);
       _password.clear();
       final token = api.sessionToken;
       if (token == null) {
         throw ShelfException('Server did not return a session.');
       }
       await _sessions.save(
-        SavedSession(server: server, username: username, token: token),
+        SavedSession(
+          server: server,
+          username: username,
+          token: token,
+          password: password,
+        ),
       );
       if (!mounted) {
         api.close();
@@ -637,10 +779,14 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   List<Book> _books = [];
   List<Work> _works = [];
+  List<AuthorInfo> _authors = [];
   bool _loading = true;
   String? _error;
   late DisplayProfile _profile = widget.profile;
   final Set<int> _savedOffline = {};
+  String? _filterAuthor;
+  String _filterSeries = '';
+  final TextEditingController _seriesFilter = TextEditingController();
 
   /// Book id while Read is downloading/opening — e-ink needs instant tap feedback.
   int? _openingBookId;
@@ -667,6 +813,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   void dispose() {
     _connectivity?.cancel();
     _openingProgress.dispose();
+    _seriesFilter.dispose();
     widget.api.close();
     super.dispose();
   }
@@ -701,20 +848,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  BooksQuery? get _activeQuery {
+    final author = _filterAuthor;
+    final series = _filterSeries.trim();
+    if ((author == null || author.isEmpty) && series.isEmpty) return null;
+    return BooksQuery(author: author, series: series.isEmpty ? null : series);
+  }
+
   Future<void> _refresh() async {
     try {
       await _flushOutbox();
-      final books = await widget.api.books();
+      final books = await widget.api.books(_activeQuery);
       // Works fold audio/readaloud; soft-fail so older servers still list books.
       var works = <Work>[];
       try {
         works = await widget.api.works();
+      } catch (_) {}
+      var authors = <AuthorInfo>[];
+      try {
+        authors = await widget.api.authors();
       } catch (_) {}
       final saved = await _cachedEpubs(books);
       if (mounted) {
         setState(() {
           _books = books;
           _works = works;
+          _authors = authors;
           _savedOffline
             ..clear()
             ..addAll(saved);
@@ -867,6 +1026,157 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  Future<void> _addToCollection(Book book) async {
+    List<CollectionInfo> collections;
+    try {
+      collections = await widget.api.collections();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+      return;
+    }
+    if (!mounted) return;
+    final nameController = TextEditingController();
+    final choice = await showDialog<Object>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add to collection'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final collection in collections)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(collection.name),
+                  subtitle: Text('${collection.bookCount} books'),
+                  onTap: () => Navigator.pop(context, collection.id),
+                ),
+              const Divider(),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'New collection name',
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              if (name.isEmpty) return;
+              Navigator.pop(context, name);
+            },
+            child: const Text('Create & add'),
+          ),
+        ],
+      ),
+    );
+    nameController.dispose();
+    if (choice == null || !mounted) return;
+    try {
+      final collectionId = choice is int
+          ? choice
+          : await widget.api.createCollection(choice as String);
+      await widget.api.updateCollection(collectionId, addBookIds: [book.id]);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Added to collection.')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  Future<void> _scanLibrary() async {
+    try {
+      final result = await widget.api.scanLibrary();
+      await _refresh();
+      if (!mounted) return;
+      final failed = result.failed.length;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Scan: ${result.imported} imported, ${result.duplicates} duplicates'
+            '${failed == 0 ? '' : ', $failed failed'}'
+            ' (${result.scanned} scanned).',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  Future<void> _applyScope() async {
+    List<ScopeInfo> scopes;
+    try {
+      scopes = await widget.api.listScopes();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (scopes.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('No saved scopes yet.')));
+      return;
+    }
+    final selected = await showModalBottomSheet<ScopeInfo>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('Apply scope')),
+            for (final scope in scopes)
+              ListTile(
+                title: Text(scope.name),
+                subtitle: Text(
+                  [
+                    if (scope.filter.author != null)
+                      'author: ${scope.filter.author}',
+                    if (scope.filter.series != null)
+                      'series: ${scope.filter.series}',
+                    if (scope.filter.status != null)
+                      'status: ${scope.filter.status}',
+                  ].join(' · '),
+                ),
+                onTap: () => Navigator.pop(context, scope),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      _filterAuthor = selected.filter.author;
+      _filterSeries = selected.filter.series ?? '';
+      _seriesFilter.text = _filterSeries;
+    });
+    await _refresh();
+  }
+
   Future<void> _removeLocalCopy(Book book) async {
     final store = widget.epubs;
     final ext = _localExtension(book);
@@ -878,6 +1188,166 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Removed from this device.')),
         );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  Future<void> _editMetadata(Book book) async {
+    final titleController = TextEditingController(text: book.title);
+    final authorController = TextEditingController(text: book.author);
+    final seriesController = TextEditingController(text: book.series ?? '');
+    final seriesIndexController = TextEditingController(
+      text: book.seriesIndex == null
+          ? ''
+          : (book.seriesIndex! % 1 == 0
+                ? book.seriesIndex!.toInt().toString()
+                : book.seriesIndex!.toString()),
+    );
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit metadata'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: titleController,
+                decoration: const InputDecoration(labelText: 'Title'),
+                textCapitalization: TextCapitalization.words,
+                autofocus: true,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: authorController,
+                decoration: const InputDecoration(labelText: 'Author'),
+                textCapitalization: TextCapitalization.words,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: seriesController,
+                decoration: const InputDecoration(labelText: 'Series'),
+                textCapitalization: TextCapitalization.words,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: seriesIndexController,
+                decoration: const InputDecoration(labelText: 'Series index'),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    final title = titleController.text.trim();
+    final author = authorController.text.trim();
+    final series = seriesController.text.trim();
+    final seriesIndexRaw = seriesIndexController.text.trim();
+    titleController.dispose();
+    authorController.dispose();
+    seriesController.dispose();
+    seriesIndexController.dispose();
+    if (saved != true || !mounted) return;
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Title cannot be empty.')));
+      return;
+    }
+    double? seriesIndex;
+    if (seriesIndexRaw.isNotEmpty) {
+      seriesIndex = double.tryParse(seriesIndexRaw);
+      if (seriesIndex == null || !seriesIndex.isFinite) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Series index must be a number.')),
+        );
+        return;
+      }
+    }
+    try {
+      await widget.api.updateBook(
+        book.id,
+        title: title,
+        author: author,
+        series: series,
+        seriesIndex: seriesIndex,
+      );
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Metadata saved.')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  Future<void> _searchMetadata(Book book) async {
+    try {
+      final results = await widget.api.searchMetadata(
+        title: book.title,
+        author: book.author,
+      );
+      if (!mounted) return;
+      if (results.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('No metadata results.')));
+        return;
+      }
+      final chosen = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Metadata results'),
+          children: [
+            for (final r in results)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, r),
+                child: Text(
+                  '${r['title'] ?? '(no title)'} · ${r['provider'] ?? ''}',
+                ),
+              ),
+          ],
+        ),
+      );
+      if (chosen == null || !mounted) return;
+      await widget.api.applyMetadataCandidate(book.id, chosen, const [
+        'title',
+        'subtitle',
+        'description',
+        'authors',
+        'genres',
+        'publisher',
+        'isbn13',
+        'cover',
+        'series_name',
+        'series_index',
+      ]);
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Metadata applied.')));
       }
     } catch (error) {
       if (mounted) {
@@ -906,6 +1376,41 @@ class _LibraryScreenState extends State<LibraryScreen> {
               'rereading' => 'Marked as re-reading.',
               _ => 'Catalogue tools for this book.',
             }, style: Theme.of(context).textTheme.bodyMedium),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Edit title & author'),
+              subtitle: const Text(
+                'Change how this book appears on your shelf',
+              ),
+              onTap: () => Navigator.pop(context, 'edit-meta'),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Auto-fill metadata'),
+              subtitle: const Text(
+                'Pull from enabled providers via field rules',
+              ),
+              onTap: () => Navigator.pop(context, 'autofill'),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Search metadata'),
+              subtitle: const Text('Pick a provider result and apply'),
+              onTap: () => Navigator.pop(context, 'meta-search'),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Refresh metadata'),
+              subtitle: const Text('Queue a provider refresh for this book'),
+              onTap: () => Navigator.pop(context, 'meta-refresh'),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Add to collection'),
+              subtitle: const Text('Pick an existing collection or create one'),
+              onTap: () => Navigator.pop(context, 'collection'),
+            ),
             if (!book.isFinished) ...[
               const SizedBox(height: 8),
               ListTile(
@@ -984,6 +1489,49 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
     );
     if (!mounted) return;
+    if (action == 'edit-meta') {
+      await _editMetadata(book);
+      return;
+    }
+    if (action == 'autofill') {
+      try {
+        await widget.api.autofillBookMetadata(book.id);
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Auto-fill finished.')));
+        }
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+        }
+      }
+      return;
+    }
+    if (action == 'meta-refresh') {
+      try {
+        await widget.api.refreshBookMetadata(book.id);
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('Refresh queued.')));
+        }
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+        }
+      }
+      return;
+    }
+    if (action == 'meta-search') {
+      await _searchMetadata(book);
+      return;
+    }
+    if (action == 'collection') {
+      await _addToCollection(book);
+      return;
+    }
     if (action == 'merge') {
       await _mergeAndCombine(book);
       return;
@@ -1110,8 +1658,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
 
     try {
-      final online = connectivityLooksOnline(
+      final online = canReachShelfServer(
         await Connectivity().checkConnectivity(),
+        widget.api.base,
       );
       final ext = _localExtension(book)!;
       var cached = await epubs.has(
@@ -1287,8 +1836,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
 
     try {
-      final online = connectivityLooksOnline(
+      final online = canReachShelfServer(
         await Connectivity().checkConnectivity(),
+        widget.api.base,
       );
       final ext = EpubStore.extensionFor(isPdf: book.isPdf, isCbz: book.isCbz);
       var cached = await epubs.has(
@@ -1414,7 +1964,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } catch (_) {
       revoked = false;
     }
-    await SessionStore().clearToken();
+    await SessionStore().clearCredentials();
     if (mounted) {
       Navigator.pop(context, revoked);
     }
@@ -1430,13 +1980,47 @@ class _LibraryScreenState extends State<LibraryScreen> {
         automaticallyImplyLeading: false,
         title: const Text('shelf'),
         actions: [
-          IconButton(
-            onPressed: () => showDisplayProfilePicker(
-              context: context,
-              current: _profile,
-              onChosen: _changeProfile,
-            ),
-            tooltip: 'Settings',
+          PopupMenuButton<String>(
+            tooltip: 'Library tools',
+            onSelected: (value) async {
+              switch (value) {
+                case 'meta-sync':
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    final n = await widget.api.syncLibraryMetadata();
+                    if (!mounted) return;
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Queued $n books for metadata sync.'),
+                      ),
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    messenger.showSnackBar(
+                      SnackBar(content: Text(error.toString())),
+                    );
+                  }
+                case 'scan':
+                  await _scanLibrary();
+                case 'scope':
+                  await _applyScope();
+                case 'settings':
+                  await showDisplayProfilePicker(
+                    context: context,
+                    current: _profile,
+                    onChosen: _changeProfile,
+                  );
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'scan', child: Text('Scan library folder')),
+              PopupMenuItem(
+                value: 'meta-sync',
+                child: Text('Sync library metadata'),
+              ),
+              PopupMenuItem(value: 'scope', child: Text('Apply scope')),
+              PopupMenuItem(value: 'settings', child: Text('Display settings')),
+            ],
             icon: const Icon(Icons.settings_outlined, size: 28),
           ),
           IconButton(
@@ -1476,6 +2060,72 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     libraryReadingBlurb(_visibleBooks),
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
+                  const SizedBox(height: 20),
+                  DropdownButtonFormField<String?>(
+                    isExpanded: true,
+                    initialValue: _filterAuthor,
+                    decoration: const InputDecoration(labelText: 'Author'),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All authors'),
+                      ),
+                      if (_filterAuthor != null &&
+                          !_authors.any((a) => a.name == _filterAuthor))
+                        DropdownMenuItem<String?>(
+                          value: _filterAuthor,
+                          child: Text(_filterAuthor!),
+                        ),
+                      for (final author in _authors)
+                        DropdownMenuItem<String?>(
+                          value: author.name,
+                          child: Text(
+                            '${author.name} (${author.bookCount})',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      setState(() => _filterAuthor = value);
+                      _refresh();
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _seriesFilter,
+                    decoration: InputDecoration(
+                      labelText: 'Series',
+                      suffixIcon: IconButton(
+                        tooltip: 'Apply series filter',
+                        onPressed: () {
+                          setState(
+                            () => _filterSeries = _seriesFilter.text.trim(),
+                          );
+                          _refresh();
+                        },
+                        icon: const Icon(Icons.search),
+                      ),
+                    ),
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (value) {
+                      setState(() => _filterSeries = value.trim());
+                      _refresh();
+                    },
+                  ),
+                  if (_filterAuthor != null || _filterSeries.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _filterAuthor = null;
+                          _filterSeries = '';
+                          _seriesFilter.clear();
+                        });
+                        _refresh();
+                      },
+                      child: const Text('Clear filters'),
+                    ),
+                  ],
                   const SizedBox(height: 20),
                   const Divider(height: 1, thickness: 1.5, color: hairline),
                   const SizedBox(height: 20),

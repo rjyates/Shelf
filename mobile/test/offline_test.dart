@@ -142,5 +142,17 @@ void main() {
     );
     expect(connectivityLooksOnline([ConnectivityResult.none]), isFalse);
     expect(connectivityLooksOnline([ConnectivityResult.wifi]), isTrue);
+    expect(
+      canReachShelfServer([
+        ConnectivityResult.none,
+      ], Uri.parse('http://127.0.0.1:8080')),
+      isTrue,
+    );
+    expect(
+      canReachShelfServer([
+        ConnectivityResult.none,
+      ], Uri.parse('https://shelf.example.com')),
+      isFalse,
+    );
   });
 }

@@ -1,0 +1,27 @@
+Third-Party Notices
+===================
+
+Book Orbit
+----------
+This product includes software adapted from Book Orbit
+(https://github.com/bookorbit/bookorbit), Copyright (c) Book Orbit contributors,
+licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+Shelf adapts Book Orbit metadata/cover provider logic under AGPL-3.0,
+including (non-exhaustive):
+
+  - Open Library, Google Books, iTunes, AudNexus, Goodreads, Audible
+  - Amazon (search + product page scrape)
+  - Hardcover (GraphQL)
+  - ComicVine (API)
+  - Kobo (storefront scrape)
+  - Libro.fm (explore API)
+  - RanobeDB (API)
+  - Cover helpers: DuckDuckGo, iTunes artwork, AudiobookCovers.com
+
+Rust ports live under `server/src/metadata/providers/` and related cover-search
+code in `server/src/metadata/providers/mod.rs`. Source files that incorporate
+Book Orbit logic carry a short file-level attribution comment pointing here.
+
+The full AGPL-3.0 license text is in LICENSE (Shelf is also AGPL-3.0).
+Upstream license: https://github.com/bookorbit/bookorbit/blob/main/LICENSE

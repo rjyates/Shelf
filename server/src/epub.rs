@@ -734,6 +734,100 @@ fn import_comic_zip(
     Ok(id)
 }
 
+/// Result of ingesting book bytes into the catalogue (shared by upload + folder scan).
+pub(super) struct IngestResult {
+    pub id: i64,
+    pub duplicate: bool,
+    pub convert_id: Option<i64>,
+}
+
+/// Format-detect and insert one book; does not spawn AAX conversion (caller does).
+pub(super) fn ingest_bytes(
+    db: &mut Connection,
+    user: i64,
+    bytes: &[u8],
+    filename: Option<&str>,
+    data_dir: &std::path::Path,
+) -> ApiResult<IngestResult> {
+    let digest = format!("{:x}", Sha256::digest(bytes));
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if let Some(id) = tx
+        .query_row(
+            "SELECT b.id FROM books b JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? AND f.digest=?",
+            params![user, digest],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(IngestResult {
+            id,
+            duplicate: true,
+            convert_id: None,
+        });
+    }
+    let mut convert_id = None;
+    let id = if is_pdf(bytes) {
+        import_pdf(&tx, user, bytes, &digest, filename, data_dir)?
+    } else if is_rar(bytes) {
+        // CBR → ZIP at ingest so page API + Readium CBZ path stay shared.
+        let zip = cbr_to_zip(bytes)?;
+        import_comic_zip(
+            &tx,
+            user,
+            &zip,
+            &digest,
+            filename,
+            "cbr",
+            Some(bytes),
+            data_dir,
+        )?
+    } else if is_7z(bytes) {
+        let zip = cb7_to_zip(bytes)?;
+        import_comic_zip(
+            &tx,
+            user,
+            &zip,
+            &digest,
+            filename,
+            "cb7",
+            Some(bytes),
+            data_dir,
+        )?
+    } else if is_djvu(bytes) {
+        let zip = djvu_to_zip(bytes)?;
+        import_comic_zip(
+            &tx,
+            user,
+            &zip,
+            &digest,
+            filename,
+            "djvu",
+            Some(bytes),
+            data_dir,
+        )?
+    } else if aax::is_aax(bytes, filename) {
+        let id = import_aax(&tx, user, bytes, &digest, filename, data_dir)?;
+        convert_id = Some(id);
+        id
+    } else if let Some(audio_format) = detect_audio(bytes, filename) {
+        import_audio(&tx, user, bytes, &digest, filename, audio_format, data_dir)?
+    } else if is_zip(bytes) && is_audio_zip(bytes) {
+        import_audio_zip(&tx, user, bytes, &digest, filename, data_dir)?
+    } else if is_zip(bytes) && !is_epub_zip(bytes) {
+        import_comic_zip(&tx, user, bytes, &digest, filename, "cbz", None, data_dir)?
+    } else {
+        import_epub(&tx, user, bytes, &digest, data_dir)?
+    };
+    tx.commit()?;
+    // Auto-fetch queue when metadata settings say so (poller picks up within a few seconds).
+    let _ = crate::metadata::enqueue_if_eligible(db, user, id);
+    Ok(IngestResult {
+        id,
+        duplicate: false,
+        convert_id,
+    })
+}
+
 pub(super) async fn import(State(state): State<AppState>, request: Request) -> ApiResult<Response> {
     let headers = request.headers().clone();
     let filename = headers
@@ -757,57 +851,25 @@ pub(super) async fn import(State(state): State<AppState>, request: Request) -> A
         })?
         .to_vec();
     let data_dir = state.data_dir.clone();
-    let (response, convert_id) = state
-        .db(move |db| {
-            let digest = format!("{:x}", Sha256::digest(&bytes));
-            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            if let Some(id) = tx
-                .query_row(
-                    "SELECT b.id FROM books b JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=? AND f.digest=?",
-                    params![user, digest],
-                    |r| r.get::<_, i64>(0),
-                )
-                .optional()?
-            {
-                return Ok(((StatusCode::OK, Json(serde_json::json!({"id":id,"duplicate":true}))).into_response(), None));
-            }
-            let mut convert_id = None;
-            let id = if is_pdf(&bytes) {
-                import_pdf(&tx, user, &bytes, &digest, filename.as_deref(), &data_dir)?
-            } else if is_rar(&bytes) {
-                // CBR → ZIP at ingest so page API + Readium CBZ path stay shared.
-                let zip = cbr_to_zip(&bytes)?;
-                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cbr", Some(&bytes), &data_dir)?
-            } else if is_7z(&bytes) {
-                let zip = cb7_to_zip(&bytes)?;
-                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "cb7", Some(&bytes), &data_dir)?
-            } else if is_djvu(&bytes) {
-                let zip = djvu_to_zip(&bytes)?;
-                import_comic_zip(&tx, user, &zip, &digest, filename.as_deref(), "djvu", Some(&bytes), &data_dir)?
-            } else if aax::is_aax(&bytes, filename.as_deref()) {
-                let id = import_aax(&tx, user, &bytes, &digest, filename.as_deref(), &data_dir)?;
-                convert_id = Some(id);
-                id
-            } else if let Some(audio_format) = detect_audio(&bytes, filename.as_deref()) {
-                import_audio(&tx, user, &bytes, &digest, filename.as_deref(), audio_format, &data_dir)?
-            } else if is_zip(&bytes) && is_audio_zip(&bytes) {
-                import_audio_zip(&tx, user, &bytes, &digest, filename.as_deref(), &data_dir)?
-            } else if is_zip(&bytes) && !is_epub_zip(&bytes) {
-                import_comic_zip(&tx, user, &bytes, &digest, filename.as_deref(), "cbz", None, &data_dir)?
-            } else {
-                import_epub(&tx, user, &bytes, &digest, &data_dir)?
-            };
-            tx.commit()?;
-            Ok((
-                (StatusCode::CREATED, Json(serde_json::json!({"id":id,"duplicate":false}))).into_response(),
-                convert_id,
-            ))
-        })
+    let result = state
+        .db(move |db| ingest_bytes(db, user, &bytes, filename.as_deref(), &data_dir))
         .await?;
-    if let Some(id) = convert_id {
+    if !result.duplicate {
+        crate::metadata::kick(state.clone());
+    }
+    if let Some(id) = result.convert_id {
         aax::spawn_convert(state, id);
     }
-    Ok(response)
+    let status = if result.duplicate {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    Ok((
+        status,
+        Json(serde_json::json!({"id":result.id,"duplicate":result.duplicate})),
+    )
+        .into_response())
 }
 
 pub(super) async fn delete_book(
@@ -1117,6 +1179,8 @@ pub(super) async fn comic_page(
 pub(super) struct Location {
     position: String,
     percentage: f64,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 pub(super) async fn location(
@@ -1145,13 +1209,39 @@ pub(super) async fn location(
                 return Err(ApiError(StatusCode::NOT_FOUND, "Book file not found."));
             }
             // Natural completion; unfinished/rereading stay until manage marks finished again.
+            let source = reading_stats::normalize_source(value.source.as_deref())?;
             let finished = (value.percentage - 1.0).abs() < f64::EPSILON;
             if finished {
                 db.execute(
                     "UPDATE books SET reading_status='finished' WHERE id=? AND user_id=?",
                     params![id, user],
                 )?;
+                reading_stats::record_event(
+                    db,
+                    user,
+                    id,
+                    "finished",
+                    source,
+                    serde_json::json!({ "progression": value.percentage }),
+                )?;
             }
+            let format: String = db
+                .query_row(
+                    "SELECT format FROM epub_files WHERE book_id=?",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .unwrap_or_else(|_| "epub".into());
+            reading_stats::record_progression(
+                db,
+                user,
+                id,
+                value.percentage,
+                Some(value.position.as_str()),
+                &format,
+                source,
+                None,
+            )?;
             // Library cards show the EPUB edition; Read opens the readaloud — mirror.
             mirror_work_text_progress(
                 db,

@@ -21,6 +21,7 @@ import 'media_overlay_playlist.dart';
 import 'readium_position.dart';
 import 'screensaver_prefs.dart';
 import 'server_tts_player.dart';
+import 'reading_session.dart';
 import 'sync_outbox.dart';
 
 /// Readium-backed local EPUB/PDF reader (Shelf bookmarks/annotations).
@@ -78,6 +79,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   var _moSecondsSincePaint = 0.0;
   var _listenVolume = 1.0;
   var _syncOffsetMs = 0;
+  ReadingSessionTracker? _readingSession;
 
   /// Last SMIL cue when listen stopped — resume here on the same HTML page.
   int? _moResumeIndex;
@@ -123,6 +125,35 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   @override
   void initState() {
     super.initState();
+    _readingSession = ReadingSessionTracker(
+      bookId: widget.book.id,
+      sessionType: 'read',
+      source: 'android',
+      getProgressPercent: () {
+        final locator = _currentLocator;
+        if (locator == null) return widget.book.percentage * 100;
+        return shelfPercentageFromLocator(
+              locator,
+              paged: _pagedFormat,
+              pageCount: _pageCount,
+              publication: _publication,
+            ) *
+            100;
+      },
+      onSessionEnd: (payload) async {
+        try {
+          await widget.api.postReadingSession(widget.book.id, payload.toJson());
+        } catch (error) {
+          if (ShelfApi.isQueueFailure(error) && widget.outbox != null) {
+            await widget.outbox!.enqueue(
+              method: 'POST',
+              path: 'books/${widget.book.id}/sessions',
+              body: payload.toJson(),
+            );
+          }
+        }
+      },
+    )..attach();
     _showControls.addListener(_onChromeChanged);
     _nativeStrokeSub = _einkRefresh.nativeStrokes.listen((stroke) {
       unawaited(_saveInkStroke(stroke, rebuild: false));
@@ -182,7 +213,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
   }
 
   Future<void> _onConnectivity(List<ConnectivityResult> results) async {
-    final online = connectivityLooksOnline(results);
+    final online = canReachShelfServer(results, widget.api.base);
     if (!mounted) return;
     if (!online) {
       if (_ttsPlayer.active) await _ttsPlayer.stop();
@@ -496,6 +527,7 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
       paged: _pagedFormat,
       publication: _publication,
     );
+    _readingSession?.onActivity();
     try {
       await widget.api.saveLocation(widget.book.id, position, percentage);
     } catch (error) {
@@ -503,7 +535,11 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         await widget.outbox!.enqueue(
           method: 'POST',
           path: 'books/${widget.book.id}/location',
-          body: {'position': position, 'percentage': percentage},
+          body: {
+            'position': position,
+            'percentage': percentage,
+            'source': 'android',
+          },
         );
       }
     } finally {
@@ -945,6 +981,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         epubFile: file,
         startIndex: startIndex,
       );
+      await _readingSession?.setSessionType('tts');
+      _readingSession?.onActivity();
       if (mounted) await _syncMediaOverlayHighlight();
     } finally {
       if (mounted) setState(() => _ttsBusy = false);
@@ -1005,6 +1043,8 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
         chapterIndex: chapter,
         voice: voice,
       );
+      await _readingSession?.setSessionType('tts');
+      _readingSession?.onActivity();
     } finally {
       if (mounted) setState(() => _ttsBusy = false);
     }
@@ -1056,10 +1096,15 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     await _ttsPlayer.stop();
     await _moPlayer.stop();
     await _clearMediaOverlayHighlight();
+    await _readingSession?.setSessionType('read');
   }
 
   @override
   void dispose() {
+    final session = _readingSession;
+    _readingSession = null;
+    session?.detach();
+    unawaited(session?.endSession() ?? Future<void>.value());
     _idleTimer?.cancel();
     _locatorSub?.cancel();
     _nativeStrokeSub?.cancel();
@@ -1113,13 +1158,20 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
     );
   }
 
-  String get _progressLabel => readerProgressLabel(
-    paged: _pagedFormat,
-    locator: _currentLocator,
-    bookPercentage: widget.book.percentage,
-    pageCount: _pageCount,
-    publication: _publication,
-  );
+  String? get _chapterLabel =>
+      chapterTitleForLocator(_currentLocator, publication: _publication);
+
+  String get _percentOnlyLabel {
+    final percentage = _currentLocator == null
+        ? widget.book.percentage
+        : shelfPercentageFromLocator(
+            _currentLocator!,
+            paged: _pagedFormat,
+            pageCount: _pageCount,
+            publication: _publication,
+          );
+    return '${(percentage * 100).round()}%';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1439,14 +1491,30 @@ class _EinkReaderScreenState extends State<EinkReaderScreen> {
                                       ),
                                     ),
                                 ],
-                                Text(
-                                  _progressLabel,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: ink,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        _chapterLabel ?? '',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: ink,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      _percentOnlyLabel,
+                                      style: const TextStyle(
+                                        color: ink,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),

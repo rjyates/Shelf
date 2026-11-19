@@ -224,7 +224,23 @@ Locator? restoreReadiumLocator({
   return publication.resolveLocator(seed) ?? seed;
 }
 
-/// Status line for the reader chrome (matches web “page · %” style).
+/// Best-effort chapter / section title for the current locator.
+String? chapterTitleForLocator(Locator? locator, {Publication? publication}) {
+  if (locator == null) return null;
+  final fromLocator = locator.title?.trim();
+  if (fromLocator != null && fromLocator.isNotEmpty) return fromLocator;
+  if (publication == null) return null;
+  for (final link in publication.readingOrder) {
+    if (link.href == locator.href) {
+      final title = link.title?.trim();
+      if (title != null && title.isNotEmpty) return title;
+      break;
+    }
+  }
+  return null;
+}
+
+/// Status line for the reader chrome: optional chapter, page, and %.
 String readerProgressLabel({
   required ShelfPagedFormat? paged,
   required Locator? locator,
@@ -241,18 +257,25 @@ String readerProgressLabel({
           publication: publication,
         );
   final pct = '${(percentage * 100).round()}%';
-  if (paged == null) return pct;
-  final page = locator == null
-      ? null
-      : pageFromLocator(locator, publication: publication);
-  final pages =
-      pageCount ??
-      (paged == ShelfPagedFormat.cbz ? publication?.readingOrder.length : null);
-  if (page != null && pages != null && pages > 0) {
-    return 'Page $page of $pages · $pct';
+  final chapter = chapterTitleForLocator(locator, publication: publication);
+  String core = pct;
+  if (paged != null) {
+    final page = locator == null
+        ? null
+        : pageFromLocator(locator, publication: publication);
+    final pages =
+        pageCount ??
+        (paged == ShelfPagedFormat.cbz
+            ? publication?.readingOrder.length
+            : null);
+    if (page != null && pages != null && pages > 0) {
+      core = 'Page $page of $pages · $pct';
+    } else if (page != null) {
+      core = 'Page $page · $pct';
+    }
   }
-  if (page != null) return 'Page $page · $pct';
-  return pct;
+  if (chapter == null || chapter.isEmpty) return core;
+  return '$chapter · $core';
 }
 
 /// Ignore title-page locators while restoring a meaningful Shelf percentage.

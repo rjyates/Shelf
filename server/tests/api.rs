@@ -1305,6 +1305,421 @@ async fn account_catalogue_progress_and_restart() {
 }
 
 #[tokio::test]
+async fn patch_book_updates_title_and_author() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("patch-meta.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, book) = call(
+        &app,
+        "POST",
+        "/api/v1/books",
+        json!({"title":"Old Title","author":"Old Author","total_pages":100}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = book["id"].as_i64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/books/{id}"),
+            json!({"title":"  New Title  ","author":" New Author "}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let listed = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(listed[0]["title"], "New Title");
+    assert_eq!(listed[0]["author"], "New Author");
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/books/{id}"),
+            json!({"title":"","author":"x"}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            "/api/v1/books/99999",
+            json!({"title":"Nope","author":"Ghost"}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn patch_book_series_fields_round_trip_and_clear() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("series.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let id = call(
+        &app,
+        "POST",
+        "/api/v1/books",
+        json!({"title":"Book","author":"Author","total_pages":10}),
+        Some(&token),
+    )
+    .await
+    .1["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/books/{id}"),
+            json!({"title":"Book","author":"Author","series":"  Cycle  ","series_index":2.5}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let listed = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(listed[0]["series"], "Cycle");
+    assert_eq!(listed[0]["series_index"], 2.5);
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/books/{id}"),
+            json!({"title":"Book","author":"Author","series":"","series_index":null}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let cleared = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert!(cleared[0]["series"].is_null());
+    assert!(cleared[0]["series_index"].is_null());
+}
+
+#[tokio::test]
+async fn authors_list_counts_books() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("authors.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for (title, author) in [("One", "Ada"), ("Two", "Ada"), ("Three", "Bea")] {
+        call(
+            &app,
+            "POST",
+            "/api/v1/books",
+            json!({"title":title,"author":author,"total_pages":5}),
+            Some(&token),
+        )
+        .await;
+    }
+    let (status, authors) = call(&app, "GET", "/api/v1/authors", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(authors.as_array().unwrap().len(), 2);
+    assert_eq!(authors[0]["name"], "Ada");
+    assert_eq!(authors[0]["book_count"], 2);
+    assert_eq!(authors[1]["name"], "Bea");
+    assert_eq!(authors[1]["book_count"], 1);
+}
+
+#[tokio::test]
+async fn collections_crud_and_books_filter() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("collections.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let a = call(
+        &app,
+        "POST",
+        "/api/v1/books",
+        json!({"title":"A","author":"X","total_pages":1}),
+        Some(&token),
+    )
+    .await
+    .1["id"]
+        .as_i64()
+        .unwrap();
+    let b = call(
+        &app,
+        "POST",
+        "/api/v1/books",
+        json!({"title":"B","author":"X","total_pages":1}),
+        Some(&token),
+    )
+    .await
+    .1["id"]
+        .as_i64()
+        .unwrap();
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/collections",
+        json!({"name":"Favourites"}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let cid = created["id"].as_i64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/collections/{cid}"),
+            json!({"add_book_ids":[a],"remove_book_ids":[]}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let listed = call(
+        &app,
+        "GET",
+        "/api/v1/collections",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(listed[0]["name"], "Favourites");
+    assert_eq!(listed[0]["book_count"], 1);
+    assert_eq!(listed[0]["book_ids"][0], a);
+    let filtered = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books?collection_id={cid}"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(filtered.as_array().unwrap().len(), 1);
+    assert_eq!(filtered[0]["id"], a);
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/collections/{cid}"),
+            json!({"add_book_ids":[b],"remove_book_ids":[a]}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/collections/{cid}"),
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn scopes_crud() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("scopes.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/scopes",
+        json!({"name":"Finished","filter":{"status":"finished"}}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let sid = created["id"].as_i64().unwrap();
+    let listed = call(&app, "GET", "/api/v1/scopes", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(listed[0]["name"], "Finished");
+    assert_eq!(listed[0]["filter"]["status"], "finished");
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/scopes/{sid}"),
+            json!({"name":"Done","filter":{"author":"Ada","query":"war"}}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/v1/scopes",
+            json!({"name":"Bad","filter":{"unknown":"x"}}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/scopes/{sid}"),
+            Value::Null,
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn books_pagination_limit_offset() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("page.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for i in 1..=5 {
+        call(
+            &app,
+            "POST",
+            "/api/v1/books",
+            json!({"title":format!("T{i}"),"author":"A","total_pages":1}),
+            Some(&token),
+        )
+        .await;
+    }
+    let page = call(
+        &app,
+        "GET",
+        "/api/v1/books?limit=2&offset=1",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(page.as_array().unwrap().len(), 2);
+    // ORDER BY id DESC: newest first (5,4,3,2,1) → offset 1 → ids 4,3
+    assert_eq!(page[0]["title"], "T4");
+    assert_eq!(page[1]["title"], "T3");
+}
+
+#[tokio::test]
+async fn library_scan_imports_then_duplicates() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("libroot");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("sample.epub"), sample_epub(false)).unwrap();
+    // Process-wide env; unique root path avoids colliding with parallel tests.
+    std::env::set_var("SHELF_LIBRARY_ROOTS", root.to_str().unwrap());
+    let app = shelf_server::app(temp.path().join("scan.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let roots = call(
+        &app,
+        "GET",
+        "/api/v1/library/roots",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(roots["roots"][0], root.to_str().unwrap());
+    let (status, first) = call(
+        &app,
+        "POST",
+        "/api/v1/library/scan",
+        json!({"root": root.to_str().unwrap()}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["scanned"], 1);
+    assert_eq!(first["imported"], 1);
+    assert_eq!(first["duplicates"], 0);
+    let (status, second) = call(
+        &app,
+        "POST",
+        "/api/v1/library/scan",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second["imported"], 0);
+    assert_eq!(second["duplicates"], 1);
+}
+
+#[tokio::test]
 async fn authenticated_requests_slide_session_idle_window() {
     use sha2::{Digest, Sha256};
     let temp = tempfile::tempdir().unwrap();
@@ -2362,4 +2777,333 @@ async fn combine_with_merge_title_renames_mismatched_editions() {
         .find(|b| b["id"] == readaloud_id)
         .expect("readaloud in catalogue");
     assert_eq!(ra["title"], "The Return of the King (readaloud)");
+}
+
+#[tokio::test]
+async fn metadata_apply_and_fetch_queue() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = shelf_server::app(temp.path().join("meta.db")).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let id = call(
+        &app,
+        "POST",
+        "/api/v1/books",
+        json!({"title":"Dune","author":"Frank Herbert","total_pages":1}),
+        Some(&token),
+    )
+    .await
+    .1["id"]
+        .as_i64()
+        .unwrap();
+
+    let providers = call(
+        &app,
+        "GET",
+        "/api/v1/metadata/providers",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert!(providers
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["key"] == "openLibrary"));
+
+    let (status, _) = call(
+        &app,
+        "PATCH",
+        &format!("/api/v1/books/{id}/metadata"),
+        json!({
+            "description": "Desert planet.",
+            "genres": ["Science Fiction"],
+            "isbn13": "9780441172719"
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let meta = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/metadata"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(meta["description"], "Desert planet.");
+    assert_eq!(meta["genres"][0], "Science Fiction");
+    let listed = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(listed[0]["genres"], json!(["Science Fiction"]));
+    assert!(meta["metadata_score"].as_i64().unwrap() > 0);
+
+    let (status, applied) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/metadata/apply"),
+        json!({
+            "candidate": {
+                "provider": "openLibrary",
+                "external_id": "/works/OL123",
+                "title": "Dune",
+                "subtitle": "Complete",
+                "authors": ["Frank Herbert"],
+                "description": "From provider",
+                "publisher": "Chilton"
+            },
+            "fields": ["subtitle", "publisher"],
+            "respect_locks": true
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(applied["applied"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("subtitle")));
+
+    let meta = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/metadata"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(meta["subtitle"], "Complete");
+    assert_eq!(meta["publisher"], "Chilton");
+    // Locked description should not be overwritten by apply when locked.
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/books/{id}/metadata"),
+            json!({"locked_fields": ["description"]}),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/metadata/apply"),
+        json!({
+            "candidate": {
+                "provider": "google",
+                "external_id": "g1",
+                "description": "Should not apply"
+            },
+            "fields": ["description"],
+            "respect_locks": true
+        }),
+        Some(&token),
+    )
+    .await;
+    let meta = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/metadata"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(meta["description"], "Desert planet.");
+
+    let (status, run) = call(
+        &app,
+        "POST",
+        "/api/v1/metadata/fetch/run",
+        json!({"ignore_cache": false}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(run["queued"].as_i64().unwrap() >= 0);
+
+    let st = call(
+        &app,
+        "GET",
+        "/api/v1/metadata/fetch/status",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert!(st.get("queued").is_some());
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/v1/metadata/fetch/pause",
+            json!({}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn reading_sessions_idempotent_and_daily_rollup() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("sessions.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"reader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+
+    let body = json!({
+        "sessionId": "11111111-2222-4333-8444-555555555555",
+        "startedAt": "2026-03-15T18:00:00Z",
+        "endedAt": "2026-03-15T18:20:00Z",
+        "durationSeconds": 900,
+        "progressDelta": 5.5,
+        "endProgress": 42.0,
+        "startProgress": 36.5,
+        "sessionType": "read",
+        "source": "web",
+        "timezoneOffsetMinutes": 0
+    });
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/sessions"),
+            body.clone(),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    // Foliate file-id alias + idempotent replay must not double daily counts.
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/files/{id}/sessions"),
+            body,
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+
+    let sessions = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/sessions"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert!(sessions.is_array(), "{sessions}");
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+    assert_eq!(
+        sessions[0]["sessionId"],
+        "11111111-2222-4333-8444-555555555555"
+    );
+    assert_eq!(sessions[0]["durationSeconds"], 900);
+    assert_eq!(sessions[0]["progressEnd"], 42.0);
+    assert_eq!(sessions[0]["source"], "web");
+
+    let daily = call(
+        &app,
+        "GET",
+        "/api/v1/reading-daily",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert!(daily.is_array(), "{daily}");
+    let web = daily
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["source"] == "web" && row["day"] == "2026-03-15")
+        .expect("daily web row");
+    assert_eq!(web["sessionCount"], 1);
+    assert_eq!(web["readingSeconds"], 900);
+    assert_eq!(web["progressDeltaSum"], 5.5);
+
+    // Under-min sessions are accepted but not stored.
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/sessions"),
+            json!({
+                "sessionId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+                "startedAt": "2026-03-15T19:00:00Z",
+                "endedAt": "2026-03-15T19:00:05Z",
+                "durationSeconds": 5,
+                "endProgress": 43.0
+            }),
+            Some(&token),
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let sessions = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/sessions"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+
+    let prefs = call(
+        &app,
+        "GET",
+        "/api/v1/reading-prefs",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(prefs["timezone"], "UTC");
+    let updated = call(
+        &app,
+        "PUT",
+        "/api/v1/reading-prefs",
+        json!({"timezone": "America/Chicago", "annualGoalBooks": 24}),
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(updated["timezone"], "America/Chicago");
+    assert_eq!(updated["annualGoalBooks"], 24);
 }
