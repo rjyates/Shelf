@@ -1640,6 +1640,8 @@ function showAuth(setup) {
   lastView = null;
   setupRequired = setup;
   signedIn = false;
+  setNavOpen(false);
+  document.body.classList.add("auth-open");
   $("auth").hidden = false;
   $("content").hidden = true;
   $("open-add").hidden = true;
@@ -1677,6 +1679,7 @@ async function refresh() {
   hasMoreBooks = catalogue.length === BOOK_LIMIT;
   libraryResults = null;
   signedIn = true;
+  document.body.classList.remove("auth-open");
   $("auth").hidden = true;
   $("content").hidden = false;
   $("open-add").hidden = false;
@@ -3404,4 +3407,27 @@ $("meta-cancel")?.addEventListener("click", () =>
     (res) => `Cancelled ${res.cancelled} jobs.`,
   ),
 );
+
+function setNavOpen(open) {
+  document.body.classList.toggle("nav-open", open);
+  const toggle = $("nav-toggle");
+  const backdrop = $("nav-backdrop");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    const label = toggle.querySelector(".visually-hidden");
+    if (label) label.textContent = open ? "Close menu" : "Menu";
+  }
+  if (backdrop) backdrop.hidden = !open;
+}
+$("nav-toggle")?.addEventListener("click", () => {
+  setNavOpen(!document.body.classList.contains("nav-open"));
+});
+$("nav-backdrop")?.addEventListener("click", () => setNavOpen(false));
+document.querySelectorAll("#sidebar-panel a[data-view]").forEach((link) => {
+  link.addEventListener("click", () => setNavOpen(false));
+});
+$("signout")?.addEventListener("click", () => setNavOpen(false));
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setNavOpen(false);
+});
 

@@ -60,3 +60,62 @@ test("parses successful JSON and preserves authentication errors", async () => {
     { message: "Please sign in.", status: 401 },
   );
 });
+
+test("shell nav uses a drawer chrome and reserves scrollbar gutter", () => {
+  const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../web/app.css", import.meta.url), "utf8");
+  const js = readFileSync(new URL("../web/app.js", import.meta.url), "utf8");
+  assert.match(html, /id="nav-toggle"/);
+  assert.match(html, /id="sidebar-panel"/);
+  assert.match(html, /id="nav-backdrop"/);
+  assert.match(html, /class="auth-brand"/);
+  assert.match(css, /scrollbar-gutter:\s*stable/);
+  assert.match(css, /@media\s*\(max-width:\s*650px\)\s*\{[\s\S]*?\.nav-toggle\s*\{/);
+  assert.match(css, /body\.nav-open\s*\.sidebar-panel/);
+  assert.match(css, /body\.auth-open \.sidebar/);
+  assert.match(css, /body\.auth-open \.masthead/);
+  assert.doesNotMatch(
+    css,
+    /@media\s*\(max-width:\s*650px\)\s*\{[\s\S]*?\.sidebar\s+#signout\s*\{[\s\S]*?position:\s*absolute/,
+  );
+  assert.match(js, /function setNavOpen\(/);
+  assert.match(js, /classList\.add\("auth-open"\)/);
+  assert.match(js, /classList\.remove\("auth-open"\)/);
+});
+
+test("nav toggle opens and closes the mobile drawer", async () => {
+  const require = createRequire(
+    new URL("../web/package.json", import.meta.url),
+  );
+  const { JSDOM } = require("jsdom");
+  const dom = new JSDOM(
+    readFileSync(new URL("../web/index.html", import.meta.url), "utf8"),
+    { url: "http://localhost/#overview", runScripts: "outside-only" },
+  );
+  const { window } = dom;
+  window.request = async (path) =>
+    path === "setup"
+      ? { setup_required: false }
+      : path === "books"
+        ? []
+        : { books: 0, reading: 0, finished: 0, pages_read: 0 };
+  window.eval(
+    readFileSync(new URL("../web/app.js", import.meta.url), "utf8").replace(
+      /^import .* from .*;\r?\n/m,
+      "",
+    ),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const toggle = window.document.getElementById("nav-toggle");
+  const backdrop = window.document.getElementById("nav-backdrop");
+  assert.ok(toggle);
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  toggle.click();
+  assert.equal(window.document.body.classList.contains("nav-open"), true);
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.equal(backdrop.hidden, false);
+  backdrop.click();
+  assert.equal(window.document.body.classList.contains("nav-open"), false);
+  assert.equal(backdrop.hidden, true);
+  dom.window.close();
+});
