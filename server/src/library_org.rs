@@ -124,7 +124,7 @@ pub(super) async fn list_authors(
         .db(move |db| {
             let user = authenticate(db, &headers)?;
             let mut query = db.prepare(
-                "SELECT author, count(*) FROM books WHERE user_id=? GROUP BY author ORDER BY author COLLATE NOCASE",
+                "SELECT author, count(*) FROM books WHERE user_id=? AND merged_into IS NULL GROUP BY author ORDER BY author COLLATE NOCASE",
             )?;
             let rows = query
                 .query_map([user], |r| {
@@ -652,4 +652,80 @@ pub(super) async fn library_scan(
         "duplicates": duplicates,
         "failed": failed,
     })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MergeEditions {
+    /// Visible shelf card that keeps the secondary edition folded underneath.
+    primary_id: i64,
+    /// Edition hidden from the shelf card grid (still reachable via Manage/API).
+    secondary_id: i64,
+    /// Optional shared display title applied to both editions.
+    title: Option<String>,
+}
+
+/// Fold one catalogue edition under another without starting a readalong Combine.
+pub(super) async fn merge_editions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<MergeEditions>,
+) -> ApiResult<Json<serde_json::Value>> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            if body.primary_id == body.secondary_id {
+                return Err(ApiError(
+                    StatusCode::BAD_REQUEST,
+                    "Pick two different editions to merge.",
+                ));
+            }
+            owned_book(db, user, body.primary_id)?;
+            owned_book(db, user, body.secondary_id)?;
+            let primary_merged: Option<i64> = db.query_row(
+                "SELECT merged_into FROM books WHERE id=?",
+                [body.primary_id],
+                |r| r.get(0),
+            )?;
+            if primary_merged.is_some() {
+                return Err(ApiError(
+                    StatusCode::BAD_REQUEST,
+                    "That primary edition is already folded under another book.",
+                ));
+            }
+            if let Some(title) = body
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+            {
+                if title.len() > 500 {
+                    return Err(ApiError(
+                        StatusCode::BAD_REQUEST,
+                        "Merged title must be 500 characters or fewer.",
+                    ));
+                }
+                db.execute(
+                    "UPDATE books SET title=? WHERE id=? AND user_id=?",
+                    params![title, body.primary_id, user],
+                )?;
+                db.execute(
+                    "UPDATE books SET title=? WHERE id=? AND user_id=?",
+                    params![title, body.secondary_id, user],
+                )?;
+            }
+            db.execute(
+                "UPDATE books SET merged_into=? WHERE id=? AND user_id=?",
+                params![body.primary_id, body.secondary_id, user],
+            )?;
+            db.execute(
+                "UPDATE books SET merged_into=? WHERE merged_into=? AND user_id=?",
+                params![body.primary_id, body.secondary_id, user],
+            )?;
+            Ok(Json(serde_json::json!({
+                "primary_id": body.primary_id,
+                "secondary_id": body.secondary_id,
+            })))
+        })
+        .await
 }

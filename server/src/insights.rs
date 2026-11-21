@@ -274,7 +274,7 @@ fn month_from_day(day: &str) -> i32 {
 }
 
 fn finished_books_in_year(db: &Connection, user: i64, year: i32) -> ApiResult<i64> {
-    // Prefer lifecycle events; fall back to current finished status.
+    // One count per book if any finish falls in the year (extra re-reads same year ignored).
     let from_events: i64 = db.query_row(
         "SELECT count(DISTINCT book_id) FROM reading_events
          WHERE user_id=? AND event_type='finished' AND substr(at,1,4)=?",
@@ -283,6 +283,16 @@ fn finished_books_in_year(db: &Connection, user: i64, year: i32) -> ApiResult<i6
     )?;
     if from_events > 0 {
         return Ok(from_events);
+    }
+    // Events exist but none this year — do not inflate from books.status alone.
+    let any_events: i64 = db.query_row(
+        "SELECT count(*) FROM reading_events
+         WHERE user_id=? AND event_type='finished'",
+        params![user],
+        |r| r.get(0),
+    )?;
+    if any_events > 0 {
+        return Ok(0);
     }
     Ok(db.query_row(
         "SELECT count(*) FROM books WHERE user_id=? AND reading_status='finished'",

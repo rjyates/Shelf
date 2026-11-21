@@ -28,6 +28,9 @@
   --space: 24px;
   --radius: 3px;
   --shadow: 0 20px 70px #0b100dc0;
+  --sidebar-width: 228px;
+  --sidebar-width-icon: 72px;
+  --sidebar-motion: width 0.2s ease, margin-left 0.2s ease;
 }
 * {
   box-sizing: border-box;
@@ -119,12 +122,13 @@ input::placeholder {
   position: fixed;
   inset: 0 auto 0 0;
   z-index: 40;
-  width: 228px;
+  width: var(--sidebar-width);
   padding: 32px 20px 24px;
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   background: #1b1f19;
+  transition: width 0.2s ease;
 }
 .shell-bar {
   display: flex;
@@ -138,6 +142,41 @@ input::placeholder {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+}
+.nav-collapse {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.nav-collapse:hover {
+  color: var(--brass);
+  border-color: #b5a16b66;
+}
+.nav-collapse:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+/* Chevron points the way the rail will move: left when expanded, right when collapsed. */
+.nav-collapse-mark {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(135deg);
+  transition: transform 0.18s ease;
+}
+body.nav-collapsed .nav-collapse-mark {
+  transform: rotate(-45deg);
 }
 .nav-toggle {
   display: none;
@@ -196,8 +235,11 @@ body.nav-open .nav-toggle-bars::after {
   display: none;
 }
 @media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  main,
   .sidebar-panel,
   .nav-backdrop,
+  .nav-collapse-mark,
   .nav-toggle-bars,
   .nav-toggle-bars::before,
   .nav-toggle-bars::after {
@@ -240,10 +282,10 @@ nav a {
   border: 1px solid transparent;
   border-radius: var(--radius);
 }
-nav a span {
-  width: 20px;
-  color: var(--brass);
-  font-size: 21px;
+.nav-label {
+  color: var(--text);
+  flex: 1 1 auto;
+  min-width: 0;
 }
 nav a[aria-current="page"] {
   background: #b5a16b18;
@@ -274,14 +316,15 @@ nav a:hover {
   font-size: 10px;
 }
 main {
-  margin-left: 228px;
-  width: calc(100% - 228px);
+  margin-left: var(--sidebar-width);
+  width: calc(100% - var(--sidebar-width));
   max-width: none;
   min-height: 100dvh;
   padding: 36px clamp(20px, 3vw, 56px) 28px;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  transition: margin-left 0.2s ease, width 0.2s ease;
 }
 .masthead {
   position: relative;
@@ -599,6 +642,16 @@ progress {
   margin: 0 0 10px;
   overflow-wrap: anywhere;
 }
+.manage-filename {
+  margin: 0 0 12px;
+  font: 12px/1.45 var(--mono);
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.manage-filename[hidden] {
+  display: none;
+}
 .manage-merge {
   display: grid;
   gap: 12px;
@@ -661,6 +714,79 @@ progress {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
+}
+.manage-finish-date {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 4px 0;
+  font: 12px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.manage-finish-date input[type="date"] {
+  width: 100%;
+  max-width: 16rem;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control, 4px);
+  background: var(--paper-3, transparent);
+  color: var(--text);
+  font: 14px/1.4 var(--sans);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.manage-finish-history {
+  margin: 10px 4px 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.manage-finish-history-label {
+  margin: 0 0 8px;
+  font: 11px/1.5 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.manage-finish-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.manage-finish-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.manage-finish-row input[type="date"] {
+  flex: 1 1 10rem;
+  min-width: 0;
+  max-width: 16rem;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control, 4px);
+  background: var(--paper-3, transparent);
+  color: var(--text);
+  font: 14px/1.4 var(--sans);
+}
+.manage-finish-row .quiet {
+  font: 12px/1.4 var(--sans);
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.manage-finish-row .quiet:hover {
+  color: var(--brass);
+}
+.manage-finish-row .quiet.danger:hover {
+  color: var(--danger, #c47a6a);
 }
 .dialog-actions {
   display: flex;
@@ -1284,14 +1410,15 @@ dialog p {
 .skip:focus {
   top: 10px;
 }
-@media (max-width: 1000px) {
+@media (max-width: 1000px) and (min-width: 651px) {
+  :root {
+    --sidebar-width: 190px;
+  }
   .sidebar {
-    width: 190px;
     padding-inline: 14px;
   }
-  main {
-    margin-left: 190px;
-    width: calc(100% - 190px);
+  body.nav-collapsed {
+    --sidebar-width: var(--sidebar-width-icon);
   }
   .masthead {
     padding-right: 0;
@@ -1307,8 +1434,50 @@ dialog p {
     padding: 20px;
   }
 }
+/* Desktop: Book Orbit-style collapse to icon rail (journal skin). */
+@media (min-width: 651px) {
+  body.nav-collapsed {
+    --sidebar-width: var(--sidebar-width-icon);
+  }
+  body.nav-collapsed .sidebar {
+    padding: 24px 10px 20px;
+  }
+  body.nav-collapsed .shell-bar {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  body.nav-collapsed .brand {
+    justify-content: center;
+  }
+  body.nav-collapsed .brand-word,
+  body.nav-collapsed .nav-label,
+  body.nav-collapsed .side-note,
+  body.nav-collapsed .edition {
+    display: none;
+  }
+  body.nav-collapsed .sidebar-panel > nav {
+    margin-top: 18px;
+  }
+  body.nav-collapsed .sidebar-panel nav a {
+    justify-content: center;
+    padding-inline: 8px;
+    gap: 0;
+  }
+  body.nav-collapsed .sidebar-foot {
+    justify-content: center;
+  }
+  body.nav-collapsed .sidebar-foot nav {
+    flex: none;
+    width: 100%;
+  }
+}
+
 @media (max-width: 650px) {
-  /* App chrome: sticky brand bar + drawer — no horizontal nav strip. */
+  /* App chrome: sticky brand bar + sheet drawer (Book Orbit mobile sheet IA). */
+  :root {
+    --sidebar-width: 0px;
+  }
   .sidebar {
     inset: 0 0 auto 0;
     width: 100%;
@@ -1318,14 +1487,22 @@ dialog p {
     border-bottom: 1px solid var(--line);
     background: color-mix(in srgb, var(--ink) 92%, #1b1f19);
     backdrop-filter: blur(10px);
+    transition: none;
   }
   .shell-bar {
     height: 56px;
+  }
+  .nav-collapse {
+    display: none;
   }
   .nav-toggle {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+  }
+  .brand-word,
+  .nav-label {
+    display: inline;
   }
   .brand {
     font-size: 28px;
@@ -1375,14 +1552,7 @@ dialog p {
     align-items: stretch;
     gap: 4px;
   }
-  .sidebar-foot .signout {
-    position: static;
-    align-self: stretch;
-    min-height: 44px;
-    padding: 10px 12px;
-    text-align: left;
-    font-size: 12px;
-  }
+  
   .nav-backdrop {
     display: block;
     position: fixed;
@@ -1916,17 +2086,26 @@ nav a {
   flex: 1;
 }
 .signout {
-  padding: 6px 4px;
-  border: 0;
-  background: none;
-  color: var(--muted);
-  font: 11px/1.4 var(--mono);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: 12px/1.4 var(--mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
 }
 .signout:hover {
   color: var(--brass);
+  border-color: #b5a16b66;
+}
+#settings-account .signout {
+  margin-top: 4px;
 }
 .edition {
   margin-top: 14px;
