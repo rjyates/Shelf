@@ -19,8 +19,11 @@ CREATE TABLE IF NOT EXISTS books (
   reading_status TEXT NOT NULL DEFAULT 'open'
     CHECK(reading_status IN ('open','finished','unfinished','rereading')),
   series TEXT,
-  series_index REAL
+  series_index REAL,
+  -- Same-shelf fold: secondary editions point at the visible primary card.
+  merged_into INTEGER REFERENCES books(id) ON DELETE SET NULL
 );
+-- Index created in ensure_schema after ALTER for existing libraries.
 CREATE TABLE IF NOT EXISTS collections (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
@@ -54,6 +57,8 @@ CREATE TABLE IF NOT EXISTS epub_files (
   storage_path TEXT,
   -- Same for oversized `source` blobs (converted comics / AAX).
   source_path TEXT,
+  -- Original upload basename from x-shelf-filename / scan path (display only).
+  original_filename TEXT,
   -- AAX → M4B job: pending/running/failed/ready; NULL for non-AAX books.
   conversion_status TEXT CHECK(conversion_status IS NULL OR conversion_status IN ('pending','running','failed','ready')),
   conversion_error TEXT,

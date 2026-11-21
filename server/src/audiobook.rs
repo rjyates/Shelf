@@ -550,6 +550,10 @@ pub(super) async fn put_playback_state(
                 None,
             )?;
             if completed {
+                db.execute(
+                    "UPDATE books SET reading_status='finished' WHERE id=? AND user_id=?",
+                    params![id, user],
+                )?;
                 reading_stats::record_event(
                     db,
                     user,

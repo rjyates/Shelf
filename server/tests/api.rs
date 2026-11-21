@@ -815,6 +815,165 @@ async fn pdf_import_serve_and_page_location() {
         .0,
         StatusCode::NO_CONTENT
     );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/finished"),
+            json!({"finished_at": "2099-01-01"}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST,
+        "future finished_at rejected"
+    );
+    // Prior today finish remains after unfinished; correct via PATCH (append model).
+    let finishes = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/finishes"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    let finish_rows = finishes["finishes"].as_array().expect("finishes");
+    assert_eq!(
+        finish_rows.len(),
+        1,
+        "one finish after unfinished keeps history"
+    );
+    let event_id = finish_rows[0]["id"].as_i64().expect("finish id");
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            &format!("/api/v1/books/{id}/finishes/{event_id}"),
+            json!({"finished_at": "2020-06-15"}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::OK,
+        "patch finish day accepted"
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/finished"),
+            json!({"finished_at": "2020-06-15"}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT,
+        "re-mark finished appends while unfinished"
+    );
+    let finishes = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/finishes"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(
+        finishes["finishes"].as_array().expect("finishes").len(),
+        2,
+        "re-mark appends a second finish"
+    );
+    // Same book, two finishes in 2020 → annual/month still count once.
+    let widgets = call(
+        &app,
+        "GET",
+        "/api/v1/insights/widgets",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    let list = widgets["widgets"].as_array().expect("widgets");
+    let goal = list
+        .iter()
+        .find(|w| w["type"] == "reading-goal")
+        .expect("reading-goal");
+    assert_eq!(
+        goal["data"]["completedBooks"].as_i64().unwrap_or(-1),
+        0,
+        "2020 finishes must leave current-year goal at 0"
+    );
+    let challenge = list
+        .iter()
+        .find(|w| w["type"] == "monthly-challenge")
+        .expect("monthly-challenge");
+    assert_eq!(
+        challenge["data"]["progress"].as_i64().unwrap_or(-1),
+        0,
+        "2020 finishes must leave current-month challenge at 0"
+    );
+    let first_id = finishes["finishes"][0]["id"].as_i64().unwrap();
+    let second_id = finishes["finishes"][1]["id"].as_i64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/books/{id}/finishes/{first_id}"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/books/{id}/finishes/{second_id}"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    // Last delete clears finished status when no finish events remain.
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["reading_status"], "unfinished");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/finished"),
+            json!({"finished_at": "2020-06-15"}),
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT,
+        "restore a single backdated finish for later asserts"
+    );
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(catalogue[0]["reading_status"], "finished");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/v1/books/{id}/unfinished"),
+            Value::Null,
+            Some(&token)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
     let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
         .await
         .1;
@@ -3197,4 +3356,77 @@ async fn reading_sessions_idempotent_and_daily_rollup() {
         .iter()
         .any(|s| s["count"].as_i64().unwrap_or(0) >= 1));
     assert!(library["metadataCompleteness"]["total"].as_i64().unwrap() >= 1);
+}
+
+#[tokio::test]
+async fn fold_editions_merge_hides_secondary_and_keeps_filename() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("fold-merge.db");
+    let app = shelf_server::app(db_path).unwrap();
+    let credentials = json!({"username":"folder","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (status, first) = upload_named(
+        &app,
+        sample_epub(false),
+        Some(&token),
+        Some("primary-edition.epub"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    let primary_id = first["id"].as_i64().unwrap();
+
+    // Second EPUB must differ by digest from the first fixture.
+    let (status, second) = upload_named(
+        &app,
+        sample_epub_with_media_overlay(),
+        Some(&token),
+        Some("duplicate-copy.epub"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    let secondary_id = second["id"].as_i64().unwrap();
+
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let books = catalogue.as_array().unwrap();
+    let primary = books.iter().find(|b| b["id"] == primary_id).unwrap();
+    assert_eq!(primary["original_filename"], "primary-edition.epub");
+
+    let (status, merged) = call(
+        &app,
+        "POST",
+        "/api/v1/books/merge",
+        json!({
+            "primary_id": primary_id,
+            "secondary_id": secondary_id,
+            "title": "One Shelf Card"
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{merged}");
+
+    let catalogue = call(&app, "GET", "/api/v1/books", Value::Null, Some(&token))
+        .await
+        .1;
+    let books = catalogue.as_array().unwrap();
+    let primary = books.iter().find(|b| b["id"] == primary_id).unwrap();
+    let secondary = books.iter().find(|b| b["id"] == secondary_id).unwrap();
+    assert_eq!(primary["title"], "One Shelf Card");
+    assert_eq!(secondary["title"], "One Shelf Card");
+    assert_eq!(secondary["merged_into"], primary_id);
+    assert!(primary.get("merged_into").is_none() || primary["merged_into"].is_null());
+
+    let stats = call(&app, "GET", "/api/v1/stats", Value::Null, Some(&token))
+        .await
+        .1;
+    assert_eq!(stats["books"], 1, "{stats}");
 }

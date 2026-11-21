@@ -10,7 +10,7 @@
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar" data-state="expanded">
       <div class="shell-bar">
         <a class="brand" href="#overview"
           ><svg viewBox="0 0 32 32" aria-hidden="true">
@@ -18,8 +18,19 @@
               d="M16 7C11 3 6 3 2 4v22c5-1 10 0 14 3 4-3 9-4 14-3V4c-4-1-9-1-14 3v22M6 9c3 0 5 1 7 2M6 14c3 0 5 1 7 2M19 11c2-1 4-2 7-2M19 16c2-1 4-2 7-2"
             />
           </svg>
-          <span>shelf</span></a
+          <span class="brand-word">shelf</span></a
         >
+        <button
+          type="button"
+          id="nav-collapse"
+          class="nav-collapse"
+          aria-expanded="true"
+          aria-controls="sidebar"
+          title="Collapse sidebar"
+        >
+          <span class="nav-collapse-mark" aria-hidden="true"></span>
+          <span class="visually-hidden">Collapse sidebar</span>
+        </button>
         <button
           type="button"
           id="nav-toggle"
@@ -33,27 +44,30 @@
       </div>
       <div class="sidebar-panel" id="sidebar-panel">
         <nav aria-label="Main navigation">
-          <a href="#overview" data-view="overview"
-            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#room" /></svg> Overview</a
+          <a href="#overview" data-view="overview" title="Overview"
+            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#room" /></svg
+            ><span class="nav-label">Overview</span></a
           >
-          <a href="#library" data-view="library"
-            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#spines" /></svg> Library</a
+          <a href="#library" data-view="library" title="Library"
+            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#spines" /></svg
+            ><span class="nav-label">Library</span></a
           >
-          <a href="#insights" data-view="insights"
-            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#chart" /></svg> Reading insights</a
+          <a href="#insights" data-view="insights" title="Reading insights"
+            ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#chart" /></svg
+            ><span class="nav-label">Reading insights</span></a
           >
         </nav>
         <div class="side-note">
-          <p>“Good books change<br />the shape of time.”</p>
+          <p id="side-quote">“Good books change the shape of time.”</p>
           <img class="sprig" src="/ornaments/sprig.png" alt="" width="64" height="134" />
         </div>
         <div class="sidebar-foot">
           <nav aria-label="Preferences">
-            <a href="#settings" data-view="settings"
-              ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#gear" /></svg> Settings</a
+            <a href="#settings" data-view="settings" title="Settings"
+              ><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#gear" /></svg
+              ><span class="nav-label">Settings</span></a
             >
           </nav>
-          <button id="signout" class="signout" hidden>Sign out</button>
         </div>
         <p class="edition">SHELF / FIRST EDITION</p>
       </div>
@@ -424,6 +438,7 @@
             <a href="#settings-metadata">Metadata</a>
             <a href="#settings-tts">Text to speech</a>
             <a href="#settings-library">Library folders</a>
+            <a href="#settings-account">Account</a>
           </nav>
           <div class="settings-body">
             <section id="settings-activity" class="setting" aria-labelledby="activity-heading">
@@ -562,6 +577,19 @@
               <ul id="library-roots" class="library-roots"></ul>
               <p id="library-roots-empty" class="fine setting-empty">No library roots configured.</p>
             </section>
+
+            <section id="settings-account" class="setting" aria-labelledby="account-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Session</p>
+                  <h2 id="account-heading" tabindex="-1">Account</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Sign out ends this browser session. Your library stays on the server.
+              </p>
+              <button type="button" id="signout" class="signout" hidden>Sign out</button>
+            </section>
           </div>
         </section>
         <footer>
@@ -689,34 +717,67 @@
           Save metadata
         </button>
       </form>
+      <p id="manage-filename" class="manage-filename fine" hidden></p>
       <form id="manage-merge" class="manage-merge" hidden>
         <p class="fine">
-          Pair an EPUB with an audiobook when titles differ, set the shared
-          title, then Combine into a read-aloud edition.
+          Fold another edition under this shelf card. Files stay; the library
+          shows one book. Does not start a readalong.
         </p>
         <label
           >Merge with
           <select id="manage-merge-with" required></select
         ></label>
         <label
-          >Merged title
+          >Shared title
           <input
             id="manage-merge-title"
             name="mergeTitle"
             maxlength="500"
             required
-        /></label>
-        <p id="manage-merge-status" class="fine" hidden></p>
+          /></label>
         <button type="submit" class="primary" id="manage-merge-submit">
-          Merge &amp; Combine
+          Merge into one card
+        </button>
+      </form>
+      <form id="manage-combine" class="manage-merge" hidden>
+        <p class="fine">
+          Pair an EPUB with a playable audiobook to build a readalong.
+        </p>
+        <label
+          >Combine with
+          <select id="manage-combine-with" required></select
+        ></label>
+        <label
+          >Readalong title
+          <input
+            id="manage-combine-title"
+            name="combineTitle"
+            maxlength="500"
+            required
+          /></label>
+        <p id="manage-combine-status" class="fine" hidden></p>
+        <button type="submit" class="primary" id="manage-combine-submit">
+          Combine to readalong
         </button>
       </form>
       <ul class="manage-options">
-        <li>
+        <li id="manage-finish-block">
+          <label class="manage-finish-date"
+            >Finished on
+            <input type="date" id="manage-finished-at" name="finishedAt"
+          /></label>
           <button type="button" id="manage-finish" class="manage-option">
-            <span class="manage-option-label">Mark as finished</span>
-            <span class="manage-option-hint">Sets progress to 100%</span>
+            <span class="manage-option-label" id="manage-finish-label"
+              >Mark as finished</span
+            >
+            <span class="manage-option-hint" id="manage-finish-hint"
+              >Sets progress to 100%</span
+            >
           </button>
+          <div id="manage-finish-history" class="manage-finish-history" hidden>
+            <p class="manage-finish-history-label">Finish history</p>
+            <ul id="manage-finish-list" class="manage-finish-list"></ul>
+          </div>
         </li>
         <li>
           <button type="button" id="manage-unfinished" class="manage-option" hidden>

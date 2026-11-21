@@ -420,6 +420,11 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .execute_batch("ALTER TABLE books ADD COLUMN reading_status TEXT NOT NULL DEFAULT 'open'");
     let _ = db.execute_batch("ALTER TABLE books ADD COLUMN series TEXT");
     let _ = db.execute_batch("ALTER TABLE books ADD COLUMN series_index REAL");
+    let _ = db.execute_batch(
+        "ALTER TABLE books ADD COLUMN merged_into INTEGER REFERENCES books(id) ON DELETE SET NULL",
+    );
+    let _ = db.execute_batch("CREATE INDEX IF NOT EXISTS books_merged_into ON books(merged_into)");
+    let _ = db.execute_batch("ALTER TABLE epub_files ADD COLUMN original_filename TEXT");
     // Backfill finished from progress for libraries that only had % / pages.
     let _ = db.execute_batch(
         "UPDATE books SET reading_status='finished'
@@ -488,6 +493,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route("/api/v1/login", post(login))
         .route("/api/v1/logout", post(logout))
         .route("/api/v1/books", get(books).post(add_book))
+        .route("/api/v1/books/merge", post(library_org::merge_editions))
         .route(
             "/api/v1/books/{id}",
             patch(patch_book).delete(epub::delete_book),
@@ -552,6 +558,11 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         )
         .route("/api/v1/books/{id}/progress", post(update_progress))
         .route("/api/v1/books/{id}/finished", post(mark_finished))
+        .route("/api/v1/books/{id}/finishes", get(reading_stats::list_finishes))
+        .route(
+            "/api/v1/books/{id}/finishes/{event_id}",
+            patch(reading_stats::patch_finish).delete(reading_stats::delete_finish),
+        )
         .route("/api/v1/books/{id}/unfinished", post(mark_unfinished))
         .route("/api/v1/books/{id}/rereading", post(mark_rereading))
         .route("/api/v1/books/import", post(epub::import).layer(DefaultBodyLimit::disable()))
@@ -862,6 +873,9 @@ struct Book {
     reading_status: String,
     series: Option<String>,
     series_index: Option<f64>,
+    /// When set, this edition is folded under another shelf card.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merged_into: Option<i64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     genres: Vec<String>,
     #[serde(flatten)]
@@ -875,6 +889,9 @@ struct EpubInfo {
     percentage: f64,
     position: Option<String>,
     has_cover: bool,
+    /// Original upload basename when the client sent one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    original_filename: Option<String>,
     /// AAX conversion job status when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     conversion_status: Option<String>,
@@ -907,6 +924,7 @@ fn map_book_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Book> {
     let digest = r.get::<_, Option<String>>(11)?;
     let conversion_status: Option<String> = r.get(12)?;
     let conversion_error: Option<String> = r.get(13)?;
+    let original_filename: Option<String> = r.get(17)?;
     Ok(Book {
         id: r.get(0)?,
         title: r.get(1)?,
@@ -916,6 +934,7 @@ fn map_book_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Book> {
         reading_status: r.get(5)?,
         series: r.get(14)?,
         series_index: r.get(15)?,
+        merged_into: r.get(18)?,
         genres: r
             .get::<_, Option<String>>(16)?
             .map(|joined| joined.split('\u{1f}').map(str::to_string).collect())
@@ -941,6 +960,7 @@ fn map_book_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Book> {
                 percentage: r.get(7)?,
                 position: r.get(8)?,
                 has_cover: r.get(9)?,
+                original_filename,
                 conversion_status,
                 conversion_error,
             })
@@ -975,7 +995,8 @@ async fn books(
                  b.pages_read,b.reading_status,f.book_id,f.percentage,f.position,f.cover IS NOT NULL, \
                  f.format,f.digest,f.conversion_status,f.conversion_error,b.series,b.series_index, \
                  (SELECT group_concat(name, char(31)) FROM (SELECT g.name FROM book_genres bg \
-                 JOIN genres g ON g.id=bg.genre_id WHERE bg.book_id=b.id ORDER BY g.name)) \
+                 JOIN genres g ON g.id=bg.genre_id WHERE bg.book_id=b.id ORDER BY g.name)), \
+                 f.original_filename,b.merged_into \
                  FROM books b LEFT JOIN epub_files f ON f.book_id=b.id WHERE b.user_id=?",
             );
             let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user)];
@@ -1249,8 +1270,67 @@ fn mirror_work_text_progress(
     Ok(())
 }
 
+/// Parse a client calendar day `YYYY-MM-DD` into an RFC3339 UTC noon stamp for stats.
+pub(crate) fn parse_finished_day(day: &str) -> ApiResult<String> {
+    let day = day.trim();
+    let parts: Vec<&str> = day.split('-').collect();
+    if parts.len() != 3 || day.len() != 10 {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "finished_at must be YYYY-MM-DD.",
+        ));
+    }
+    let year: i32 = parts[0]
+        .parse()
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "finished_at must be YYYY-MM-DD."))?;
+    let month: u32 = parts[1]
+        .parse()
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "finished_at must be YYYY-MM-DD."))?;
+    let day_n: u32 = parts[2]
+        .parse()
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "finished_at must be YYYY-MM-DD."))?;
+    if !(1970..=2100).contains(&year) || !(1..=12).contains(&month) || !(1..=31).contains(&day_n) {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "finished_at must be YYYY-MM-DD.",
+        ));
+    }
+    let today = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let days = secs / 86400;
+        // Civil date from Unix day count (Howard Hinnant algorithm).
+        let z = days + 719468;
+        let era = if z >= 0 { z } else { z - 146096 } / 146097;
+        let doe = (z - era * 146097) as u64;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe as i64 + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = mp as i64 + if mp < 10 { 3 } else { -9 };
+        let y = y + if m <= 2 { 1 } else { 0 };
+        (y as i32, m as u32, d as u32)
+    };
+    if (year, month, day_n) > today {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "finished_at cannot be in the future.",
+        ));
+    }
+    Ok(format!("{year:04}-{month:02}-{day_n:02}T12:00:00Z"))
+}
+
 /// Set catalogue lifecycle status; finished also completes progress, reopen clears it.
-fn set_reading_status(db: &Connection, user: i64, id: i64, status: &str) -> ApiResult<()> {
+fn set_reading_status(
+    db: &Connection,
+    user: i64,
+    id: i64,
+    status: &str,
+    finished_at: Option<&str>,
+) -> ApiResult<()> {
     let imported: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM epub_files f JOIN books b ON b.id=f.book_id WHERE b.id=? AND b.user_id=?)",
         params![id, user],
@@ -1300,13 +1380,19 @@ fn set_reading_status(db: &Connection, user: i64, id: i64, status: &str) -> ApiR
         "UPDATE books SET reading_status=? WHERE id=? AND user_id=?",
         params![status, id, user],
     )?;
-    reading_stats::record_event(
+    let at = if status == "finished" {
+        finished_at.map(parse_finished_day).transpose()?
+    } else {
+        None
+    };
+    reading_stats::record_event_at(
         db,
         user,
         id,
         status,
         "manual",
         serde_json::json!({ "status": status }),
+        at.as_deref(),
     )?;
     let pct = match status {
         "finished" => Some(1.0),
@@ -1317,15 +1403,25 @@ fn set_reading_status(db: &Connection, user: i64, id: i64, status: &str) -> ApiR
     Ok(())
 }
 
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct MarkFinishedBody {
+    /// Client calendar day `YYYY-MM-DD`; defaults to today when omitted.
+    finished_at: Option<String>,
+}
+
 async fn mark_finished(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<i64>,
+    // `null` / omitted fields: Json<Option<_>> keeps existing Value::Null callers working.
+    Json(body): Json<Option<MarkFinishedBody>>,
 ) -> ApiResult<StatusCode> {
+    let finished_at = body.and_then(|b| b.finished_at);
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
-            set_reading_status(db, user, id, "finished")?;
+            set_reading_status(db, user, id, "finished", finished_at.as_deref())?;
             Ok(StatusCode::NO_CONTENT)
         })
         .await
@@ -1339,7 +1435,7 @@ async fn mark_unfinished(
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
-            set_reading_status(db, user, id, "unfinished")?;
+            set_reading_status(db, user, id, "unfinished", None)?;
             Ok(StatusCode::NO_CONTENT)
         })
         .await
@@ -1353,7 +1449,7 @@ async fn mark_rereading(
     state
         .db(move |db| {
             let user = authenticate(db, &headers)?;
-            set_reading_status(db, user, id, "rereading")?;
+            set_reading_status(db, user, id, "rereading", None)?;
             Ok(StatusCode::NO_CONTENT)
         })
         .await
@@ -1376,10 +1472,12 @@ async fn stats(
                                      WHEN b2.total_pages>0 THEN cast(b2.pages_read as real)/b2.total_pages END)
                      FROM books b2 LEFT JOIN epub_files f2 ON f2.book_id=b2.id
                      WHERE b2.user_id=?1
+                       AND b2.merged_into IS NULL
                        AND b2.id NOT IN (SELECT audio_book_id FROM book_works UNION SELECT readaloud_book_id FROM book_works WHERE readaloud_book_id IS NOT NULL)
                        AND CASE WHEN f2.book_id IS NOT NULL THEN f2.position IS NOT NULL ELSE b2.pages_read>0 END)
              FROM books b LEFT JOIN epub_files f ON f.book_id=b.id
              WHERE b.user_id=?1
+               AND b.merged_into IS NULL
                AND b.id NOT IN (SELECT audio_book_id FROM book_works UNION SELECT readaloud_book_id FROM book_works WHERE readaloud_book_id IS NOT NULL)",
             [user],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),

@@ -238,11 +238,33 @@ pub(crate) fn record_event(
     source: &str,
     payload: Value,
 ) -> ApiResult<()> {
-    db.execute(
-        "INSERT INTO reading_events(user_id, book_id, event_type, source, payload_json)
-         VALUES (?,?,?,?,?)",
-        params![user, book_id, event_type, source, payload.to_string()],
-    )?;
+    record_event_at(db, user, book_id, event_type, source, payload, None)
+}
+
+/// Persist a lifecycle event; `at` overrides the default `now` when backdating a finish.
+/// Finished events append (re-reads keep prior dates). Correct a wrong day via patch/delete.
+pub(crate) fn record_event_at(
+    db: &Connection,
+    user: i64,
+    book_id: i64,
+    event_type: &str,
+    source: &str,
+    payload: Value,
+    at: Option<&str>,
+) -> ApiResult<()> {
+    if let Some(at) = at {
+        db.execute(
+            "INSERT INTO reading_events(user_id, book_id, event_type, source, payload_json, at)
+             VALUES (?,?,?,?,?,?)",
+            params![user, book_id, event_type, source, payload.to_string(), at],
+        )?;
+    } else {
+        db.execute(
+            "INSERT INTO reading_events(user_id, book_id, event_type, source, payload_json)
+             VALUES (?,?,?,?,?)",
+            params![user, book_id, event_type, source, payload.to_string()],
+        )?;
+    }
     Ok(())
 }
 
@@ -849,6 +871,110 @@ pub(super) async fn put_prefs(
                 "year": year,
                 "annualGoalBooks": goal,
             })))
+        })
+        .await
+}
+
+fn finish_json(id: i64, at: String) -> Value {
+    let day = at.get(..10).unwrap_or("").to_string();
+    json!({ "id": id, "at": at, "finishedAt": day })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FinishPatch {
+    finished_at: String,
+}
+
+/// List finished events for a book (re-read history), newest first.
+pub(super) async fn list_finishes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(book_id): Path<i64>,
+) -> ApiResult<Json<Value>> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            owned_book(db, user, book_id)?;
+            let mut stmt = db.prepare(
+                "SELECT id, at FROM reading_events
+                 WHERE user_id=? AND book_id=? AND event_type='finished'
+                 ORDER BY at DESC, id DESC",
+            )?;
+            let rows = stmt
+                .query_map(params![user, book_id], |r| {
+                    Ok(finish_json(r.get(0)?, r.get(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Json(json!({ "finishes": rows })))
+        })
+        .await
+}
+
+/// Correct a finish calendar day (YYYY-MM-DD).
+pub(super) async fn patch_finish(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((book_id, event_id)): Path<(i64, i64)>,
+    Json(body): Json<FinishPatch>,
+) -> ApiResult<Json<Value>> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            owned_book(db, user, book_id)?;
+            let at = parse_finished_day(body.finished_at.trim())?;
+            let changed = db.execute(
+                "UPDATE reading_events SET at=?
+                 WHERE id=? AND user_id=? AND book_id=? AND event_type='finished'",
+                params![at, event_id, user, book_id],
+            )?;
+            if changed == 0 {
+                return Err(ApiError(StatusCode::NOT_FOUND, "Finish not found."));
+            }
+            Ok(Json(finish_json(event_id, at)))
+        })
+        .await
+}
+
+/// Remove one finish day. Last finish clears reading_status to unfinished.
+pub(super) async fn delete_finish(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((book_id, event_id)): Path<(i64, i64)>,
+) -> ApiResult<StatusCode> {
+    state
+        .db(move |db| {
+            let user = authenticate(db, &headers)?;
+            owned_book(db, user, book_id)?;
+            let changed = db.execute(
+                "DELETE FROM reading_events
+                 WHERE id=? AND user_id=? AND book_id=? AND event_type='finished'",
+                params![event_id, user, book_id],
+            )?;
+            if changed == 0 {
+                return Err(ApiError(StatusCode::NOT_FOUND, "Finish not found."));
+            }
+            let remaining: i64 = db.query_row(
+                "SELECT count(*) FROM reading_events
+                 WHERE user_id=? AND book_id=? AND event_type='finished'",
+                params![user, book_id],
+                |r| r.get(0),
+            )?;
+            if remaining == 0 {
+                let status: String = db.query_row(
+                    "SELECT reading_status FROM books WHERE id=? AND user_id=?",
+                    params![book_id, user],
+                    |r| r.get(0),
+                )?;
+                if status == "finished" {
+                    // Drop status only — progress stays; Manage unfinished still available.
+                    db.execute(
+                        "UPDATE books SET reading_status='unfinished' WHERE id=? AND user_id=?",
+                        params![book_id, user],
+                    )?;
+                }
+            }
+            Ok(StatusCode::NO_CONTENT)
         })
         .await
 }

@@ -26,6 +26,66 @@ let shelfTab = "all";
 let matchSelection = null;
 let matchCurrentMeta = null;
 
+/** Short iconic lines that fit the sidebar italic and the overview subtitle. */
+const BOOK_QUOTES = [
+  "All that is gold does not glitter.",
+  "Not all those who wander are lost.",
+  "So it goes.",
+  "Call me Ishmael.",
+  "It was a pleasure to burn.",
+  "Reader, I married him.",
+  "Curiouser and curiouser!",
+  "Please, sir, I want some more.",
+  "There is no frigate like a book.",
+  "In a hole in the ground there lived a hobbit.",
+  "And so we beat on, boats against the current.",
+  "We are such stuff as dreams are made on.",
+  "Once upon a time…",
+  "Good books change the shape of time.",
+  "A little further into another world.",
+  "The world was hers for the reading.",
+];
+
+function pickDistinctQuotes(count = 2) {
+  const order = BOOK_QUOTES.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return order.slice(0, count).map((i) => BOOK_QUOTES[i]);
+}
+
+function daypartHeading(now = new Date()) {
+  const hour = now.getHours();
+  if (hour >= 5 && hour < 12) return "A morning well read.";
+  if (hour >= 12 && hour < 17) return "An afternoon well read.";
+  if (hour >= 17 && hour < 21) return "An evening well read.";
+  return "A night well read.";
+}
+
+/** Local calendar day as YYYY-MM-DD for the finish-date picker. */
+function localDayIso(now = new Date()) {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Display percent: never round a sub-1 fraction up to 100. */
+function progressPercent(frac) {
+  const n = Number(frac) || 0;
+  if (n >= 1) return 100;
+  if (n <= 0) return 0;
+  return Math.min(99, Math.floor(n * 100));
+}
+
+const [sideQuote, overviewSubtitle] = pickDistinctQuotes(2);
+
+function applySideQuote() {
+  const node = $("side-quote");
+  if (node) node.textContent = `\u201c${sideQuote}\u201d`;
+}
+
 function readFiltersFromForm() {
   return {
     author: ($("filter-author")?.value || "").trim(),
@@ -325,18 +385,33 @@ function findCompanionEdition(book, catalogue) {
   return null;
 }
 
-/** Opposite-format editions available for a manual merge (titles may differ). */
+/** Any other unfolder edition that can fold under this shelf card. */
 function mergeCandidates(book, catalogue) {
-  // Already paired by shared title/author — no merge UI needed.
+  return catalogue.filter(
+    (other) =>
+      other.id !== book.id &&
+      !other.merged_into &&
+      !book.merged_into,
+  );
+}
+
+/** Opposite-format pair for Combine → readalong (titles may differ). */
+function combineCandidates(book, catalogue) {
   if (findCompanionEdition(book, catalogue)) return [];
   if (book.format === "epub") {
     return catalogue.filter(
-      (other) => other.id !== book.id && isPlayableAudiobook(other),
+      (other) =>
+        other.id !== book.id &&
+        !other.merged_into &&
+        isPlayableAudiobook(other),
     );
   }
   if (isPlayableAudiobook(book)) {
     return catalogue.filter(
-      (other) => other.id !== book.id && other.format === "epub",
+      (other) =>
+        other.id !== book.id &&
+        !other.merged_into &&
+        other.format === "epub",
     );
   }
   return [];
@@ -404,6 +479,7 @@ function hiddenEditionIds(catalogue, worksList) {
     }
   }
   for (const book of catalogue) {
+    if (book.merged_into) hide.add(book.id);
     // Orphan readalouds (work lost the link) — same title cue as mobile.
     if (/\(readaloud\)\s*$/i.test(book.title || "")) hide.add(book.id);
     if (!isPlayableAudiobook(book)) continue;
@@ -2312,7 +2388,7 @@ function render() {
       ? "A life in pages."
       : settings
         ? "Settings."
-        : "An evening well read.";
+        : daypartHeading();
   const volumes = shelfBooks().length;
   $("subtitle").textContent = library
     ? `${volumes.toLocaleString()} ${volumes === 1 ? "volume" : "volumes"}`
@@ -2320,7 +2396,7 @@ function render() {
       ? "The reading you have recorded, so far."
       : settings
         ? "How the reading room runs, and what it is doing now."
-        : "A little further into another world.";
+        : overviewSubtitle;
   $("breadcrumb").textContent = `YOUR READING ROOM / ${view.toUpperCase()}`;
   $("section-title").replaceChildren(
     element("span", "01 /"),
@@ -2356,9 +2432,8 @@ function render() {
   const visible = source.filter((book) => {
     if (foldedAway.has(book.id)) return false;
     if (!library) {
-      return isImported(book)
-        ? book.position && book.percentage < 1
-        : book.pages_read > 0 && book.pages_read < book.total_pages;
+      // Finished stays out of Currently reading even if % later drifts below 1.
+      return shelfState(book) === "reading";
     }
     if (shelfTab !== "all" && shelfState(book) !== shelfTab) return false;
     if (libraryResults != null) return true;
@@ -2410,7 +2485,7 @@ function render() {
     progress.value = fraction(book);
     progress.setAttribute(
       "aria-label",
-      `${title}: ${Math.round(fraction(book) * 100)}%`,
+      `${title}: ${progressPercent(fraction(book))}%`,
     );
     const update = element("button", "Record progress", "quiet");
     update.addEventListener("click", () => {
@@ -2509,32 +2584,73 @@ function render() {
       if ($("manage-collection")) $("manage-collection").value = "";
       $("manage-meta-submit").disabled = false;
       const finished = isFinished(book);
-      $("manage-finish").hidden = finished;
-      $("manage-finish").disabled = finished;
+      const finishBlock = $("manage-finish-block");
+      if (finishBlock) finishBlock.hidden = false;
+      $("manage-finish").hidden = false;
+      $("manage-finish").disabled = false;
+      const finishLabel = $("manage-finish-label");
+      const finishHint = $("manage-finish-hint");
+      if (finishLabel)
+        finishLabel.textContent = finished
+          ? "Add finish date"
+          : "Mark as finished";
+      if (finishHint)
+        finishHint.textContent = finished
+          ? "Records another re-read day"
+          : "Sets progress to 100%";
+      const dayInput = $("manage-finished-at");
+      if (dayInput) {
+        const today = localDayIso();
+        dayInput.value = today;
+        dayInput.max = today;
+      }
+      void loadManageFinishHistory(book.id);
       $("manage-unfinished").hidden = !finished;
       $("manage-unfinished").disabled = !finished;
       $("manage-rereading").hidden = !finished;
       $("manage-rereading").disabled = !finished;
       $("manage-help").textContent = manageHelp(book);
-      const candidates = mergeCandidates(book, catalogue);
-      const mergeForm = $("manage-merge");
-      const mergeSelect = $("manage-merge-with");
-      const mergeStatus = $("manage-merge-status");
-      mergeStatus.hidden = true;
-      mergeStatus.textContent = "";
-      $("manage-merge-submit").disabled = false;
-      mergeSelect.replaceChildren();
-      if (candidates.length) {
+      const filenameEl = $("manage-filename");
+      if (book.original_filename) {
+        filenameEl.textContent = `File · ${book.original_filename}`;
+        filenameEl.hidden = false;
+      } else {
+        filenameEl.textContent = "";
+        filenameEl.hidden = true;
+      }
+      const fillSelect = (select, candidates) => {
+        select.replaceChildren();
         for (const other of candidates) {
           const opt = document.createElement("option");
           opt.value = String(other.id);
           opt.textContent = `${displayTitle(other.title)} · ${formatLabel(other)}`;
-          mergeSelect.append(opt);
+          select.append(opt);
         }
+      };
+      const mergeForm = $("manage-merge");
+      const mergeSelect = $("manage-merge-with");
+      $("manage-merge-submit").disabled = false;
+      const foldCandidates = mergeCandidates(book, catalogue);
+      fillSelect(mergeSelect, foldCandidates);
+      if (foldCandidates.length) {
         $("manage-merge-title").value = displayTitle(book.title);
         mergeForm.hidden = false;
       } else {
         mergeForm.hidden = true;
+      }
+      const combineForm = $("manage-combine");
+      const combineSelect = $("manage-combine-with");
+      const combineStatus = $("manage-combine-status");
+      combineStatus.hidden = true;
+      combineStatus.textContent = "";
+      $("manage-combine-submit").disabled = false;
+      const pairCandidates = combineCandidates(book, catalogue);
+      fillSelect(combineSelect, pairCandidates);
+      if (pairCandidates.length) {
+        $("manage-combine-title").value = displayTitle(book.title);
+        combineForm.hidden = false;
+      } else {
+        combineForm.hidden = true;
       }
       $("manage-dialog").showModal();
     });
@@ -2578,12 +2694,12 @@ function render() {
     }
     actions.append(manage);
     const metaLabel = pairedAudio
-      ? `${Math.round(book.percentage * 100)}% read · Ebook + audiobook`
+      ? `${progressPercent(book.percentage)}% read · Ebook + audiobook`
       : isImported(book)
-        ? `${Math.round(book.percentage * 100)}% ${
+        ? `${progressPercent(book.percentage)}% ${
             isAudio(book) ? "played" : "read"
           } · ${formatLabel(book)}`
-        : `${book.pages_read} / ${book.total_pages} pages · ${Math.round(fraction(book) * 100)}%`;
+        : `${book.pages_read} / ${book.total_pages} pages · ${progressPercent(fraction(book))}%`;
     info.append(progress, element("p", metaLabel, "fine"));
     if (library) {
       const tags = genreTags(book);
@@ -2616,12 +2732,12 @@ function render() {
     bar.value = fraction(book);
     bar.setAttribute(
       "aria-label",
-      `${book.title}: ${Math.round(fraction(book) * 100)}%`,
+      `${book.title}: ${progressPercent(fraction(book))}%`,
     );
     row.append(
       element("span", displayTitle(book.title)),
       bar,
-      element("span", `${Math.round(fraction(book) * 100)}%`, "fine"),
+      element("span", `${progressPercent(fraction(book))}%`, "fine"),
     );
     $("progress-list").append(row);
   }
@@ -2695,12 +2811,32 @@ async function setReadingStatus(path, okMessage, buttonId) {
   const button = $(buttonId);
   button.disabled = true;
   $("manage-error").hidden = true;
+  const bookId = removeBook.id;
+  const reRead = path === "finished" && isFinished(removeBook);
   try {
-    await api(`books/${removeBook.id}/${path}`, { method: "POST" });
-    $("manage-dialog").close();
-    removeBook = null;
+    const opts = { method: "POST" };
+    if (path === "finished") {
+      const day = $("manage-finished-at")?.value || localDayIso();
+      opts.body = JSON.stringify({ finished_at: day });
+    }
+    await api(`books/${bookId}/${path}`, opts);
     await refresh();
     message(okMessage);
+    if (reRead) {
+      const next = catalogue.find((b) => b.id === bookId);
+      if (next) removeBook = next;
+      const today = localDayIso();
+      const dayInput = $("manage-finished-at");
+      if (dayInput) {
+        dayInput.value = today;
+        dayInput.max = today;
+      }
+      await loadManageFinishHistory(bookId);
+      button.disabled = false;
+      return;
+    }
+    $("manage-dialog").close();
+    removeBook = null;
   } catch (error) {
     $("manage-error").textContent = error.message;
     $("manage-error").hidden = false;
@@ -2763,9 +2899,102 @@ $("manage-meta").addEventListener("submit", async (event) => {
   }
 });
 $("manage-finish").addEventListener("click", () => {
-  if (!removeBook || isFinished(removeBook)) return;
-  setReadingStatus("finished", "Marked as finished.", "manage-finish");
+  if (!removeBook) return;
+  const again = isFinished(removeBook);
+  setReadingStatus(
+    "finished",
+    again ? "Finish date added." : "Marked as finished.",
+    "manage-finish",
+  );
 });
+async function loadManageFinishHistory(bookId) {
+  const wrap = $("manage-finish-history");
+  const list = $("manage-finish-list");
+  if (!wrap || !list) return;
+  list.replaceChildren();
+  wrap.hidden = true;
+  try {
+    const data = await api(`books/${bookId}/finishes`);
+    const finishes = Array.isArray(data?.finishes) ? data.finishes : [];
+    if (!finishes.length) return;
+    const today = localDayIso();
+    for (const row of finishes) {
+      const li = document.createElement("li");
+      li.className = "manage-finish-row";
+      li.dataset.eventId = String(row.id);
+      const input = document.createElement("input");
+      input.type = "date";
+      input.value = row.finishedAt || "";
+      input.max = today;
+      input.setAttribute("aria-label", "Finish date");
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "quiet";
+      save.textContent = "Save";
+      save.addEventListener("click", async () => {
+        if (!removeBook || !input.value) return;
+        save.disabled = true;
+        $("manage-error").hidden = true;
+        try {
+          await api(`books/${removeBook.id}/finishes/${row.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ finished_at: input.value }),
+          });
+          message("Finish date updated.");
+          await loadManageFinishHistory(removeBook.id);
+        } catch (error) {
+          $("manage-error").textContent = error.message;
+          $("manage-error").hidden = false;
+          save.disabled = false;
+        }
+      });
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "quiet danger";
+      del.textContent = "Delete";
+      del.addEventListener("click", async () => {
+        if (!removeBook) return;
+        del.disabled = true;
+        $("manage-error").hidden = true;
+        try {
+          await api(`books/${removeBook.id}/finishes/${row.id}`, {
+            method: "DELETE",
+          });
+          message("Finish date removed.");
+          await refresh();
+          const next = catalogue.find((b) => b.id === removeBook.id);
+          if (next) removeBook = next;
+          const stillFinished = next && isFinished(next);
+          $("manage-unfinished").hidden = !stillFinished;
+          $("manage-unfinished").disabled = !stillFinished;
+          $("manage-rereading").hidden = !stillFinished;
+          $("manage-rereading").disabled = !stillFinished;
+          const finishLabel = $("manage-finish-label");
+          const finishHint = $("manage-finish-hint");
+          if (finishLabel)
+            finishLabel.textContent = stillFinished
+              ? "Add finish date"
+              : "Mark as finished";
+          if (finishHint)
+            finishHint.textContent = stillFinished
+              ? "Records another re-read day"
+              : "Sets progress to 100%";
+          await loadManageFinishHistory(removeBook.id);
+        } catch (error) {
+          $("manage-error").textContent = error.message;
+          $("manage-error").hidden = false;
+          del.disabled = false;
+        }
+      });
+      li.append(input, save, del);
+      list.append(li);
+    }
+    wrap.hidden = false;
+  } catch (error) {
+    $("manage-error").textContent = error.message;
+    $("manage-error").hidden = false;
+  }
+}
 $("manage-unfinished").addEventListener("click", () => {
   if (!removeBook || !isFinished(removeBook)) return;
   setReadingStatus("unfinished", "Marked as unfinished.", "manage-unfinished");
@@ -2781,6 +3010,35 @@ $("manage-merge").addEventListener("submit", async (event) => {
   const other = catalogue.find((book) => book.id === otherId);
   const mergedTitle = $("manage-merge-title").value.trim();
   if (!other || !mergedTitle) return;
+  const button = $("manage-merge-submit");
+  button.disabled = true;
+  $("manage-error").hidden = true;
+  try {
+    await api("books/merge", {
+      method: "POST",
+      body: JSON.stringify({
+        primary_id: removeBook.id,
+        secondary_id: other.id,
+        title: mergedTitle,
+      }),
+    });
+    $("manage-dialog").close();
+    removeBook = null;
+    await refresh();
+    message("Editions merged into one card.");
+  } catch (error) {
+    $("manage-error").textContent = error.message || "Merge failed.";
+    $("manage-error").hidden = false;
+    button.disabled = false;
+  }
+});
+$("manage-combine").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!removeBook) return;
+  const otherId = Number($("manage-combine-with").value);
+  const other = catalogue.find((book) => book.id === otherId);
+  const combinedTitle = $("manage-combine-title").value.trim();
+  if (!other || !combinedTitle) return;
   const epubBook =
     removeBook.format === "epub"
       ? removeBook
@@ -2794,12 +3052,12 @@ $("manage-merge").addEventListener("submit", async (event) => {
       : null;
   if (!epubBook || !audioBook) {
     $("manage-error").textContent =
-      "Merge needs one EPUB and one playable audiobook.";
+      "Combine needs one EPUB and one playable audiobook.";
     $("manage-error").hidden = false;
     return;
   }
-  const button = $("manage-merge-submit");
-  const statusEl = $("manage-merge-status");
+  const button = $("manage-combine-submit");
+  const statusEl = $("manage-combine-status");
   button.disabled = true;
   $("manage-error").hidden = true;
   try {
@@ -2807,7 +3065,7 @@ $("manage-merge").addEventListener("submit", async (event) => {
       epubBook,
       audioBook,
       statusEl,
-      mergedTitle,
+      combinedTitle,
     );
     if (result.status === "ready") {
       $("manage-dialog").close();
@@ -2823,7 +3081,7 @@ $("manage-merge").addEventListener("submit", async (event) => {
         : "Still aligning in the background — refresh the library when it finishes.";
     button.disabled = false;
   } catch (error) {
-    $("manage-error").textContent = error.message || "Merge failed.";
+    $("manage-error").textContent = error.message || "Combine failed.";
     $("manage-error").hidden = false;
     button.disabled = false;
   }
@@ -3408,6 +3666,12 @@ $("meta-cancel")?.addEventListener("click", () =>
   ),
 );
 
+const NAV_COLLAPSED_KEY = "shelf.nav.collapsed";
+
+function isPhoneNav() {
+  return window.matchMedia("(max-width: 650px)").matches;
+}
+
 function setNavOpen(open) {
   document.body.classList.toggle("nav-open", open);
   const toggle = $("nav-toggle");
@@ -3419,15 +3683,64 @@ function setNavOpen(open) {
   }
   if (backdrop) backdrop.hidden = !open;
 }
+
+function setNavCollapsed(collapsed) {
+  const next = Boolean(collapsed);
+  document.body.classList.toggle("nav-collapsed", next);
+  const sidebar = $("sidebar");
+  if (sidebar) sidebar.dataset.state = next ? "collapsed" : "expanded";
+  const trigger = $("nav-collapse");
+  if (trigger) {
+    trigger.setAttribute("aria-expanded", next ? "false" : "true");
+    trigger.title = next ? "Expand sidebar" : "Collapse sidebar";
+    const label = trigger.querySelector(".visually-hidden");
+    if (label) label.textContent = next ? "Expand sidebar" : "Collapse sidebar";
+  }
+  try {
+    localStorage.setItem(NAV_COLLAPSED_KEY, next ? "1" : "0");
+  } catch {
+    /* private mode */
+  }
+}
+
+function readNavCollapsed() {
+  try {
+    return localStorage.getItem(NAV_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+setNavCollapsed(readNavCollapsed());
+applySideQuote();
+
 $("nav-toggle")?.addEventListener("click", () => {
   setNavOpen(!document.body.classList.contains("nav-open"));
+});
+$("nav-collapse")?.addEventListener("click", () => {
+  setNavCollapsed(!document.body.classList.contains("nav-collapsed"));
 });
 $("nav-backdrop")?.addEventListener("click", () => setNavOpen(false));
 document.querySelectorAll("#sidebar-panel a[data-view]").forEach((link) => {
   link.addEventListener("click", () => setNavOpen(false));
 });
-$("signout")?.addEventListener("click", () => setNavOpen(false));
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") setNavOpen(false);
+  if (
+    (event.key === "b" || event.key === "B") &&
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey
+  ) {
+    const tag = (event.target?.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || event.target?.isContentEditable) {
+      return;
+    }
+    event.preventDefault();
+    if (isPhoneNav()) {
+      setNavOpen(!document.body.classList.contains("nav-open"));
+    } else {
+      setNavCollapsed(!document.body.classList.contains("nav-collapsed"));
+    }
+  }
 });
 

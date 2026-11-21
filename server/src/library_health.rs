@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const HIDE_WORK_EDITIONS: &str = "b.id NOT IN (
+const HIDE_WORK_EDITIONS: &str = "b.merged_into IS NULL AND b.id NOT IN (
   SELECT audio_book_id FROM book_works
   UNION
   SELECT readaloud_book_id FROM book_works WHERE readaloud_book_id IS NOT NULL

@@ -818,6 +818,23 @@ pub(super) fn ingest_bytes(
     } else {
         import_epub(&tx, user, bytes, &digest, data_dir)?
     };
+    if let Some(name) = filename
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|raw| {
+            std::path::Path::new(raw)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty() && s.len() <= 500)
+                .map(str::to_owned)
+        })
+    {
+        tx.execute(
+            "UPDATE epub_files SET original_filename=? WHERE book_id=?",
+            params![name, id],
+        )?;
+    }
     tx.commit()?;
     // Auto-fetch queue when metadata settings say so (poller picks up within a few seconds).
     let _ = crate::metadata::enqueue_if_eligible(db, user, id);
