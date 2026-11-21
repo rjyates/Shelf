@@ -52,7 +52,7 @@ fn user_timezone_name(db: &Connection, user: i64) -> ApiResult<String> {
 }
 
 /// Parse RFC3339 / ISO-8601 to unix seconds (UTC).
-fn parse_rfc3339(s: &str) -> ApiResult<i64> {
+pub(crate) fn parse_rfc3339(s: &str) -> ApiResult<i64> {
     let s = s.trim();
     // Accept `YYYY-MM-DDTHH:MM:SS[.frac]Z` or with ±HH:MM offset.
     let (datetime, offset_secs) =
@@ -172,7 +172,7 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-fn format_rfc3339(unix_secs: i64) -> String {
+pub(crate) fn format_rfc3339(unix_secs: i64) -> String {
     let (y, m, d) = civil_from_days(unix_secs.div_euclid(86400));
     let rem = unix_secs.rem_euclid(86400) as u32;
     let h = rem / 3600;
@@ -410,33 +410,43 @@ fn recompute_daily_for_session(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct SessionBody {
-    session_id: String,
-    started_at: String,
-    ended_at: String,
-    duration_seconds: i64,
+pub(crate) struct SessionBody {
+    pub(crate) session_id: String,
+    pub(crate) started_at: String,
+    pub(crate) ended_at: String,
+    pub(crate) duration_seconds: i64,
     #[serde(default)]
-    progress_delta: Option<f64>,
+    pub(crate) progress_delta: Option<f64>,
     #[serde(default)]
-    end_progress: Option<f64>,
+    pub(crate) end_progress: Option<f64>,
     #[serde(default)]
-    start_progress: Option<f64>,
+    pub(crate) start_progress: Option<f64>,
     #[serde(default)]
-    session_type: Option<String>,
+    pub(crate) session_type: Option<String>,
     #[serde(default)]
-    source: Option<String>,
+    pub(crate) source: Option<String>,
     #[serde(default)]
-    format: Option<String>,
+    pub(crate) format: Option<String>,
     #[serde(default)]
-    chars_delta: Option<i64>,
+    pub(crate) chars_delta: Option<i64>,
     #[serde(default)]
-    pages_delta: Option<i64>,
+    pub(crate) pages_delta: Option<i64>,
     #[serde(default)]
-    device_id: Option<String>,
+    pub(crate) device_id: Option<String>,
     #[serde(default)]
-    device_name: Option<String>,
+    pub(crate) device_name: Option<String>,
     #[serde(default)]
-    timezone_offset_minutes: Option<i32>,
+    pub(crate) timezone_offset_minutes: Option<i32>,
+}
+
+/// Upsert a reading session (web capture + KOReader/Kobo injectors).
+pub(crate) fn upsert_session(
+    db: &Connection,
+    user: i64,
+    book_id: i64,
+    body: &SessionBody,
+) -> ApiResult<StatusCode> {
+    save_session(db, user, book_id, body)
 }
 
 fn save_session(

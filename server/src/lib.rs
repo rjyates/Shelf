@@ -12,6 +12,7 @@ mod media_overlay;
 mod metadata;
 mod reader_data;
 mod reading_stats;
+mod session_injectors;
 mod tts;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -463,6 +464,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     // M11/M17 metadata tables come from schema.sql; backfill entities/covers.
     metadata::migrate(&db);
     let _ = reading_stats::migrate(&db);
+    let _ = session_injectors::migrate(&db);
     let state = AppState {
         data_dir: database
             .parent()
@@ -642,6 +644,14 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/books/{id}/sessions/{client_session_id}",
             delete(reading_stats::delete_book_session),
+        )
+        .route(
+            "/api/v1/books/{id}/koreader/page-stats",
+            post(session_injectors::post_koreader_page_stats),
+        )
+        .route(
+            "/api/v1/books/{id}/kobo/statistics",
+            post(session_injectors::post_kobo_statistics),
         )
         .route("/api/v1/reading-sessions", get(reading_stats::list_sessions))
         .route("/api/v1/reading-daily", get(reading_stats::list_daily))
