@@ -6,6 +6,7 @@ mod audiobook;
 mod epub;
 mod epub_package;
 mod insights;
+mod kindle_delivery;
 mod library_health;
 mod library_org;
 mod media_overlay;
@@ -465,6 +466,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     metadata::migrate(&db);
     let _ = reading_stats::migrate(&db);
     let _ = session_injectors::migrate(&db);
+    let _ = kindle_delivery::migrate(&db);
     let state = AppState {
         data_dir: database
             .parent()
@@ -652,6 +654,14 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/books/{id}/kobo/statistics",
             post(session_injectors::post_kobo_statistics),
+        )
+        .route(
+            "/api/v1/books/{id}/send-to-kindle",
+            post(kindle_delivery::post_kindle_send),
+        )
+        .route(
+            "/api/v1/kindle-delivery",
+            get(kindle_delivery::get_kindle_settings).put(kindle_delivery::put_kindle_settings),
         )
         .route("/api/v1/reading-sessions", get(reading_stats::list_sessions))
         .route("/api/v1/reading-daily", get(reading_stats::list_daily))

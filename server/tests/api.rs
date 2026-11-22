@@ -3605,3 +3605,100 @@ async fn kobo_statistics_delta_creates_session() {
     assert_eq!(sessions.as_array().unwrap().len(), 2, "{sessions}");
     assert_eq!(sessions[0]["source"], "kobo");
 }
+
+#[tokio::test]
+async fn kindle_delivery_settings_and_stub_send() {
+    std::env::set_var("SHELF_KINDLE_SMTP_STUB", "1");
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("kindle.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"kindle","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, empty) = call(
+        &app,
+        "GET",
+        "/api/v1/kindle-delivery",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["configured"], false, "{empty}");
+    assert_eq!(empty["hasPassword"], false, "{empty}");
+
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/api/v1/kindle-delivery",
+        json!({
+            "recipientEmail": "me@kindle.com",
+            "smtpHost": "smtp.example.test",
+            "smtpPort": 587,
+            "smtpUsername": "sender@example.test",
+            "smtpPassword": "smtp-secret",
+            "fromAddress": "sender@example.test",
+            "fromName": "Shelf",
+            "startTls": true,
+            "ssl": false
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["configured"], true, "{saved}");
+    assert_eq!(saved["hasPassword"], true, "{saved}");
+    assert_eq!(saved["recipientEmail"], "me@kindle.com");
+    assert!(saved.get("smtpPassword").is_none(), "{saved}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+
+    let (status, sent) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/send-to-kindle"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    assert_eq!(sent["sent"], true, "{sent}");
+    assert_eq!(sent["subject"], "convert", "{sent}");
+    assert_eq!(sent["format"], "epub");
+    assert_eq!(sent["to"], "me@kindle.com");
+
+    let (status, pdf) = upload_named(&app, sample_pdf(), Some(&token), Some("fixture.pdf")).await;
+    assert_eq!(status, StatusCode::CREATED, "{pdf}");
+    let pdf_id = pdf["id"].as_i64().unwrap();
+    let (status, pdf_sent) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{pdf_id}/send-to-kindle"),
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pdf_sent}");
+    assert_eq!(pdf_sent["format"], "pdf", "{pdf_sent}");
+
+    let (status, audio) = upload(&app, sample_mp3(), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{audio}");
+    let audio_id = audio["id"].as_i64().unwrap();
+    let (status, reject) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{audio_id}/send-to-kindle"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{reject}");
+}
