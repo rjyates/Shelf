@@ -437,6 +437,7 @@
             <a href="#settings-activity">Activity</a>
             <a href="#settings-metadata">Metadata</a>
             <a href="#settings-tts">Text to speech</a>
+            <a href="#settings-kindle">Send to Kindle</a>
             <a href="#settings-library">Library folders</a>
             <a href="#settings-account">Account</a>
           </nav>
@@ -559,6 +560,35 @@
                   <button class="primary" type="submit">Save provider</button>
                 </form>
               </details>
+            </section>
+
+
+            <section id="settings-kindle" class="setting" aria-labelledby="kindle-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Delivery</p>
+                  <h2 id="kindle-heading" tabindex="-1">Send to Kindle</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Email an EPUB or PDF from Manage to your Kindle address. Use an SMTP
+                account Amazon has approved for Personal Documents. Kindle domains
+                get the subject <code>convert</code>.
+              </p>
+              <p id="kindle-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="kindle-form" class="tts-form">
+                <label>Kindle email<input name="recipientEmail" type="email" required maxlength="254" placeholder="you@kindle.com" autocomplete="off" /></label>
+                <label>From address<input name="fromAddress" type="email" required maxlength="254" placeholder="you@example.com" autocomplete="off" /></label>
+                <label>From name<span class="fine">(optional)</span><input name="fromName" maxlength="120" placeholder="Shelf" autocomplete="off" /></label>
+                <label>SMTP host<input name="smtpHost" required maxlength="253" placeholder="smtp.example.com" autocomplete="off" /></label>
+                <label>SMTP port<input name="smtpPort" type="number" min="1" max="65535" value="587" required /></label>
+                <label>SMTP username<input name="smtpUsername" maxlength="254" autocomplete="off" /></label>
+                <label>SMTP password<span class="fine" id="kindle-pw-hint">(optional if already saved)</span><input name="smtpPassword" type="password" maxlength="500" autocomplete="off" /></label>
+                <label class="check"><input name="startTls" type="checkbox" checked /> STARTTLS</label>
+                <label class="check"><input name="ssl" type="checkbox" /> Implicit SSL (port 465)</label>
+                <p id="kindle-error" role="alert" hidden></p>
+                <button class="primary" type="submit">Save Kindle settings</button>
+              </form>
             </section>
 
             <section id="settings-library" class="setting" aria-labelledby="library-heading">
@@ -761,6 +791,14 @@
         </button>
       </form>
       <ul class="manage-options">
+        <li id="manage-kindle-block" hidden>
+          <button type="button" id="manage-kindle" class="manage-option">
+            <span class="manage-option-label">Send to Kindle</span>
+            <span class="manage-option-hint" id="manage-kindle-hint"
+              >Email this EPUB or PDF</span
+            >
+          </button>
+        </li>
         <li id="manage-finish-block">
           <label class="manage-finish-date"
             >Finished on

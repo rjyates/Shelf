@@ -383,6 +383,19 @@ CREATE INDEX IF NOT EXISTS reading_sessions_user_ended
 CREATE INDEX IF NOT EXISTS reading_sessions_book
   ON reading_sessions(book_id, ended_at DESC);
 
+-- Kobo SpentReadingMinutes cursor (session injector idempotency).
+CREATE TABLE IF NOT EXISTS reading_session_sync_cursors (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  device_key TEXT NOT NULL,
+  generation INTEGER NOT NULL DEFAULT 0,
+  spent_reading_minutes INTEGER NOT NULL DEFAULT 0,
+  last_modified TEXT,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  PRIMARY KEY (user_id, book_id, source, device_key)
+);
+
 CREATE TABLE IF NOT EXISTS reading_daily_stats (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   day_local TEXT NOT NULL,

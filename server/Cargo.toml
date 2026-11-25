@@ -29,6 +29,8 @@ tempfile = "3"
 regex = "1"
 xmltree = "0.11"
 unicode-normalization = "0.1"
+# Send-to-Kindle SMTP (M12 slice 8); rustls to match reqwest.
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

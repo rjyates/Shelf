@@ -3430,3 +3430,275 @@ async fn fold_editions_merge_hides_secondary_and_keeps_filename() {
         .1;
     assert_eq!(stats["books"], 1, "{stats}");
 }
+
+#[tokio::test]
+async fn koreader_page_stats_clusters_into_sessions() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("koreader.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"koreader","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+
+    // Two clusters: contiguous pages, then a >1800s gap.
+    let body = json!({
+        "deviceId": "koreader-device-1",
+        "deviceName": "Kindle",
+        "events": [
+            {"page": 10, "startTime": 1_700_000_000, "durationSeconds": 60, "totalPages": 200},
+            {"page": 11, "startTime": 1_700_000_060, "durationSeconds": 60, "totalPages": 200},
+            {"page": 20, "startTime": 1_700_002_000, "durationSeconds": 120, "totalPages": 200}
+        ],
+        "timezoneOffsetMinutes": 0
+    });
+    let (status, result) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/koreader/page-stats"),
+        body.clone(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["imported"], 2, "{result}");
+    assert_eq!(result["source"], "koreader");
+    assert_eq!(result["sessionIds"].as_array().unwrap().len(), 2);
+
+    // Idempotent replay.
+    let (status, replay) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/koreader/page-stats"),
+        body,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay["imported"], 0, "{replay}");
+    assert_eq!(replay["skipped"], 2, "{replay}");
+
+    let sessions = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/sessions"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(sessions.as_array().unwrap().len(), 2, "{sessions}");
+    assert_eq!(sessions[0]["source"], "koreader");
+    assert!(sessions[0]["sessionId"]
+        .as_str()
+        .unwrap()
+        .starts_with("kor:"));
+
+    let daily = call(
+        &app,
+        "GET",
+        "/api/v1/reading-daily",
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    let kor = daily
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["source"] == "koreader")
+        .expect("koreader daily row");
+    assert_eq!(kor["sessionCount"], 2);
+    assert_eq!(kor["readingSeconds"], 240);
+}
+
+#[tokio::test]
+async fn kobo_statistics_delta_creates_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("kobo.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"kobo","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+
+    let body = json!({
+        "deviceId": "kobo-device-1",
+        "deviceName": "Clara 2E",
+        "spentReadingMinutes": 15,
+        "lastModified": "2026-03-15T18:30:00Z",
+        "endProgress": 25.0,
+        "timezoneOffsetMinutes": 0
+    });
+    let (status, result) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/kobo/statistics"),
+        body.clone(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["imported"], 1, "{result}");
+    assert_eq!(result["source"], "kobo");
+    assert_eq!(result["durationSeconds"], 900);
+    assert!(result["sessionIds"][0]
+        .as_str()
+        .unwrap()
+        .starts_with("kst:"));
+
+    // Same counter → noop.
+    let (status, noop) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/kobo/statistics"),
+        body,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{noop}");
+    assert_eq!(noop["imported"], 0, "{noop}");
+    assert_eq!(noop["skipped"], 1, "{noop}");
+
+    // Counter advance → another session.
+    let (status, second) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/kobo/statistics"),
+        json!({
+            "deviceId": "kobo-device-1",
+            "spentReadingMinutes": 20,
+            "lastModified": "2026-03-15T19:00:00Z",
+            "endProgress": 30.0
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second["imported"], 1, "{second}");
+    assert_eq!(second["durationSeconds"], 300);
+
+    let sessions = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/sessions"),
+        Value::Null,
+        Some(&token),
+    )
+    .await
+    .1;
+    assert_eq!(sessions.as_array().unwrap().len(), 2, "{sessions}");
+    assert_eq!(sessions[0]["source"], "kobo");
+}
+
+#[tokio::test]
+async fn kindle_delivery_settings_and_stub_send() {
+    std::env::set_var("SHELF_KINDLE_SMTP_STUB", "1");
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("kindle.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"kindle","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, empty) = call(
+        &app,
+        "GET",
+        "/api/v1/kindle-delivery",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["configured"], false, "{empty}");
+    assert_eq!(empty["hasPassword"], false, "{empty}");
+
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/api/v1/kindle-delivery",
+        json!({
+            "recipientEmail": "me@kindle.com",
+            "smtpHost": "smtp.example.test",
+            "smtpPort": 587,
+            "smtpUsername": "sender@example.test",
+            "smtpPassword": "smtp-secret",
+            "fromAddress": "sender@example.test",
+            "fromName": "Shelf",
+            "startTls": true,
+            "ssl": false
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["configured"], true, "{saved}");
+    assert_eq!(saved["hasPassword"], true, "{saved}");
+    assert_eq!(saved["recipientEmail"], "me@kindle.com");
+    assert!(saved.get("smtpPassword").is_none(), "{saved}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+
+    let (status, sent) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/send-to-kindle"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    assert_eq!(sent["sent"], true, "{sent}");
+    assert_eq!(sent["subject"], "convert", "{sent}");
+    assert_eq!(sent["format"], "epub");
+    assert_eq!(sent["to"], "me@kindle.com");
+
+    let (status, pdf) = upload_named(&app, sample_pdf(), Some(&token), Some("fixture.pdf")).await;
+    assert_eq!(status, StatusCode::CREATED, "{pdf}");
+    let pdf_id = pdf["id"].as_i64().unwrap();
+    let (status, pdf_sent) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{pdf_id}/send-to-kindle"),
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pdf_sent}");
+    assert_eq!(pdf_sent["format"], "pdf", "{pdf_sent}");
+
+    let (status, audio) = upload(&app, sample_mp3(), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{audio}");
+    let audio_id = audio["id"].as_i64().unwrap();
+    let (status, reject) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{audio_id}/send-to-kindle"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{reject}");
+}

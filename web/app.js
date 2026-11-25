@@ -2368,6 +2368,38 @@ async function renderTtsProviders() {
   }
 }
 
+
+async function renderKindleSettings() {
+  const form = $("kindle-form");
+  const status = $("kindle-status");
+  const err = $("kindle-error");
+  const hint = $("kindle-pw-hint");
+  if (!form || !status) return;
+  if (err) err.hidden = true;
+  try {
+    const settings = await api("kindle-delivery");
+    form.recipientEmail.value = settings.recipientEmail || "";
+    form.fromAddress.value = settings.fromAddress || "";
+    form.fromName.value = settings.fromName || "";
+    form.smtpHost.value = settings.smtpHost || "";
+    form.smtpPort.value = settings.smtpPort || 587;
+    form.smtpUsername.value = settings.smtpUsername || "";
+    form.smtpPassword.value = "";
+    form.startTls.checked = settings.startTls !== false;
+    form.ssl.checked = Boolean(settings.ssl);
+    if (hint) {
+      hint.textContent = settings.hasPassword
+        ? "(leave blank to keep saved)"
+        : "(required for authenticated SMTP)";
+    }
+    status.textContent = settings.configured
+      ? `Ready · ${settings.recipientEmail}`
+      : "Not configured yet — save recipient and SMTP below.";
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
 function render() {
   const requested = location.hash.slice(1);
   const view = ["overview", "library", "insights", "settings"].includes(requested)
@@ -2416,6 +2448,7 @@ function render() {
   $("settings-panel").hidden = !settings;
   if (settings && lastView !== "settings") {
     void renderTtsProviders();
+    void renderKindleSettings();
     void renderMetaProviders();
     void renderLibraryRoots();
     startActivityPoll();
@@ -2651,6 +2684,20 @@ function render() {
         combineForm.hidden = false;
       } else {
         combineForm.hidden = true;
+      }
+      const kindleBlock = $("manage-kindle-block");
+      const kindleBtn = $("manage-kindle");
+      const kindleHint = $("manage-kindle-hint");
+      const canKindle = book.format === "epub" || book.format === "pdf";
+      if (kindleBlock) kindleBlock.hidden = !canKindle;
+      if (kindleBtn) {
+        kindleBtn.hidden = !canKindle;
+        kindleBtn.disabled = !canKindle;
+      }
+      if (kindleHint) {
+        kindleHint.textContent = canKindle
+          ? "Email this EPUB or PDF"
+          : "EPUB or PDF only";
       }
       $("manage-dialog").showModal();
     });
@@ -2907,6 +2954,56 @@ $("manage-finish").addEventListener("click", () => {
     "manage-finish",
   );
 });
+$("kindle-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const err = $("kindle-error");
+  if (err) err.hidden = true;
+  const body = {
+    recipientEmail: form.recipientEmail.value.trim(),
+    fromAddress: form.fromAddress.value.trim(),
+    fromName: form.fromName.value.trim(),
+    smtpHost: form.smtpHost.value.trim(),
+    smtpPort: Number(form.smtpPort.value) || 587,
+    smtpUsername: form.smtpUsername.value.trim(),
+    startTls: form.startTls.checked,
+    ssl: form.ssl.checked,
+  };
+  const secret = form.smtpPassword.value;
+  if (secret) body.smtpPassword = secret;
+  try {
+    await api("kindle-delivery", { method: "PUT", body: JSON.stringify(body) });
+    message("Kindle delivery settings saved.");
+    await renderKindleSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("manage-kindle")?.addEventListener("click", async () => {
+  if (!removeBook) return;
+  const button = $("manage-kindle");
+  if (button) button.disabled = true;
+  try {
+    const result = await api(`books/${removeBook.id}/send-to-kindle`, {
+      method: "POST",
+      body: "{}",
+    });
+    message(result?.to ? `Sent to ${result.to}` : "Sent to Kindle.");
+    $("manage-dialog").close();
+  } catch (error) {
+    $("manage-error").textContent = error.message;
+    $("manage-error").hidden = false;
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
 async function loadManageFinishHistory(bookId) {
   const wrap = $("manage-finish-history");
   const list = $("manage-finish-list");
