@@ -2064,6 +2064,247 @@
         }
       }
     },
+    "/opds": {
+      "get": {
+        "summary": "OPDS root navigation feed",
+        "description": "Atom navigation catalog. Requires HTTP Basic auth against an OPDS user (not the Shelf session).",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OPDS navigation feed",
+            "content": {
+              "application/atom+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Basic credentials"
+          }
+        }
+      }
+    },
+    "/opds/catalog": {
+      "get": {
+        "summary": "OPDS acquisition catalog",
+        "description": "Paginated acquisition feed of downloadable books. Query: q, author, series, collectionId, page, size.",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "author",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "series",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "collectionId",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OPDS acquisition feed",
+            "content": {
+              "application/atom+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Basic credentials"
+          }
+        }
+      }
+    },
+    "/opds/{id}/file": {
+      "get": {
+        "summary": "Download a book via OPDS",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Book bytes"
+          },
+          "401": {
+            "description": "Missing or invalid Basic credentials"
+          },
+          "404": {
+            "description": "Book file not found"
+          }
+        }
+      }
+    },
+    "/opds-users": {
+      "get": {
+        "summary": "List OPDS Basic-auth users for the signed-in Shelf account",
+        "responses": {
+          "200": {
+            "description": "OPDS users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "username": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create an OPDS Basic-auth user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 1024
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created OPDS user"
+          },
+          "400": {
+            "description": "Invalid username or password"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "409": {
+            "description": "Username already taken"
+          }
+        }
+      }
+    },
+    "/opds-users/{id}": {
+      "delete": {
+        "summary": "Delete an OPDS Basic-auth user",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "OPDS user not found"
+          }
+        }
+      }
+    },
     "/reading-sessions": {
       "get": {
         "summary": "Recent reading sessions for the current user",
@@ -2428,6 +2669,10 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "shelf_session"
+      },
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic"
       }
     },
     "schemas": {

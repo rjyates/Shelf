@@ -11,6 +11,7 @@ mod library_health;
 mod library_org;
 mod media_overlay;
 mod metadata;
+mod opds;
 mod reader_data;
 mod reading_stats;
 mod session_injectors;
@@ -467,6 +468,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ = reading_stats::migrate(&db);
     let _ = session_injectors::migrate(&db);
     let _ = kindle_delivery::migrate(&db);
+    let _ = opds::migrate(&db);
     let state = AppState {
         data_dir: database
             .parent()
@@ -663,6 +665,20 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             "/api/v1/kindle-delivery",
             get(kindle_delivery::get_kindle_settings).put(kindle_delivery::put_kindle_settings),
         )
+        .route("/api/v1/opds", get(opds::root))
+        .route("/api/v1/opds/search.opds", get(opds::search_desc))
+        .route("/api/v1/opds/catalog", get(opds::catalog))
+        .route("/api/v1/opds/recent", get(opds::recent))
+        .route("/api/v1/opds/authors", get(opds::authors))
+        .route("/api/v1/opds/series", get(opds::series))
+        .route("/api/v1/opds/collections", get(opds::collections))
+        .route("/api/v1/opds/{id}/file", get(opds::download))
+        .route("/api/v1/opds/{id}/cover", get(opds::cover))
+        .route(
+            "/api/v1/opds-users",
+            get(opds::list_users).post(opds::create_user),
+        )
+        .route("/api/v1/opds-users/{id}", delete(opds::delete_user))
         .route("/api/v1/reading-sessions", get(reading_stats::list_sessions))
         .route("/api/v1/reading-daily", get(reading_stats::list_daily))
         .route(
