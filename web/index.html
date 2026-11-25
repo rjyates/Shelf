@@ -438,6 +438,7 @@
             <a href="#settings-metadata">Metadata</a>
             <a href="#settings-tts">Text to speech</a>
             <a href="#settings-kindle">Send to Kindle</a>
+            <a href="#settings-opds">OPDS catalog</a>
             <a href="#settings-library">Library folders</a>
             <a href="#settings-account">Account</a>
           </nav>
@@ -588,6 +589,30 @@
                 <label class="check"><input name="ssl" type="checkbox" /> Implicit SSL (port 465)</label>
                 <p id="kindle-error" role="alert" hidden></p>
                 <button class="primary" type="submit">Save Kindle settings</button>
+              </form>
+            </section>
+
+            <section id="settings-opds" class="setting" aria-labelledby="opds-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">External readers</p>
+                  <h2 id="opds-heading" tabindex="-1">OPDS catalog</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Let KOReader, Moon+, and similar clients browse and download your
+                library. Point them at
+                <code id="opds-feed-url">/api/v1/opds</code>
+                and sign in with a dedicated OPDS username below (not your Shelf login).
+              </p>
+              <p id="opds-status" class="fine" aria-live="polite">Checking…</p>
+              <ul id="opds-users" class="library-roots"></ul>
+              <p id="opds-users-empty" class="fine setting-empty" hidden>No OPDS users yet.</p>
+              <form id="opds-form" class="tts-form">
+                <label>OPDS username<input name="username" required maxlength="100" autocomplete="off" /></label>
+                <label>OPDS password<input name="password" type="password" required minlength="8" maxlength="1024" autocomplete="new-password" /></label>
+                <p id="opds-error" role="alert" hidden></p>
+                <button class="primary" type="submit">Add OPDS user</button>
               </form>
             </section>
 

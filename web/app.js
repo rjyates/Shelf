@@ -2400,6 +2400,52 @@ async function renderKindleSettings() {
   }
 }
 
+async function renderOpdsSettings() {
+  const list = $("opds-users");
+  const empty = $("opds-users-empty");
+  const status = $("opds-status");
+  const feed = $("opds-feed-url");
+  const err = $("opds-error");
+  if (!list || !status) return;
+  if (err) err.hidden = true;
+  if (feed) {
+    feed.textContent = `${location.origin}/api/v1/opds`;
+  }
+  try {
+    const data = await api("opds-users");
+    const users = Array.isArray(data.users) ? data.users : [];
+    list.replaceChildren();
+    for (const user of users) {
+      const li = element("li");
+      li.append(
+        element("span", user.username),
+        (() => {
+          const btn = element("button", "Remove");
+          btn.type = "button";
+          btn.className = "quiet";
+          btn.addEventListener("click", async () => {
+            try {
+              await api(`opds-users/${user.id}`, { method: "DELETE" });
+              message("OPDS user removed.");
+              await renderOpdsSettings();
+            } catch (error) {
+              message(error.message);
+            }
+          });
+          return btn;
+        })(),
+      );
+      list.append(li);
+    }
+    if (empty) empty.hidden = users.length > 0;
+    status.textContent = users.length
+      ? `${users.length} OPDS ${users.length === 1 ? "user" : "users"} · Basic auth at /api/v1/opds`
+      : "Add a username so readers can sign in over OPDS.";
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
 function render() {
   const requested = location.hash.slice(1);
   const view = ["overview", "library", "insights", "settings"].includes(requested)
@@ -2449,6 +2495,7 @@ function render() {
   if (settings && lastView !== "settings") {
     void renderTtsProviders();
     void renderKindleSettings();
+    void renderOpdsSettings();
     void renderMetaProviders();
     void renderLibraryRoots();
     startActivityPoll();
@@ -2975,6 +3022,32 @@ $("kindle-form")?.addEventListener("submit", async (event) => {
     await api("kindle-delivery", { method: "PUT", body: JSON.stringify(body) });
     message("Kindle delivery settings saved.");
     await renderKindleSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("opds-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const err = $("opds-error");
+  if (err) err.hidden = true;
+  try {
+    await api("opds-users", {
+      method: "POST",
+      body: JSON.stringify({
+        username: form.username.value.trim(),
+        password: form.password.value,
+      }),
+    });
+    form.reset();
+    message("OPDS user created.");
+    await renderOpdsSettings();
   } catch (error) {
     if (err) {
       err.textContent = error.message;

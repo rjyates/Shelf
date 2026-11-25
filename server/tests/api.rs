@@ -3702,3 +3702,164 @@ async fn kindle_delivery_settings_and_stub_send() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{reject}");
 }
+
+#[tokio::test]
+async fn opds_basic_auth_catalog_and_download() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("opds.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"opds-owner","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, empty) = call(&app, "GET", "/api/v1/opds-users", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["users"].as_array().unwrap().len(), 0, "{empty}");
+
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/opds-users",
+        json!({"username":"eink","password":"eink-secret-long"}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let opds_id = created["id"].as_i64().unwrap();
+    assert_eq!(created["username"], "eink");
+
+    let (status, listed) = call(&app, "GET", "/api/v1/opds-users", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["users"].as_array().unwrap().len(), 1, "{listed}");
+
+    // Session Bearer must not unlock OPDS feeds.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/opds")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // base64("eink:eink-secret-long")
+    let basic = "ZWluazplaW5rLXNlY3JldC1sb25n";
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/opds")
+                .header("authorization", format!("Basic {basic}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let ctype = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(ctype.contains("opds-catalog"), "{ctype}");
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.contains("All Books"), "{body}");
+    assert!(body.contains("/api/v1/opds/catalog"), "{body}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let book_id = book["id"].as_i64().unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/opds/catalog")
+                .header("authorization", format!("Basic {basic}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let catalog = String::from_utf8(
+        to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        catalog.contains(&format!("/api/v1/opds/{book_id}/file")),
+        "{catalog}"
+    );
+    assert!(
+        catalog.contains("http://opds-spec.org/acquisition"),
+        "{catalog}"
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/opds/{book_id}/file"))
+                .header("authorization", format!("Basic {basic}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let file_ctype = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(file_ctype, "application/epub+zip");
+    let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    assert!(!bytes.is_empty());
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        &format!("/api/v1/opds-users/{opds_id}"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/opds")
+                .header("authorization", format!("Basic {basic}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
