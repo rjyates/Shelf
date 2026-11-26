@@ -4312,3 +4312,106 @@ async fn koreader_hash_link_annotation_and_progress() {
 
 #[tokio::test]
 
+async fn kobo_device_library_sync_and_progress() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("kobo-sync.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"kobo","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, device) = call(
+        &app,
+        "POST",
+        "/api/v1/kobo/devices",
+        json!({"name": "Test Clara"}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{device}");
+    let device_token = device["token"].as_str().unwrap().to_string();
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let entitlement = format!("00000000-0000-4000-8000-{id:012x}");
+
+    let (status, init) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/kobo/{device_token}/v1/initialization"),
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{init}");
+    assert!(
+        init["Resources"]["library_sync"]
+            .as_str()
+            .unwrap()
+            .contains(&device_token),
+        "{init}"
+    );
+
+    let (status, sync) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/kobo/{device_token}/v1/library/sync"),
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sync}");
+    let arr = sync.as_array().expect("sync array");
+    assert!(!arr.is_empty(), "{sync}");
+    assert!(
+        arr.iter()
+            .any(|e| e["NewEntitlement"]["BookEntitlement"]["Id"] == entitlement),
+        "{sync}"
+    );
+
+    let (status, state) = call(
+        &app,
+        "PUT",
+        &format!("/api/v1/kobo/{device_token}/v1/library/{entitlement}/state"),
+        json!({
+            "ReadingStates": [{
+                "CurrentBookmark": { "ProgressPercent": 55.0 },
+                "StatusInfo": { "Status": "Reading" },
+                "Statistics": { "SpentReadingMinutes": 12 }
+            }]
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{state}");
+
+    let (status, got) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/kobo/{device_token}/v1/library/{entitlement}/state"),
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    assert_eq!(got.as_array().unwrap().len(), 1, "{got}");
+
+    let (status, dl) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/kobo/{device_token}/v1/library/{entitlement}/download"),
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dl}");
+}
+
+#[tokio::test]
+

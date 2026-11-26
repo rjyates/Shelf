@@ -442,6 +442,7 @@
             <a href="#settings-readwise">Readwise</a>
             <a href="#settings-storygraph">StoryGraph</a>
             <a href="#settings-koreader">KOReader sync</a>
+            <a href="#settings-kobo">Kobo sync</a>
             <a href="#settings-opds">OPDS catalog</a>
             <a href="#settings-library">Library folders</a>
             <a href="#settings-account">Account</a>
@@ -731,6 +732,41 @@
               <p id="koreader-links-empty" class="fine setting-empty" hidden>No hash links yet.</p>
             </section>
 
+
+            <section id="settings-kobo" class="setting" aria-labelledby="kobo-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Device sync</p>
+                  <h2 id="kobo-heading" tabindex="-1">Kobo sync</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Register a device token, then point the Kobo at
+                <code>/api/v1/kobo/&lt;token&gt;</code>
+                for library sync, reading state, and EPUB/PDF download.
+                Kepub conversion and Kobo store proxy stay deferred.
+              </p>
+              <p id="kobo-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="kobo-settings-form" class="tts-form">
+                <label>Reading threshold<input name="readingThreshold" type="number" min="0" max="1" step="0.01" /></label>
+                <label>Finished threshold<input name="finishedThreshold" type="number" min="0" max="1" step="0.01" /></label>
+                <label class="check"><input name="twoWayProgressSync" type="checkbox" checked /> Two-way progress sync</label>
+                <label class="check"><input name="storeSync" type="checkbox" /> Store sync (stored; proxy deferred)</label>
+                <p id="kobo-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save Kobo settings</button>
+                </div>
+              </form>
+              <h3 class="setting-subhead">Devices</h3>
+              <form id="kobo-device-form" class="tts-form">
+                <label>Device name<input name="name" type="text" maxlength="100" required placeholder="Clara 2E" /></label>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Add device</button>
+                </div>
+              </form>
+              <ul id="kobo-devices" class="library-roots"></ul>
+              <p id="kobo-devices-empty" class="fine setting-empty" hidden>No Kobo devices yet.</p>
+            </section>
 
             <section id="settings-opds" class="setting" aria-labelledby="opds-heading">
               <header class="setting-head">

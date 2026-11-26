@@ -8,6 +8,7 @@ mod epub_package;
 mod hardcover;
 mod insights;
 mod kindle_delivery;
+mod kobo_sync;
 mod koreader_sync;
 mod library_health;
 mod library_org;
@@ -476,6 +477,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ = readwise::migrate(&db);
     let _ = storygraph::migrate(&db);
     let _ = koreader_sync::migrate(&db);
+    let _ = kobo_sync::migrate(&db);
     let _ = opds::migrate(&db);
     let state = AppState {
         data_dir: database
@@ -761,6 +763,31 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/koreader/plugin/catalog",
             get(koreader_sync::plugin_catalog),
+        )
+.route(
+            "/api/v1/kobo",
+            get(kobo_sync::get_kobo_settings).put(kobo_sync::put_kobo_settings),
+        )
+        .route("/api/v1/kobo/devices", post(kobo_sync::create_kobo_device))
+        .route(
+            "/api/v1/kobo/devices/{id}",
+            patch(kobo_sync::rename_kobo_device).delete(kobo_sync::delete_kobo_device),
+        )
+        .route(
+            "/api/v1/kobo/{device_token}/v1/initialization",
+            get(kobo_sync::device_initialization),
+        )
+        .route(
+            "/api/v1/kobo/{device_token}/v1/library/sync",
+            get(kobo_sync::device_library_sync),
+        )
+        .route(
+            "/api/v1/kobo/{device_token}/v1/library/{book_key}/state",
+            get(kobo_sync::device_get_reading_state).put(kobo_sync::device_put_reading_state),
+        )
+        .route(
+            "/api/v1/kobo/{device_token}/v1/library/{book_key}/download",
+            get(kobo_sync::device_download),
         )
 .put(kindle_delivery::put_kindle_settings),
         )
