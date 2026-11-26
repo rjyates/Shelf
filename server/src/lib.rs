@@ -673,7 +673,18 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         )
         .route(
             "/api/v1/kindle-delivery",
-            get(kindle_delivery::get_kindle_settings).route(
+            get(kindle_delivery::get_kindle_settings).put(kindle_delivery::put_kindle_settings),
+        )
+        .route(
+            "/api/v1/kindle-delivery/providers",
+            post(kindle_delivery::create_kindle_provider),
+        )
+        .route(
+            "/api/v1/kindle-delivery/providers/{id}",
+            put(kindle_delivery::put_kindle_provider)
+                .delete(kindle_delivery::delete_kindle_provider),
+        )
+        .route(
             "/api/v1/hardcover",
             get(hardcover::get_hardcover_settings)
                 .put(hardcover::put_hardcover_settings)
@@ -688,7 +699,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             "/api/v1/books/{id}/hardcover/sync",
             post(hardcover::sync_hardcover_book),
         )
-.route(
+        .route(
             "/api/v1/readwise",
             get(readwise::get_readwise_settings)
                 .put(readwise::put_readwise_settings)
@@ -699,7 +710,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             post(readwise::validate_readwise_token),
         )
         .route("/api/v1/readwise/sync", post(readwise::sync_readwise))
-.route(
+        .route(
             "/api/v1/storygraph",
             get(storygraph::get_storygraph_settings)
                 .put(storygraph::put_storygraph_settings)
@@ -718,7 +729,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             "/api/v1/books/{id}/storygraph/link",
             post(storygraph::link_storygraph_book),
         )
-.route(
+        .route(
             "/api/v1/koreader",
             get(koreader_sync::get_koreader_settings)
                 .put(koreader_sync::put_koreader_settings)
@@ -764,7 +775,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             "/api/v1/koreader/plugin/catalog",
             get(koreader_sync::plugin_catalog),
         )
-.route(
+        .route(
             "/api/v1/kobo",
             get(kobo_sync::get_kobo_settings).put(kobo_sync::put_kobo_settings),
         )
@@ -788,8 +799,6 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/kobo/{device_token}/v1/library/{book_key}/download",
             get(kobo_sync::device_download),
-        )
-.put(kindle_delivery::put_kindle_settings),
         )
         .route("/api/v1/opds", get(opds::root))
         .route("/api/v1/opds/search.opds", get(opds::search_desc))

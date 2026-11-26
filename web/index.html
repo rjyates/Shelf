@@ -595,7 +595,26 @@
                 <p id="kindle-error" role="alert" hidden></p>
                 <button class="primary" type="submit">Save Kindle settings</button>
               </form>
-            </section>
+            
+              <h3 class="setting-subhead">SMTP providers</h3>
+              <p class="fine">Named SMTP accounts; one is the default for Send to Kindle.</p>
+              <ul id="kindle-providers" class="library-roots"></ul>
+              <p id="kindle-providers-empty" class="fine setting-empty" hidden>No named providers yet (flat SMTP fields above still work).</p>
+              <form id="kindle-provider-form" class="tts-form">
+                <label>Name<input name="name" type="text" maxlength="100" required placeholder="Home SMTP" /></label>
+                <label>SMTP host<input name="smtpHost" type="text" maxlength="253" /></label>
+                <label>SMTP port<input name="smtpPort" type="number" min="1" max="65535" value="587" /></label>
+                <label>SMTP username<input name="smtpUsername" type="text" maxlength="254" autocomplete="off" /></label>
+                <label>SMTP password<input name="smtpPassword" type="password" maxlength="512" autocomplete="new-password" /></label>
+                <label>From address<input name="fromAddress" type="email" maxlength="254" /></label>
+                <label>From name<input name="fromName" type="text" maxlength="120" /></label>
+                <label class="check"><input name="startTls" type="checkbox" checked /> STARTTLS</label>
+                <label class="check"><input name="ssl" type="checkbox" /> SSL</label>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Add SMTP provider</button>
+                </div>
+              </form>
+</section>
 
             <section id="settings-hardcover" class="setting" aria-labelledby="hardcover-heading">
               <header class="setting-head">
