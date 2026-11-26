@@ -3704,6 +3704,655 @@ async fn kindle_delivery_settings_and_stub_send() {
 }
 
 #[tokio::test]
+async fn hardcover_settings_validate_and_stub_sync() {
+    std::env::set_var("SHELF_HARDCOVER_STUB", "1");
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("hardcover.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"hc","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, empty) = call(&app, "GET", "/api/v1/hardcover", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["tokenConfigured"], false, "{empty}");
+    assert_eq!(empty["effectiveEnabled"], false, "{empty}");
+
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/api/v1/hardcover",
+        json!({
+            "apiToken": "hc-test-token",
+            "enabled": true,
+            "bookSyncMode": "all_eligible",
+            "privacySettingId": 3
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["tokenConfigured"], true, "{saved}");
+    assert_eq!(saved["effectiveEnabled"], true, "{saved}");
+    assert!(saved.get("apiToken").is_none(), "{saved}");
+
+    let (status, valid) = call(
+        &app,
+        "POST",
+        "/api/v1/hardcover/validate",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{valid}");
+    assert_eq!(valid["valid"], true, "{valid}");
+    assert_eq!(valid["hardcoverUsername"], "stub-user", "{valid}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/finished"),
+        json!({"finished_at": "2024-06-12"}),
+        Some(&token),
+    )
+    .await;
+
+    let (status, synced) = call(
+        &app,
+        "POST",
+        "/api/v1/hardcover/sync",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{synced}");
+    assert_eq!(synced["status"], "completed", "{synced}");
+    assert!(synced["syncedBooks"].as_i64().unwrap() >= 1, "{synced}");
+
+    let (status, one) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/hardcover/sync"),
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{one}");
+    assert_eq!(one["result"], "synced", "{one}");
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        "/api/v1/hardcover",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, after) = call(&app, "GET", "/api/v1/hardcover", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(after["tokenConfigured"], false, "{after}");
+}
+
+#[tokio::test]
+async fn readwise_settings_validate_and_stub_sync() {
+    std::env::set_var("SHELF_READWISE_STUB", "1");
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("readwise.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"rw","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, empty) = call(&app, "GET", "/api/v1/readwise", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["tokenConfigured"], false, "{empty}");
+
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/api/v1/readwise",
+        json!({ "apiToken": "rw-test-token", "enabled": true }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["effectiveEnabled"], true, "{saved}");
+    assert!(saved.get("apiToken").is_none(), "{saved}");
+
+    let (status, valid) = call(
+        &app,
+        "POST",
+        "/api/v1/readwise/validate",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{valid}");
+    assert_eq!(valid["valid"], true, "{valid}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let (status, ann) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/annotations"),
+        json!({
+            "cfi": "epubcfi(/6/2!/4)",
+            "text": "A stub highlight for Readwise",
+            "note": "margin",
+            "chapterTitle": "Ch 1"
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{ann}");
+
+    let (status, synced) = call(
+        &app,
+        "POST",
+        "/api/v1/readwise/sync",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{synced}");
+    assert_eq!(synced["syncedHighlights"], 1, "{synced}");
+    assert!(
+        synced["lastSyncedAnnotationId"].as_i64().unwrap() > 0,
+        "{synced}"
+    );
+
+    let (status, again) = call(
+        &app,
+        "POST",
+        "/api/v1/readwise/sync",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["syncedHighlights"], 0, "{again}");
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        "/api/v1/readwise",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn kindle_multi_provider_default_and_send() {
+    std::env::set_var("SHELF_KINDLE_SMTP_STUB", "1");
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("kindle-providers.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"kindle","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/api/v1/kindle-delivery",
+        json!({"recipientEmail": "me@kindle.com"}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, p1) = call(
+        &app,
+        "POST",
+        "/api/v1/kindle-delivery/providers",
+        json!({
+            "name": "Primary",
+            "smtpHost": "smtp.example.com",
+            "smtpPort": 587,
+            "smtpUsername": "u",
+            "smtpPassword": "secret",
+            "fromAddress": "shelf@example.com",
+            "startTls": true
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{p1}");
+    let id1 = p1["id"].as_i64().unwrap();
+
+    let (status, p2) = call(
+        &app,
+        "POST",
+        "/api/v1/kindle-delivery/providers",
+        json!({
+            "name": "Backup",
+            "smtpHost": "smtp2.example.com",
+            "smtpPort": 465,
+            "fromAddress": "shelf2@example.com",
+            "ssl": true
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{p2}");
+    let id2 = p2["id"].as_i64().unwrap();
+
+    let (status, settings) = call(
+        &app,
+        "PUT",
+        "/api/v1/kindle-delivery",
+        json!({"defaultProviderId": id2}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    assert_eq!(settings["defaultProviderId"], id2, "{settings}");
+    assert_eq!(settings["smtpHost"], "smtp2.example.com", "{settings}");
+    assert!(
+        settings["providers"].as_array().unwrap().len() >= 2,
+        "{settings}"
+    );
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let book_id = book["id"].as_i64().unwrap();
+
+    let (status, sent) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{book_id}/send-to-kindle"),
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    assert_eq!(sent["sent"], true, "{sent}");
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        &format!("/api/v1/kindle-delivery/providers/{id1}"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn kobo_device_library_sync_and_progress() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("kobo-sync.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"kobo","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, device) = call(
+        &app,
+        "POST",
+        "/api/v1/kobo/devices",
+        json!({"name": "Test Clara"}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{device}");
+    let device_token = device["token"].as_str().unwrap().to_string();
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let entitlement = format!("00000000-0000-4000-8000-{id:012x}");
+
+    let (status, init) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/kobo/{device_token}/v1/initialization"),
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{init}");
+    assert!(
+        init["Resources"]["library_sync"]
+            .as_str()
+            .unwrap()
+            .contains(&device_token),
+        "{init}"
+    );
+
+    let (status, sync) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/kobo/{device_token}/v1/library/sync"),
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sync}");
+    let arr = sync.as_array().expect("sync array");
+    assert!(!arr.is_empty(), "{sync}");
+    assert!(
+        arr.iter()
+            .any(|e| e["NewEntitlement"]["BookEntitlement"]["Id"] == entitlement),
+        "{sync}"
+    );
+
+    let (status, state) = call(
+        &app,
+        "PUT",
+        &format!("/api/v1/kobo/{device_token}/v1/library/{entitlement}/state"),
+        json!({
+            "ReadingStates": [{
+                "CurrentBookmark": { "ProgressPercent": 55.0 },
+                "StatusInfo": { "Status": "Reading" },
+                "Statistics": { "SpentReadingMinutes": 12 }
+            }]
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{state}");
+
+    let (status, got) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/kobo/{device_token}/v1/library/{entitlement}/state"),
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    assert_eq!(got.as_array().unwrap().len(), 1, "{got}");
+
+    let (status, dl) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/kobo/{device_token}/v1/library/{entitlement}/download"),
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dl}");
+}
+
+#[tokio::test]
+async fn koreader_hash_link_annotation_and_progress() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("koreader-sync.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"kor","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/api/v1/koreader",
+        json!({
+            "username": "kor-plugin",
+            "password": "plugin-secret-ok",
+            "syncEnabled": true,
+            "hideAudioOnlyBooks": true
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["effectiveEnabled"], true, "{saved}");
+    assert!(saved.get("password").is_none(), "{saved}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let hash = "0123456789abcdef0123456789abcdef";
+
+    let (status, unmatched) = call(
+        &app,
+        "POST",
+        "/api/v1/koreader/plugin/match-check",
+        json!({
+            "deviceId": "dev-1",
+            "deviceModel": "test",
+            "pluginVersion": "0.1",
+            "hashes": [hash],
+            "books": [{"hash": hash, "title": "Unmatched Title", "authors": "A"}]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unmatched}");
+    assert_eq!(unmatched["unmatchedCount"], 1, "{unmatched}");
+
+    let (status, linked) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/koreader/unmatched/{hash}/link"),
+        json!({"bookId": id}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    assert_eq!(linked["bookId"], id, "{linked}");
+
+    let (status, matched) = call(
+        &app,
+        "POST",
+        "/api/v1/koreader/plugin/match-check",
+        json!({
+            "deviceId": "dev-1",
+            "hashes": [hash]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{matched}");
+    assert_eq!(matched["matchedCount"], 1, "{matched}");
+
+    let (status, uploaded) = call(
+        &app,
+        "POST",
+        "/api/v1/koreader/plugin/annotations",
+        json!({
+            "deviceId": "dev-1",
+            "books": [{
+                "hash": hash,
+                "annotations": [{
+                    "datetime": "2024-06-12 10:00:00",
+                    "drawer": "lighten",
+                    "text": "A highlight",
+                    "note": "from device",
+                    "chapter": "Ch 1",
+                    "posFormat": "xpointer",
+                    "pos0": "/body/DocFragment[1]/text()[2].12"
+                }]
+            }]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{uploaded}");
+    assert_eq!(uploaded["upserted"], 1, "{uploaded}");
+
+    let (status, anns) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/annotations"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{anns}");
+    assert!(
+        anns.as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["text"] == "A highlight"),
+        "{anns}"
+    );
+
+    let (status, prog) = call(
+        &app,
+        "POST",
+        "/api/v1/koreader/plugin/progress",
+        json!({
+            "deviceId": "dev-1",
+            "items": [{"hash": hash, "percentage": 0.42}]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{prog}");
+    assert_eq!(prog["updated"], 1, "{prog}");
+
+    let (status, catalog) = call(
+        &app,
+        "GET",
+        "/api/v1/koreader/plugin/catalog",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{catalog}");
+    assert!(catalog["total"].as_i64().unwrap() >= 1, "{catalog}");
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        "/api/v1/koreader",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn storygraph_settings_validate_and_stub_sync() {
+    std::env::set_var("SHELF_STORYGRAPH_STUB", "1");
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("storygraph.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"sg","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, empty) = call(&app, "GET", "/api/v1/storygraph", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["cookiesConfigured"], false, "{empty}");
+
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/api/v1/storygraph",
+        json!({
+            "sessionCookie": "sg-session",
+            "rememberToken": "sg-remember",
+            "enabled": true,
+            "bookSyncMode": "all_eligible"
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["effectiveEnabled"], true, "{saved}");
+    assert!(saved.get("sessionCookie").is_none(), "{saved}");
+
+    let (status, valid) = call(
+        &app,
+        "POST",
+        "/api/v1/storygraph/validate",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{valid}");
+    assert_eq!(valid["valid"], true, "{valid}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/finished"),
+        json!({"finished_at": "2024-06-12"}),
+        Some(&token),
+    )
+    .await;
+
+    let (status, synced) = call(
+        &app,
+        "POST",
+        "/api/v1/storygraph/sync",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{synced}");
+    assert!(synced["syncedBooks"].as_i64().unwrap() >= 1, "{synced}");
+
+    let (status, one) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/storygraph/sync"),
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{one}");
+    assert_eq!(one["result"], "synced", "{one}");
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        "/api/v1/storygraph",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
 async fn opds_basic_auth_catalog_and_download() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("opds.db");

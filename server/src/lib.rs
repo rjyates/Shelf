@@ -5,8 +5,11 @@ mod audio_meta;
 mod audiobook;
 mod epub;
 mod epub_package;
+mod hardcover;
 mod insights;
 mod kindle_delivery;
+mod kobo_sync;
+mod koreader_sync;
 mod library_health;
 mod library_org;
 mod media_overlay;
@@ -14,7 +17,9 @@ mod metadata;
 mod opds;
 mod reader_data;
 mod reading_stats;
+mod readwise;
 mod session_injectors;
+mod storygraph;
 mod tts;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -468,6 +473,11 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ = reading_stats::migrate(&db);
     let _ = session_injectors::migrate(&db);
     let _ = kindle_delivery::migrate(&db);
+    let _ = hardcover::migrate(&db);
+    let _ = readwise::migrate(&db);
+    let _ = storygraph::migrate(&db);
+    let _ = koreader_sync::migrate(&db);
+    let _ = kobo_sync::migrate(&db);
     let _ = opds::migrate(&db);
     let state = AppState {
         data_dir: database
@@ -664,6 +674,131 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/kindle-delivery",
             get(kindle_delivery::get_kindle_settings).put(kindle_delivery::put_kindle_settings),
+        )
+        .route(
+            "/api/v1/kindle-delivery/providers",
+            post(kindle_delivery::create_kindle_provider),
+        )
+        .route(
+            "/api/v1/kindle-delivery/providers/{id}",
+            put(kindle_delivery::put_kindle_provider)
+                .delete(kindle_delivery::delete_kindle_provider),
+        )
+        .route(
+            "/api/v1/hardcover",
+            get(hardcover::get_hardcover_settings)
+                .put(hardcover::put_hardcover_settings)
+                .delete(hardcover::delete_hardcover_settings),
+        )
+        .route(
+            "/api/v1/hardcover/validate",
+            post(hardcover::validate_hardcover_token),
+        )
+        .route("/api/v1/hardcover/sync", post(hardcover::sync_hardcover_all))
+        .route(
+            "/api/v1/books/{id}/hardcover/sync",
+            post(hardcover::sync_hardcover_book),
+        )
+        .route(
+            "/api/v1/readwise",
+            get(readwise::get_readwise_settings)
+                .put(readwise::put_readwise_settings)
+                .delete(readwise::delete_readwise_settings),
+        )
+        .route(
+            "/api/v1/readwise/validate",
+            post(readwise::validate_readwise_token),
+        )
+        .route("/api/v1/readwise/sync", post(readwise::sync_readwise))
+        .route(
+            "/api/v1/storygraph",
+            get(storygraph::get_storygraph_settings)
+                .put(storygraph::put_storygraph_settings)
+                .delete(storygraph::delete_storygraph_settings),
+        )
+        .route(
+            "/api/v1/storygraph/validate",
+            post(storygraph::validate_storygraph_cookies),
+        )
+        .route("/api/v1/storygraph/sync", post(storygraph::sync_storygraph_all))
+        .route(
+            "/api/v1/books/{id}/storygraph/sync",
+            post(storygraph::sync_storygraph_book),
+        )
+        .route(
+            "/api/v1/books/{id}/storygraph/link",
+            post(storygraph::link_storygraph_book),
+        )
+        .route(
+            "/api/v1/koreader",
+            get(koreader_sync::get_koreader_settings)
+                .put(koreader_sync::put_koreader_settings)
+                .delete(koreader_sync::delete_koreader_settings),
+        )
+        .route(
+            "/api/v1/koreader/unmatched",
+            get(koreader_sync::list_unmatched),
+        )
+        .route(
+            "/api/v1/koreader/unmatched/{hash}/link",
+            post(koreader_sync::link_unmatched),
+        )
+        .route(
+            "/api/v1/koreader/unmatched/{hash}/dismiss",
+            post(koreader_sync::dismiss_unmatched),
+        )
+        .route(
+            "/api/v1/koreader/hash-links",
+            get(koreader_sync::list_hash_links),
+        )
+        .route(
+            "/api/v1/koreader/hash-links/{hash}",
+            delete(koreader_sync::unlink_hash),
+        )
+        .route(
+            "/api/v1/koreader/plugin/match-check",
+            post(koreader_sync::plugin_match_check),
+        )
+        .route(
+            "/api/v1/koreader/plugin/annotations",
+            post(koreader_sync::plugin_annotations_upload),
+        )
+        .route(
+            "/api/v1/koreader/plugin/annotations/exchange",
+            post(koreader_sync::plugin_annotations_exchange),
+        )
+        .route(
+            "/api/v1/koreader/plugin/progress",
+            post(koreader_sync::plugin_bulk_progress),
+        )
+        .route(
+            "/api/v1/koreader/plugin/catalog",
+            get(koreader_sync::plugin_catalog),
+        )
+        .route(
+            "/api/v1/kobo",
+            get(kobo_sync::get_kobo_settings).put(kobo_sync::put_kobo_settings),
+        )
+        .route("/api/v1/kobo/devices", post(kobo_sync::create_kobo_device))
+        .route(
+            "/api/v1/kobo/devices/{id}",
+            patch(kobo_sync::rename_kobo_device).delete(kobo_sync::delete_kobo_device),
+        )
+        .route(
+            "/api/v1/kobo/{device_token}/v1/initialization",
+            get(kobo_sync::device_initialization),
+        )
+        .route(
+            "/api/v1/kobo/{device_token}/v1/library/sync",
+            get(kobo_sync::device_library_sync),
+        )
+        .route(
+            "/api/v1/kobo/{device_token}/v1/library/{book_key}/state",
+            get(kobo_sync::device_get_reading_state).put(kobo_sync::device_put_reading_state),
+        )
+        .route(
+            "/api/v1/kobo/{device_token}/v1/library/{book_key}/download",
+            get(kobo_sync::device_download),
         )
         .route("/api/v1/opds", get(opds::root))
         .route("/api/v1/opds/search.opds", get(opds::search_desc))

@@ -438,6 +438,11 @@
             <a href="#settings-metadata">Metadata</a>
             <a href="#settings-tts">Text to speech</a>
             <a href="#settings-kindle">Send to Kindle</a>
+            <a href="#settings-hardcover">Hardcover</a>
+            <a href="#settings-readwise">Readwise</a>
+            <a href="#settings-storygraph">StoryGraph</a>
+            <a href="#settings-koreader">KOReader sync</a>
+            <a href="#settings-kobo">Kobo sync</a>
             <a href="#settings-opds">OPDS catalog</a>
             <a href="#settings-library">Library folders</a>
             <a href="#settings-account">Account</a>
@@ -590,6 +595,196 @@
                 <p id="kindle-error" role="alert" hidden></p>
                 <button class="primary" type="submit">Save Kindle settings</button>
               </form>
+            
+              <h3 class="setting-subhead">SMTP providers</h3>
+              <p class="fine">Named SMTP accounts; one is the default for Send to Kindle.</p>
+              <ul id="kindle-providers" class="library-roots"></ul>
+              <p id="kindle-providers-empty" class="fine setting-empty" hidden>No named providers yet (flat SMTP fields above still work).</p>
+              <form id="kindle-provider-form" class="tts-form">
+                <label>Name<input name="name" type="text" maxlength="100" required placeholder="Home SMTP" /></label>
+                <label>SMTP host<input name="smtpHost" type="text" maxlength="253" /></label>
+                <label>SMTP port<input name="smtpPort" type="number" min="1" max="65535" value="587" /></label>
+                <label>SMTP username<input name="smtpUsername" type="text" maxlength="254" autocomplete="off" /></label>
+                <label>SMTP password<input name="smtpPassword" type="password" maxlength="512" autocomplete="new-password" /></label>
+                <label>From address<input name="fromAddress" type="email" maxlength="254" /></label>
+                <label>From name<input name="fromName" type="text" maxlength="120" /></label>
+                <label class="check"><input name="startTls" type="checkbox" checked /> STARTTLS</label>
+                <label class="check"><input name="ssl" type="checkbox" /> SSL</label>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Add SMTP provider</button>
+                </div>
+              </form>
+</section>
+
+            <section id="settings-hardcover" class="setting" aria-labelledby="hardcover-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Outbound sync</p>
+                  <h2 id="hardcover-heading" tabindex="-1">Hardcover</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Push reading status and progress to your Hardcover account. Create an API
+                token in Hardcover settings, then sync eligible shelf books here.
+              </p>
+              <p id="hardcover-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="hardcover-form" class="tts-form">
+                <label>API token<span class="fine" id="hardcover-token-hint">(required)</span><input name="apiToken" type="password" maxlength="500" autocomplete="off" placeholder="Hardcover API token" /></label>
+                <label class="check"><input name="enabled" type="checkbox" /> Enable sync</label>
+                <label>Book sync mode
+                  <select name="bookSyncMode">
+                    <option value="all_eligible">All eligible books</option>
+                    <option value="selected_only">Selected books only</option>
+                  </select>
+                </label>
+                <label>Privacy
+                  <select name="privacySettingId">
+                    <option value="3">Private</option>
+                    <option value="2">Follows</option>
+                    <option value="1">Public</option>
+                  </select>
+                </label>
+                <label class="check"><input name="autoSyncOnStatusChange" type="checkbox" checked /> Auto-sync on status change</label>
+                <label class="check"><input name="autoSyncOnProgressUpdate" type="checkbox" checked /> Auto-sync on progress update</label>
+                <label class="check"><input name="autoSyncOnRatingChange" type="checkbox" checked /> Auto-sync on rating change</label>
+                <p id="hardcover-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save Hardcover settings</button>
+                  <button type="button" id="hardcover-validate" class="quiet">Validate token</button>
+                  <button type="button" id="hardcover-sync" class="quiet">Sync now</button>
+                  <button type="button" id="hardcover-disconnect" class="quiet">Disconnect</button>
+                </div>
+              </form>
+            </section>
+
+
+            <section id="settings-readwise" class="setting" aria-labelledby="readwise-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Outbound sync</p>
+                  <h2 id="readwise-heading" tabindex="-1">Readwise</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Push new Shelf highlights to Readwise. Create an access token in Readwise,
+                then sync annotations here.
+              </p>
+              <p id="readwise-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="readwise-form" class="tts-form">
+                <label>API token<span class="fine" id="readwise-token-hint">(required)</span><input name="apiToken" type="password" maxlength="500" autocomplete="off" placeholder="Readwise access token" /></label>
+                <label class="check"><input name="enabled" type="checkbox" /> Enable sync</label>
+                <p id="readwise-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save Readwise settings</button>
+                  <button type="button" id="readwise-validate" class="quiet">Validate token</button>
+                  <button type="button" id="readwise-sync" class="quiet">Sync now</button>
+                  <button type="button" id="readwise-disconnect" class="quiet">Disconnect</button>
+                </div>
+              </form>
+            </section>
+
+
+            <section id="settings-storygraph" class="setting" aria-labelledby="storygraph-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Outbound sync</p>
+                  <h2 id="storygraph-heading" tabindex="-1">StoryGraph</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Push reading status and progress to StoryGraph using your browser session
+                cookie and remember token (from app.thestorygraph.com).
+              </p>
+              <p id="storygraph-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="storygraph-form" class="tts-form">
+                <label>Session cookie<span class="fine" id="storygraph-session-hint">(required)</span><input name="sessionCookie" type="password" maxlength="4096" autocomplete="off" placeholder="_storygraph_session value" /></label>
+                <label>Remember token<span class="fine" id="storygraph-remember-hint">(required)</span><input name="rememberToken" type="password" maxlength="4096" autocomplete="off" placeholder="remember_user_token value" /></label>
+                <label class="check"><input name="enabled" type="checkbox" /> Enable sync</label>
+                <label>Book sync mode
+                  <select name="bookSyncMode">
+                    <option value="all_eligible">All eligible books</option>
+                    <option value="selected_only">Selected books only</option>
+                  </select>
+                </label>
+                <label class="check"><input name="autoSyncOnStatusChange" type="checkbox" checked /> Auto-sync on status change</label>
+                <label class="check"><input name="autoSyncOnProgressUpdate" type="checkbox" checked /> Auto-sync on progress update</label>
+                <p id="storygraph-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save StoryGraph settings</button>
+                  <button type="button" id="storygraph-validate" class="quiet">Validate cookies</button>
+                  <button type="button" id="storygraph-sync" class="quiet">Sync now</button>
+                  <button type="button" id="storygraph-disconnect" class="quiet">Disconnect</button>
+                </div>
+              </form>
+            </section>
+
+
+            <section id="settings-koreader" class="setting" aria-labelledby="koreader-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Device sync</p>
+                  <h2 id="koreader-heading" tabindex="-1">KOReader sync</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Plugin credentials for hash-link matching, progress, and annotation
+                exchange. Browse/download still uses OPDS; this surface links device
+                MD5 hashes to shelf books.
+              </p>
+              <p id="koreader-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="koreader-form" class="tts-form">
+                <label>Plugin username<input name="username" type="text" maxlength="100" autocomplete="username" placeholder="koreader" /></label>
+                <label>Plugin password<span class="fine" id="koreader-pw-hint">(required)</span><input name="pluginPassword" type="password" maxlength="200" autocomplete="new-password" /></label>
+                <label class="check"><input name="syncEnabled" type="checkbox" checked /> Enable sync</label>
+                <label class="check"><input name="hideAudioOnlyBooks" type="checkbox" /> Hide audio-only books in plugin catalog</label>
+                <p id="koreader-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save KOReader settings</button>
+                  <button type="button" id="koreader-disconnect" class="quiet">Disconnect</button>
+                </div>
+              </form>
+              <h3 class="setting-subhead">Unmatched hashes</h3>
+              <ul id="koreader-unmatched" class="library-roots"></ul>
+              <p id="koreader-unmatched-empty" class="fine setting-empty" hidden>No unmatched hashes.</p>
+              <h3 class="setting-subhead">Linked hashes</h3>
+              <ul id="koreader-links" class="library-roots"></ul>
+              <p id="koreader-links-empty" class="fine setting-empty" hidden>No hash links yet.</p>
+            </section>
+
+
+            <section id="settings-kobo" class="setting" aria-labelledby="kobo-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Device sync</p>
+                  <h2 id="kobo-heading" tabindex="-1">Kobo sync</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Register a device token, then point the Kobo at
+                <code>/api/v1/kobo/&lt;token&gt;</code>
+                for library sync, reading state, and EPUB/PDF download.
+                Kepub conversion and Kobo store proxy stay deferred.
+              </p>
+              <p id="kobo-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="kobo-settings-form" class="tts-form">
+                <label>Reading threshold<input name="readingThreshold" type="number" min="0" max="1" step="0.01" /></label>
+                <label>Finished threshold<input name="finishedThreshold" type="number" min="0" max="1" step="0.01" /></label>
+                <label class="check"><input name="twoWayProgressSync" type="checkbox" checked /> Two-way progress sync</label>
+                <label class="check"><input name="storeSync" type="checkbox" /> Store sync (stored; proxy deferred)</label>
+                <p id="kobo-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save Kobo settings</button>
+                </div>
+              </form>
+              <h3 class="setting-subhead">Devices</h3>
+              <form id="kobo-device-form" class="tts-form">
+                <label>Device name<input name="name" type="text" maxlength="100" required placeholder="Clara 2E" /></label>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Add device</button>
+                </div>
+              </form>
+              <ul id="kobo-devices" class="library-roots"></ul>
+              <p id="kobo-devices-empty" class="fine setting-empty" hidden>No Kobo devices yet.</p>
             </section>
 
             <section id="settings-opds" class="setting" aria-labelledby="opds-heading">

@@ -2064,6 +2064,679 @@
         }
       }
     },
+    "/hardcover": {
+      "get": {
+        "summary": "Get Hardcover sync settings",
+        "description": "API token is never returned; tokenConfigured indicates whether one is stored.",
+        "responses": {
+          "200": {
+            "description": "Settings"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Hardcover sync settings",
+        "description": "Omit apiToken to keep the existing secret.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "apiToken": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "bookSyncMode": {
+                    "type": "string",
+                    "enum": [
+                      "all_eligible",
+                      "selected_only"
+                    ]
+                  },
+                  "autoSyncOnStatusChange": {
+                    "type": "boolean"
+                  },
+                  "autoSyncOnProgressUpdate": {
+                    "type": "boolean"
+                  },
+                  "autoSyncOnRatingChange": {
+                    "type": "boolean"
+                  },
+                  "privacySettingId": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated settings"
+          },
+          "400": {
+            "description": "Invalid settings"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Disconnect Hardcover",
+        "responses": {
+          "204": {
+            "description": "Disconnected"
+          },
+          "404": {
+            "description": "Not configured"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/hardcover/validate": {
+      "post": {
+        "summary": "Validate a Hardcover API token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apiToken": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation result"
+          },
+          "400": {
+            "description": "Missing token"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/hardcover/sync": {
+      "post": {
+        "summary": "Sync eligible shelf books to Hardcover",
+        "responses": {
+          "200": {
+            "description": "Sync summary"
+          },
+          "400": {
+            "description": "Not enabled or missing token"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/books/{id}/hardcover/sync": {
+      "post": {
+        "summary": "Sync one shelf book to Hardcover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-book sync result"
+          },
+          "400": {
+            "description": "Not enabled or missing token"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        }
+      }
+    },
+    "/readwise": {
+      "get": {
+        "summary": "Get Readwise sync settings",
+        "responses": {
+          "200": {
+            "description": "Settings"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Readwise sync settings",
+        "responses": {
+          "200": {
+            "description": "Updated"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Disconnect Readwise",
+        "responses": {
+          "204": {
+            "description": "Disconnected"
+          },
+          "404": {
+            "description": "Not configured"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/readwise/validate": {
+      "post": {
+        "summary": "Validate a Readwise API token",
+        "responses": {
+          "200": {
+            "description": "Validation result"
+          },
+          "400": {
+            "description": "Missing token"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/readwise/sync": {
+      "post": {
+        "summary": "Push new Shelf highlights to Readwise",
+        "responses": {
+          "200": {
+            "description": "Sync summary"
+          },
+          "400": {
+            "description": "Not enabled"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "502": {
+            "description": "Readwise push failed"
+          }
+        }
+      }
+    },
+    "/storygraph": {
+      "get": {
+        "summary": "Get StoryGraph sync settings",
+        "responses": {
+          "200": {
+            "description": "Settings"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update StoryGraph sync settings",
+        "responses": {
+          "200": {
+            "description": "Updated"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Disconnect StoryGraph",
+        "responses": {
+          "204": {
+            "description": "Disconnected"
+          },
+          "404": {
+            "description": "Not configured"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/storygraph/validate": {
+      "post": {
+        "summary": "Validate StoryGraph cookies",
+        "responses": {
+          "200": {
+            "description": "Validation result"
+          },
+          "400": {
+            "description": "Missing cookies"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/storygraph/sync": {
+      "post": {
+        "summary": "Push eligible Shelf books to StoryGraph",
+        "responses": {
+          "200": {
+            "description": "Sync summary"
+          },
+          "400": {
+            "description": "Not enabled"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/books/{id}/storygraph/sync": {
+      "post": {
+        "summary": "Sync one book to StoryGraph",
+        "responses": {
+          "200": {
+            "description": "Sync result"
+          },
+          "400": {
+            "description": "Not enabled"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        }
+      }
+    },
+    "/books/{id}/storygraph/link": {
+      "post": {
+        "summary": "Manually link a Shelf book to a StoryGraph id/URL",
+        "responses": {
+          "200": {
+            "description": "Link result"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        }
+      }
+    },
+    "/koreader": {
+      "get": {
+        "summary": "Get KOReader plugin sync settings",
+        "responses": {
+          "200": {
+            "description": "Settings"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update KOReader plugin credentials",
+        "responses": {
+          "200": {
+            "description": "Updated"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Disconnect KOReader sync",
+        "responses": {
+          "204": {
+            "description": "Disconnected"
+          },
+          "404": {
+            "description": "Not configured"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/koreader/unmatched": {
+      "get": {
+        "summary": "List unmatched KOReader MD5 hashes",
+        "responses": {
+          "200": {
+            "description": "Unmatched list"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/koreader/unmatched/{hash}/link": {
+      "post": {
+        "summary": "Link an unmatched hash to a shelf book",
+        "responses": {
+          "200": {
+            "description": "Linked"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        }
+      }
+    },
+    "/koreader/unmatched/{hash}/dismiss": {
+      "post": {
+        "summary": "Dismiss an unmatched hash",
+        "responses": {
+          "200": {
+            "description": "Dismissed"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/koreader/hash-links": {
+      "get": {
+        "summary": "List KOReader hash links",
+        "responses": {
+          "200": {
+            "description": "Links"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/koreader/hash-links/{hash}": {
+      "delete": {
+        "summary": "Remove a KOReader hash link",
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/koreader/plugin/match-check": {
+      "post": {
+        "summary": "Plugin match-check for MD5 hashes",
+        "responses": {
+          "200": {
+            "description": "Match results"
+          },
+          "401": {
+            "description": "Auth required"
+          }
+        }
+      }
+    },
+    "/koreader/plugin/annotations": {
+      "post": {
+        "summary": "Upload KOReader annotations for linked hashes",
+        "responses": {
+          "200": {
+            "description": "Upload summary"
+          },
+          "401": {
+            "description": "Auth required"
+          }
+        }
+      }
+    },
+    "/koreader/plugin/annotations/exchange": {
+      "post": {
+        "summary": "Bidirectional annotation exchange lite",
+        "responses": {
+          "200": {
+            "description": "Exchange result"
+          },
+          "401": {
+            "description": "Auth required"
+          }
+        }
+      }
+    },
+    "/koreader/plugin/progress": {
+      "post": {
+        "summary": "Bulk progress push by hash",
+        "responses": {
+          "200": {
+            "description": "Progress summary"
+          },
+          "401": {
+            "description": "Auth required"
+          }
+        }
+      }
+    },
+    "/koreader/plugin/catalog": {
+      "get": {
+        "summary": "Hash-link catalog subset for the plugin",
+        "responses": {
+          "200": {
+            "description": "Catalog"
+          },
+          "401": {
+            "description": "Auth required"
+          }
+        }
+      }
+    },
+    "/kobo": {
+      "get": {
+        "summary": "Get Kobo sync settings and devices",
+        "responses": {
+          "200": {
+            "description": "Settings"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Kobo sync settings",
+        "responses": {
+          "200": {
+            "description": "Updated"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/kobo/devices": {
+      "post": {
+        "summary": "Register a Kobo device token",
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/kobo/devices/{id}": {
+      "patch": {
+        "summary": "Rename a Kobo device",
+        "responses": {
+          "200": {
+            "description": "Renamed"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a Kobo device",
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/kobo/{device_token}/v1/initialization": {
+      "get": {
+        "summary": "Kobo device initialization resources",
+        "responses": {
+          "200": {
+            "description": "Resources"
+          },
+          "401": {
+            "description": "Invalid token"
+          }
+        }
+      }
+    },
+    "/kobo/{device_token}/v1/library/sync": {
+      "get": {
+        "summary": "Kobo library sync entitlements",
+        "responses": {
+          "200": {
+            "description": "Entitlements"
+          },
+          "401": {
+            "description": "Invalid token"
+          }
+        }
+      }
+    },
+    "/kobo/{device_token}/v1/library/{book_key}/state": {
+      "get": {
+        "summary": "Get Kobo reading state",
+        "responses": {
+          "200": {
+            "description": "State"
+          },
+          "401": {
+            "description": "Invalid token"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Kobo reading state",
+        "responses": {
+          "200": {
+            "description": "Updated"
+          },
+          "401": {
+            "description": "Invalid token"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/kobo/{device_token}/v1/library/{book_key}/download": {
+      "get": {
+        "summary": "Download a synced Kobo book file",
+        "responses": {
+          "200": {
+            "description": "File"
+          },
+          "401": {
+            "description": "Invalid token"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/opds": {
       "get": {
         "summary": "OPDS root navigation feed",
@@ -2654,6 +3327,58 @@
           },
           "401": {
             "description": "No valid session"
+          }
+        }
+      }
+    },
+    "/kindle-delivery/providers": {
+      "post": {
+        "summary": "Create a named Kindle SMTP provider",
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "409": {
+            "description": "Name conflict"
+          }
+        }
+      }
+    },
+    "/kindle-delivery/providers/{id}": {
+      "put": {
+        "summary": "Update a Kindle SMTP provider",
+        "responses": {
+          "200": {
+            "description": "Updated"
+          },
+          "400": {
+            "description": "Invalid"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a Kindle SMTP provider",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "No valid session"
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }

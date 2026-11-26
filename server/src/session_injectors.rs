@@ -158,7 +158,7 @@ fn owned_book(db: &Connection, user: i64, book_id: i64) -> ApiResult<()> {
     }
 }
 
-fn apply_progress(
+pub(crate) fn apply_progress(
     db: &Connection,
     user: i64,
     book_id: i64,
