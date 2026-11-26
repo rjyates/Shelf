@@ -8,6 +8,7 @@ mod epub_package;
 mod hardcover;
 mod insights;
 mod kindle_delivery;
+mod koreader_sync;
 mod library_health;
 mod library_org;
 mod media_overlay;
@@ -474,6 +475,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ = hardcover::migrate(&db);
     let _ = readwise::migrate(&db);
     let _ = storygraph::migrate(&db);
+    let _ = koreader_sync::migrate(&db);
     let _ = opds::migrate(&db);
     let state = AppState {
         data_dir: database
@@ -713,6 +715,52 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         .route(
             "/api/v1/books/{id}/storygraph/link",
             post(storygraph::link_storygraph_book),
+        )
+.route(
+            "/api/v1/koreader",
+            get(koreader_sync::get_koreader_settings)
+                .put(koreader_sync::put_koreader_settings)
+                .delete(koreader_sync::delete_koreader_settings),
+        )
+        .route(
+            "/api/v1/koreader/unmatched",
+            get(koreader_sync::list_unmatched),
+        )
+        .route(
+            "/api/v1/koreader/unmatched/{hash}/link",
+            post(koreader_sync::link_unmatched),
+        )
+        .route(
+            "/api/v1/koreader/unmatched/{hash}/dismiss",
+            post(koreader_sync::dismiss_unmatched),
+        )
+        .route(
+            "/api/v1/koreader/hash-links",
+            get(koreader_sync::list_hash_links),
+        )
+        .route(
+            "/api/v1/koreader/hash-links/{hash}",
+            delete(koreader_sync::unlink_hash),
+        )
+        .route(
+            "/api/v1/koreader/plugin/match-check",
+            post(koreader_sync::plugin_match_check),
+        )
+        .route(
+            "/api/v1/koreader/plugin/annotations",
+            post(koreader_sync::plugin_annotations_upload),
+        )
+        .route(
+            "/api/v1/koreader/plugin/annotations/exchange",
+            post(koreader_sync::plugin_annotations_exchange),
+        )
+        .route(
+            "/api/v1/koreader/plugin/progress",
+            post(koreader_sync::plugin_bulk_progress),
+        )
+        .route(
+            "/api/v1/koreader/plugin/catalog",
+            get(koreader_sync::plugin_catalog),
         )
 .put(kindle_delivery::put_kindle_settings),
         )

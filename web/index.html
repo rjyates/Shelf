@@ -441,6 +441,7 @@
             <a href="#settings-hardcover">Hardcover</a>
             <a href="#settings-readwise">Readwise</a>
             <a href="#settings-storygraph">StoryGraph</a>
+            <a href="#settings-koreader">KOReader sync</a>
             <a href="#settings-opds">OPDS catalog</a>
             <a href="#settings-library">Library folders</a>
             <a href="#settings-account">Account</a>
@@ -695,6 +696,39 @@
                   <button type="button" id="storygraph-disconnect" class="quiet">Disconnect</button>
                 </div>
               </form>
+            </section>
+
+
+            <section id="settings-koreader" class="setting" aria-labelledby="koreader-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Device sync</p>
+                  <h2 id="koreader-heading" tabindex="-1">KOReader sync</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Plugin credentials for hash-link matching, progress, and annotation
+                exchange. Browse/download still uses OPDS; this surface links device
+                MD5 hashes to shelf books.
+              </p>
+              <p id="koreader-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="koreader-form" class="tts-form">
+                <label>Plugin username<input name="username" type="text" maxlength="100" autocomplete="username" placeholder="koreader" /></label>
+                <label>Plugin password<span class="fine" id="koreader-pw-hint">(required)</span><input name="pluginPassword" type="password" maxlength="200" autocomplete="new-password" /></label>
+                <label class="check"><input name="syncEnabled" type="checkbox" checked /> Enable sync</label>
+                <label class="check"><input name="hideAudioOnlyBooks" type="checkbox" /> Hide audio-only books in plugin catalog</label>
+                <p id="koreader-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save KOReader settings</button>
+                  <button type="button" id="koreader-disconnect" class="quiet">Disconnect</button>
+                </div>
+              </form>
+              <h3 class="setting-subhead">Unmatched hashes</h3>
+              <ul id="koreader-unmatched" class="library-roots"></ul>
+              <p id="koreader-unmatched-empty" class="fine setting-empty" hidden>No unmatched hashes.</p>
+              <h3 class="setting-subhead">Linked hashes</h3>
+              <ul id="koreader-links" class="library-roots"></ul>
+              <p id="koreader-links-empty" class="fine setting-empty" hidden>No hash links yet.</p>
             </section>
 
 

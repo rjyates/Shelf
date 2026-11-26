@@ -4155,3 +4155,160 @@ async fn storygraph_settings_validate_and_stub_sync() {
 
 #[tokio::test]
 
+async fn koreader_hash_link_annotation_and_progress() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("koreader-sync.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"kor","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/api/v1/koreader",
+        json!({
+            "username": "kor-plugin",
+            "password": "plugin-secret-ok",
+            "syncEnabled": true,
+            "hideAudioOnlyBooks": true
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["effectiveEnabled"], true, "{saved}");
+    assert!(saved.get("password").is_none(), "{saved}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    let hash = "0123456789abcdef0123456789abcdef";
+
+    let (status, unmatched) = call(
+        &app,
+        "POST",
+        "/api/v1/koreader/plugin/match-check",
+        json!({
+            "deviceId": "dev-1",
+            "deviceModel": "test",
+            "pluginVersion": "0.1",
+            "hashes": [hash],
+            "books": [{"hash": hash, "title": "Unmatched Title", "authors": "A"}]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unmatched}");
+    assert_eq!(unmatched["unmatchedCount"], 1, "{unmatched}");
+
+    let (status, linked) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/koreader/unmatched/{hash}/link"),
+        json!({"bookId": id}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    assert_eq!(linked["bookId"], id, "{linked}");
+
+    let (status, matched) = call(
+        &app,
+        "POST",
+        "/api/v1/koreader/plugin/match-check",
+        json!({
+            "deviceId": "dev-1",
+            "hashes": [hash]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{matched}");
+    assert_eq!(matched["matchedCount"], 1, "{matched}");
+
+    let (status, uploaded) = call(
+        &app,
+        "POST",
+        "/api/v1/koreader/plugin/annotations",
+        json!({
+            "deviceId": "dev-1",
+            "books": [{
+                "hash": hash,
+                "annotations": [{
+                    "datetime": "2024-06-12 10:00:00",
+                    "drawer": "lighten",
+                    "text": "A highlight",
+                    "note": "from device",
+                    "chapter": "Ch 1",
+                    "posFormat": "xpointer",
+                    "pos0": "/body/DocFragment[1]/text()[2].12"
+                }]
+            }]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{uploaded}");
+    assert_eq!(uploaded["upserted"], 1, "{uploaded}");
+
+    let (status, anns) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/books/{id}/annotations"),
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{anns}");
+    assert!(
+        anns.as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["text"] == "A highlight"),
+        "{anns}"
+    );
+
+    let (status, prog) = call(
+        &app,
+        "POST",
+        "/api/v1/koreader/plugin/progress",
+        json!({
+            "deviceId": "dev-1",
+            "items": [{"hash": hash, "percentage": 0.42}]
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{prog}");
+    assert_eq!(prog["updated"], 1, "{prog}");
+
+    let (status, catalog) = call(
+        &app,
+        "GET",
+        "/api/v1/koreader/plugin/catalog",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{catalog}");
+    assert!(catalog["total"].as_i64().unwrap() >= 1, "{catalog}");
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        "/api/v1/koreader",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+
