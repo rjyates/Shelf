@@ -438,6 +438,7 @@
             <a href="#settings-metadata">Metadata</a>
             <a href="#settings-tts">Text to speech</a>
             <a href="#settings-kindle">Send to Kindle</a>
+            <a href="#settings-hardcover">Hardcover</a>
             <a href="#settings-opds">OPDS catalog</a>
             <a href="#settings-library">Library folders</a>
             <a href="#settings-account">Account</a>
@@ -591,6 +592,48 @@
                 <button class="primary" type="submit">Save Kindle settings</button>
               </form>
             </section>
+
+            <section id="settings-hardcover" class="setting" aria-labelledby="hardcover-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Outbound sync</p>
+                  <h2 id="hardcover-heading" tabindex="-1">Hardcover</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Push reading status and progress to your Hardcover account. Create an API
+                token in Hardcover settings, then sync eligible shelf books here.
+              </p>
+              <p id="hardcover-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="hardcover-form" class="tts-form">
+                <label>API token<span class="fine" id="hardcover-token-hint">(required)</span><input name="apiToken" type="password" maxlength="500" autocomplete="off" placeholder="Hardcover API token" /></label>
+                <label class="check"><input name="enabled" type="checkbox" /> Enable sync</label>
+                <label>Book sync mode
+                  <select name="bookSyncMode">
+                    <option value="all_eligible">All eligible books</option>
+                    <option value="selected_only">Selected books only</option>
+                  </select>
+                </label>
+                <label>Privacy
+                  <select name="privacySettingId">
+                    <option value="3">Private</option>
+                    <option value="2">Follows</option>
+                    <option value="1">Public</option>
+                  </select>
+                </label>
+                <label class="check"><input name="autoSyncOnStatusChange" type="checkbox" checked /> Auto-sync on status change</label>
+                <label class="check"><input name="autoSyncOnProgressUpdate" type="checkbox" checked /> Auto-sync on progress update</label>
+                <label class="check"><input name="autoSyncOnRatingChange" type="checkbox" checked /> Auto-sync on rating change</label>
+                <p id="hardcover-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save Hardcover settings</button>
+                  <button type="button" id="hardcover-validate" class="quiet">Validate token</button>
+                  <button type="button" id="hardcover-sync" class="quiet">Sync now</button>
+                  <button type="button" id="hardcover-disconnect" class="quiet">Disconnect</button>
+                </div>
+              </form>
+            </section>
+
 
             <section id="settings-opds" class="setting" aria-labelledby="opds-heading">
               <header class="setting-head">

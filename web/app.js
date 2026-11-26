@@ -2387,6 +2387,51 @@ async function renderKindleSettings() {
     form.smtpPassword.value = "";
     form.startTls.checked = settings.startTls !== false;
     form.ssl.checked = Boolean(settings.ssl);
+    const providers = settings.providers || [];
+    const defaultId = settings.defaultProviderId;
+    const list = $("kindle-providers");
+    const empty = $("kindle-providers-empty");
+    if (list) {
+      list.replaceChildren();
+      if (empty) empty.hidden = providers.length > 0;
+      for (const p of providers) {
+        const li = document.createElement("li");
+        const label = `${p.name}${p.id === defaultId ? " (default)" : ""} · ${p.smtpHost || "(no host)"}`;
+        li.append(label, " ");
+        if (p.id !== defaultId) {
+          const makeDefault = document.createElement("button");
+          makeDefault.type = "button";
+          makeDefault.className = "quiet";
+          makeDefault.textContent = "Make default";
+          makeDefault.addEventListener("click", async () => {
+            try {
+              await api("kindle-delivery", {
+                method: "PUT",
+                body: JSON.stringify({ defaultProviderId: p.id }),
+              });
+              await renderKindleSettings();
+            } catch (error) {
+              message(error.message);
+            }
+          });
+          li.append(makeDefault, " ");
+        }
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "quiet";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", async () => {
+          try {
+            await api(`kindle-delivery/providers/${p.id}`, { method: "DELETE" });
+            await renderKindleSettings();
+          } catch (error) {
+            message(error.message);
+          }
+        });
+        li.append(remove);
+        list.append(li);
+      }
+    }
     if (hint) {
       hint.textContent = settings.hasPassword
         ? "(leave blank to keep saved)"
@@ -2395,6 +2440,263 @@ async function renderKindleSettings() {
     status.textContent = settings.configured
       ? `Ready · ${settings.recipientEmail}`
       : "Not configured yet — save recipient and SMTP below.";
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+async function renderHardcoverSettings() {
+  const form = $("hardcover-form");
+  const status = $("hardcover-status");
+  const err = $("hardcover-error");
+  const hint = $("hardcover-token-hint");
+  if (!form || !status) return;
+  if (err) err.hidden = true;
+  try {
+    const settings = await api("hardcover");
+    form.apiToken.value = "";
+    form.enabled.checked = Boolean(settings.enabled);
+    form.bookSyncMode.value = settings.bookSyncMode || "all_eligible";
+    form.privacySettingId.value = String(settings.privacySettingId ?? 3);
+    form.autoSyncOnStatusChange.checked = settings.autoSyncOnStatusChange !== false;
+    form.autoSyncOnProgressUpdate.checked = settings.autoSyncOnProgressUpdate !== false;
+    form.autoSyncOnRatingChange.checked = settings.autoSyncOnRatingChange !== false;
+    if (hint) {
+      hint.textContent = settings.tokenConfigured
+        ? "(leave blank to keep saved)"
+        : "(required)";
+    }
+    if (settings.effectiveEnabled) {
+      status.textContent = settings.lastSyncedAt
+        ? `Connected · last sync ${settings.lastSyncedAt}`
+        : "Connected · not synced yet.";
+    } else if (settings.tokenConfigured) {
+      status.textContent = "Token saved · sync disabled.";
+    } else {
+      status.textContent = "Not connected — paste a Hardcover API token below.";
+    }
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+
+async function renderReadwiseSettings() {
+  const form = $("readwise-form");
+  const status = $("readwise-status");
+  const err = $("readwise-error");
+  const hint = $("readwise-token-hint");
+  if (!form || !status) return;
+  if (err) err.hidden = true;
+  try {
+    const settings = await api("readwise");
+    form.apiToken.value = "";
+    form.enabled.checked = Boolean(settings.enabled);
+    if (hint) {
+      hint.textContent = settings.tokenConfigured
+        ? "(leave blank to keep saved)"
+        : "(required)";
+    }
+    if (settings.effectiveEnabled) {
+      status.textContent = settings.lastSyncedAt
+        ? `Connected · last sync ${settings.lastSyncedAt}`
+        : "Connected · not synced yet.";
+    } else if (settings.tokenConfigured) {
+      status.textContent = "Token saved · sync disabled.";
+    } else {
+      status.textContent = "Not connected — paste a Readwise access token below.";
+    }
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+
+async function renderStorygraphSettings() {
+  const form = $("storygraph-form");
+  const status = $("storygraph-status");
+  const err = $("storygraph-error");
+  const sessionHint = $("storygraph-session-hint");
+  const rememberHint = $("storygraph-remember-hint");
+  if (!form || !status) return;
+  if (err) err.hidden = true;
+  try {
+    const settings = await api("storygraph");
+    form.sessionCookie.value = "";
+    form.rememberToken.value = "";
+    form.enabled.checked = Boolean(settings.enabled);
+    form.bookSyncMode.value = settings.bookSyncMode || "all_eligible";
+    form.autoSyncOnStatusChange.checked = settings.autoSyncOnStatusChange !== false;
+    form.autoSyncOnProgressUpdate.checked = settings.autoSyncOnProgressUpdate !== false;
+    const keep = "(leave blank to keep saved)";
+    const need = "(required)";
+    if (sessionHint) sessionHint.textContent = settings.cookiesConfigured ? keep : need;
+    if (rememberHint) rememberHint.textContent = settings.cookiesConfigured ? keep : need;
+    if (settings.effectiveEnabled) {
+      status.textContent = settings.lastSyncedAt
+        ? `Connected · last sync ${settings.lastSyncedAt}`
+        : "Connected · not synced yet.";
+    } else if (settings.cookiesConfigured) {
+      status.textContent = "Cookies saved · sync disabled.";
+    } else {
+      status.textContent = "Not connected — paste StoryGraph session cookies below.";
+    }
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+
+async function renderKoreaderSettings() {
+  const form = $("koreader-form");
+  const status = $("koreader-status");
+  const err = $("koreader-error");
+  const pwHint = $("koreader-pw-hint");
+  const unmatchedList = $("koreader-unmatched");
+  const unmatchedEmpty = $("koreader-unmatched-empty");
+  const linksList = $("koreader-links");
+  const linksEmpty = $("koreader-links-empty");
+  if (!form || !status) return;
+  if (err) err.hidden = true;
+  try {
+    const [settings, unmatched, links] = await Promise.all([
+      api("koreader"),
+      api("koreader/unmatched"),
+      api("koreader/hash-links"),
+    ]);
+    form.username.value = settings.username || "";
+    form.pluginPassword.value = "";
+    form.syncEnabled.checked = settings.syncEnabled !== false;
+    form.hideAudioOnlyBooks.checked = Boolean(settings.hideAudioOnlyBooks);
+    if (pwHint) pwHint.textContent = settings.configured ? "(leave blank to keep)" : "(required)";
+    if (settings.effectiveEnabled) {
+      status.textContent = `Connected · ${settings.linkedHashes ?? 0} linked, ${settings.unmatchedHashes ?? 0} unmatched`;
+    } else if (settings.configured) {
+      status.textContent = "Credentials saved · sync disabled.";
+    } else {
+      status.textContent = "Not configured — create plugin credentials below.";
+    }
+    if (unmatchedList) {
+      unmatchedList.replaceChildren();
+      const items = unmatched?.items || [];
+      if (unmatchedEmpty) unmatchedEmpty.hidden = items.length > 0;
+      for (const row of items) {
+        const li = document.createElement("li");
+        const title = row.title || row.hash;
+        li.append(`${title} · ${row.hash.slice(0, 8)}… `);
+        const bookInput = document.createElement("input");
+        bookInput.type = "number";
+        bookInput.min = "1";
+        bookInput.placeholder = "Book id";
+        bookInput.style.width = "6rem";
+        const linkBtn = document.createElement("button");
+        linkBtn.type = "button";
+        linkBtn.className = "quiet";
+        linkBtn.textContent = "Link";
+        linkBtn.addEventListener("click", async () => {
+          const bookId = Number(bookInput.value);
+          if (!bookId) {
+            message("Enter a shelf book id to link.");
+            return;
+          }
+          try {
+            await api(`koreader/unmatched/${row.hash}/link`, {
+              method: "POST",
+              body: JSON.stringify({ bookId }),
+            });
+            await renderKoreaderSettings();
+          } catch (error) {
+            message(error.message);
+          }
+        });
+        const dismiss = document.createElement("button");
+        dismiss.type = "button";
+        dismiss.className = "quiet";
+        dismiss.textContent = "Dismiss";
+        dismiss.addEventListener("click", async () => {
+          try {
+            await api(`koreader/unmatched/${row.hash}/dismiss`, { method: "POST", body: "{}" });
+            await renderKoreaderSettings();
+          } catch (error) {
+            message(error.message);
+          }
+        });
+        li.append(bookInput, " ", linkBtn, " ", dismiss);
+        unmatchedList.append(li);
+      }
+    }
+    if (linksList) {
+      linksList.replaceChildren();
+      const items = links?.items || [];
+      if (linksEmpty) linksEmpty.hidden = items.length > 0;
+      for (const row of items) {
+        const li = document.createElement("li");
+        li.textContent = `${row.bookTitle || row.bookId} · ${row.hash.slice(0, 8)}…`;
+        const unlink = document.createElement("button");
+        unlink.type = "button";
+        unlink.className = "quiet";
+        unlink.textContent = "Unlink";
+        unlink.addEventListener("click", async () => {
+          try {
+            await api(`koreader/hash-links/${row.hash}`, { method: "DELETE" });
+            await renderKoreaderSettings();
+          } catch (error) {
+            message(error.message);
+          }
+        });
+        li.append(" ", unlink);
+        linksList.append(li);
+      }
+    }
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+
+async function renderKoboSettings() {
+  const form = $("kobo-settings-form");
+  const status = $("kobo-status");
+  const err = $("kobo-error");
+  const list = $("kobo-devices");
+  const empty = $("kobo-devices-empty");
+  if (!form || !status) return;
+  if (err) err.hidden = true;
+  try {
+    const payload = await api("kobo");
+    const settings = payload.settings || {};
+    form.readingThreshold.value = settings.readingThreshold ?? 0.05;
+    form.finishedThreshold.value = settings.finishedThreshold ?? 0.95;
+    form.twoWayProgressSync.checked = settings.twoWayProgressSync !== false;
+    form.storeSync.checked = Boolean(settings.storeSync);
+    const devices = payload.devices || [];
+    status.textContent = `${devices.length} device${devices.length === 1 ? "" : "s"}`;
+    if (list) {
+      list.replaceChildren();
+      if (empty) empty.hidden = devices.length > 0;
+      for (const device of devices) {
+        const li = document.createElement("li");
+        const syncUrl = `${location.origin}/api/v1/kobo/${device.token}`;
+        li.append(`${device.name} · `);
+        const code = document.createElement("code");
+        code.textContent = syncUrl;
+        li.append(code);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "quiet";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", async () => {
+          try {
+            await api(`kobo/devices/${device.id}`, { method: "DELETE" });
+            await renderKoboSettings();
+          } catch (error) {
+            message(error.message);
+          }
+        });
+        li.append(" ", remove);
+        list.append(li);
+      }
+    }
   } catch (error) {
     status.textContent = error.message;
   }
@@ -2495,6 +2797,11 @@ function render() {
   if (settings && lastView !== "settings") {
     void renderTtsProviders();
     void renderKindleSettings();
+    void renderHardcoverSettings();
+    void renderReadwiseSettings();
+    void renderStorygraphSettings();
+    void renderKoreaderSettings();
+    void renderKoboSettings();
     void renderOpdsSettings();
     void renderMetaProviders();
     void renderLibraryRoots();
@@ -3001,6 +3308,34 @@ $("manage-finish").addEventListener("click", () => {
     "manage-finish",
   );
 });
+
+$("kindle-provider-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    await api("kindle-delivery/providers", {
+      method: "POST",
+      body: JSON.stringify({
+        name: form.name.value.trim(),
+        smtpHost: form.smtpHost.value.trim(),
+        smtpPort: Number(form.smtpPort.value) || 587,
+        smtpUsername: form.smtpUsername.value.trim(),
+        smtpPassword: form.smtpPassword.value,
+        fromAddress: form.fromAddress.value.trim(),
+        fromName: form.fromName.value.trim(),
+        startTls: form.startTls.checked,
+        ssl: form.ssl.checked,
+      }),
+    });
+    form.reset();
+    form.startTls.checked = true;
+    message("SMTP provider added.");
+    await renderKindleSettings();
+  } catch (error) {
+    message(error.message);
+  }
+});
+
 $("kindle-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -3029,6 +3364,357 @@ $("kindle-form")?.addEventListener("submit", async (event) => {
     } else {
       message(error.message);
     }
+  }
+});
+
+$("hardcover-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const err = $("hardcover-error");
+  if (err) err.hidden = true;
+  const body = {
+    enabled: form.enabled.checked,
+    bookSyncMode: form.bookSyncMode.value,
+    privacySettingId: Number(form.privacySettingId.value) || 3,
+    autoSyncOnStatusChange: form.autoSyncOnStatusChange.checked,
+    autoSyncOnProgressUpdate: form.autoSyncOnProgressUpdate.checked,
+    autoSyncOnRatingChange: form.autoSyncOnRatingChange.checked,
+  };
+  const token = form.apiToken.value.trim();
+  if (token) body.apiToken = token;
+  try {
+    await api("hardcover", { method: "PUT", body: JSON.stringify(body) });
+    message("Hardcover settings saved.");
+    await renderHardcoverSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("hardcover-validate")?.addEventListener("click", async () => {
+  const form = $("hardcover-form");
+  const err = $("hardcover-error");
+  if (err) err.hidden = true;
+  const body = {};
+  const token = form?.apiToken?.value?.trim();
+  if (token) body.apiToken = token;
+  try {
+    const result = await api("hardcover/validate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    message(
+      result?.valid
+        ? result.hardcoverUsername
+          ? `Token valid · ${result.hardcoverUsername}`
+          : "Token valid."
+        : "Token could not be validated.",
+    );
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("hardcover-sync")?.addEventListener("click", async () => {
+  const err = $("hardcover-error");
+  if (err) err.hidden = true;
+  try {
+    const result = await api("hardcover/sync", { method: "POST", body: "{}" });
+    message(
+      `Hardcover sync · ${result?.syncedBooks ?? 0} synced, ${result?.skippedBooks ?? 0} skipped, ${result?.failedBooks ?? 0} failed.`,
+    );
+    await renderHardcoverSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("hardcover-disconnect")?.addEventListener("click", async () => {
+  const err = $("hardcover-error");
+  if (err) err.hidden = true;
+  try {
+    await api("hardcover", { method: "DELETE" });
+    message("Hardcover disconnected.");
+    await renderHardcoverSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+
+$("readwise-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const err = $("readwise-error");
+  if (err) err.hidden = true;
+  const body = { enabled: form.enabled.checked };
+  const token = form.apiToken.value.trim();
+  if (token) body.apiToken = token;
+  try {
+    await api("readwise", { method: "PUT", body: JSON.stringify(body) });
+    message("Readwise settings saved.");
+    await renderReadwiseSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("readwise-validate")?.addEventListener("click", async () => {
+  const form = $("readwise-form");
+  const err = $("readwise-error");
+  if (err) err.hidden = true;
+  const body = {};
+  const token = form?.apiToken?.value?.trim();
+  if (token) body.apiToken = token;
+  try {
+    const result = await api("readwise/validate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    message(result?.valid ? "Token valid." : "Token could not be validated.");
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("readwise-sync")?.addEventListener("click", async () => {
+  const err = $("readwise-error");
+  if (err) err.hidden = true;
+  try {
+    const result = await api("readwise/sync", { method: "POST", body: "{}" });
+    message(`Readwise sync · ${result?.syncedHighlights ?? 0} highlights.`);
+    await renderReadwiseSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("readwise-disconnect")?.addEventListener("click", async () => {
+  const err = $("readwise-error");
+  if (err) err.hidden = true;
+  try {
+    await api("readwise", { method: "DELETE" });
+    message("Readwise disconnected.");
+    await renderReadwiseSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+
+$("storygraph-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const err = $("storygraph-error");
+  if (err) err.hidden = true;
+  const body = {
+    enabled: form.enabled.checked,
+    bookSyncMode: form.bookSyncMode.value,
+    autoSyncOnStatusChange: form.autoSyncOnStatusChange.checked,
+    autoSyncOnProgressUpdate: form.autoSyncOnProgressUpdate.checked,
+  };
+  const session = form.sessionCookie.value.trim();
+  const remember = form.rememberToken.value.trim();
+  if (session) body.sessionCookie = session;
+  if (remember) body.rememberToken = remember;
+  try {
+    await api("storygraph", { method: "PUT", body: JSON.stringify(body) });
+    message("StoryGraph settings saved.");
+    await renderStorygraphSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("storygraph-validate")?.addEventListener("click", async () => {
+  const form = $("storygraph-form");
+  const err = $("storygraph-error");
+  if (err) err.hidden = true;
+  const body = {};
+  const session = form?.sessionCookie?.value?.trim();
+  const remember = form?.rememberToken?.value?.trim();
+  if (session) body.sessionCookie = session;
+  if (remember) body.rememberToken = remember;
+  try {
+    const result = await api("storygraph/validate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    message(result?.valid ? "Cookies valid." : "Cookies could not be validated.");
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("storygraph-sync")?.addEventListener("click", async () => {
+  const err = $("storygraph-error");
+  if (err) err.hidden = true;
+  try {
+    const result = await api("storygraph/sync", { method: "POST", body: "{}" });
+    message(`StoryGraph sync · ${result?.syncedBooks ?? 0} synced, ${result?.skippedBooks ?? 0} skipped, ${result?.failedBooks ?? 0} failed.`);
+    await renderStorygraphSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("storygraph-disconnect")?.addEventListener("click", async () => {
+  const err = $("storygraph-error");
+  if (err) err.hidden = true;
+  try {
+    await api("storygraph", { method: "DELETE" });
+    message("StoryGraph disconnected.");
+    await renderStorygraphSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+
+$("koreader-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const err = $("koreader-error");
+  if (err) err.hidden = true;
+  const body = {
+    username: form.username.value.trim(),
+    syncEnabled: form.syncEnabled.checked,
+    hideAudioOnlyBooks: form.hideAudioOnlyBooks.checked,
+  };
+  const pw = form.pluginPassword.value;
+  if (pw) body.password = pw;
+  try {
+    await api("koreader", { method: "PUT", body: JSON.stringify(body) });
+    message("KOReader settings saved.");
+    await renderKoreaderSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("koreader-disconnect")?.addEventListener("click", async () => {
+  const err = $("koreader-error");
+  if (err) err.hidden = true;
+  try {
+    await api("koreader", { method: "DELETE" });
+    message("KOReader sync disconnected.");
+    await renderKoreaderSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+
+$("kobo-settings-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const err = $("kobo-error");
+  if (err) err.hidden = true;
+  try {
+    await api("kobo", {
+      method: "PUT",
+      body: JSON.stringify({
+        readingThreshold: Number(form.readingThreshold.value),
+        finishedThreshold: Number(form.finishedThreshold.value),
+        twoWayProgressSync: form.twoWayProgressSync.checked,
+        storeSync: form.storeSync.checked,
+      }),
+    });
+    message("Kobo settings saved.");
+    await renderKoboSettings();
+  } catch (error) {
+    if (err) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } else {
+      message(error.message);
+    }
+  }
+});
+
+$("kobo-device-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    await api("kobo/devices", {
+      method: "POST",
+      body: JSON.stringify({ name: form.name.value.trim() }),
+    });
+    form.reset();
+    message("Kobo device added.");
+    await renderKoboSettings();
+  } catch (error) {
+    message(error.message);
   }
 });
 

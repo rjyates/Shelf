@@ -3863,3 +3863,104 @@ async fn opds_basic_auth_catalog_and_download() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+async fn hardcover_settings_validate_and_stub_sync() {
+    std::env::set_var("SHELF_HARDCOVER_STUB", "1");
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("hardcover.db");
+    let app = shelf_server::app(path).unwrap();
+    let credentials = json!({"username":"hc","password":"test-password-long-enough"});
+    call(&app, "POST", "/api/v1/setup", credentials.clone(), None).await;
+    let token = call(&app, "POST", "/api/v1/login", credentials, None)
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, empty) = call(&app, "GET", "/api/v1/hardcover", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["tokenConfigured"], false, "{empty}");
+    assert_eq!(empty["effectiveEnabled"], false, "{empty}");
+
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/api/v1/hardcover",
+        json!({
+            "apiToken": "hc-test-token",
+            "enabled": true,
+            "bookSyncMode": "all_eligible",
+            "privacySettingId": 3
+        }),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["tokenConfigured"], true, "{saved}");
+    assert_eq!(saved["effectiveEnabled"], true, "{saved}");
+    assert!(saved.get("apiToken").is_none(), "{saved}");
+
+    let (status, valid) = call(
+        &app,
+        "POST",
+        "/api/v1/hardcover/validate",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{valid}");
+    assert_eq!(valid["valid"], true, "{valid}");
+    assert_eq!(valid["hardcoverUsername"], "stub-user", "{valid}");
+
+    let (status, book) = upload(&app, sample_epub(false), Some(&token)).await;
+    assert_eq!(status, StatusCode::CREATED, "{book}");
+    let id = book["id"].as_i64().unwrap();
+    call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/finished"),
+        json!({"finished_at": "2024-06-12"}),
+        Some(&token),
+    )
+    .await;
+
+    let (status, synced) = call(
+        &app,
+        "POST",
+        "/api/v1/hardcover/sync",
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{synced}");
+    assert_eq!(synced["status"], "completed", "{synced}");
+    assert!(synced["syncedBooks"].as_i64().unwrap() >= 1, "{synced}");
+
+    let (status, one) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/books/{id}/hardcover/sync"),
+        json!({}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{one}");
+    assert_eq!(one["result"], "synced", "{one}");
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        "/api/v1/hardcover",
+        Value::Null,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, after) = call(&app, "GET", "/api/v1/hardcover", Value::Null, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(after["tokenConfigured"], false, "{after}");
+}
+
+#[tokio::test]
+

@@ -5,6 +5,7 @@ mod audio_meta;
 mod audiobook;
 mod epub;
 mod epub_package;
+mod hardcover;
 mod insights;
 mod kindle_delivery;
 mod library_health;
@@ -468,6 +469,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ = reading_stats::migrate(&db);
     let _ = session_injectors::migrate(&db);
     let _ = kindle_delivery::migrate(&db);
+    let _ = hardcover::migrate(&db);
     let _ = opds::migrate(&db);
     let state = AppState {
         data_dir: database
@@ -663,7 +665,22 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
         )
         .route(
             "/api/v1/kindle-delivery",
-            get(kindle_delivery::get_kindle_settings).put(kindle_delivery::put_kindle_settings),
+            get(kindle_delivery::get_kindle_settings).route(
+            "/api/v1/hardcover",
+            get(hardcover::get_hardcover_settings)
+                .put(hardcover::put_hardcover_settings)
+                .delete(hardcover::delete_hardcover_settings),
+        )
+        .route(
+            "/api/v1/hardcover/validate",
+            post(hardcover::validate_hardcover_token),
+        )
+        .route("/api/v1/hardcover/sync", post(hardcover::sync_hardcover_all))
+        .route(
+            "/api/v1/books/{id}/hardcover/sync",
+            post(hardcover::sync_hardcover_book),
+        )
+.put(kindle_delivery::put_kindle_settings),
         )
         .route("/api/v1/opds", get(opds::root))
         .route("/api/v1/opds/search.opds", get(opds::search_desc))
