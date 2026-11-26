@@ -439,6 +439,7 @@
             <a href="#settings-tts">Text to speech</a>
             <a href="#settings-kindle">Send to Kindle</a>
             <a href="#settings-hardcover">Hardcover</a>
+            <a href="#settings-readwise">Readwise</a>
             <a href="#settings-opds">OPDS catalog</a>
             <a href="#settings-library">Library folders</a>
             <a href="#settings-account">Account</a>
@@ -630,6 +631,32 @@
                   <button type="button" id="hardcover-validate" class="quiet">Validate token</button>
                   <button type="button" id="hardcover-sync" class="quiet">Sync now</button>
                   <button type="button" id="hardcover-disconnect" class="quiet">Disconnect</button>
+                </div>
+              </form>
+            </section>
+
+
+            <section id="settings-readwise" class="setting" aria-labelledby="readwise-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Outbound sync</p>
+                  <h2 id="readwise-heading" tabindex="-1">Readwise</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Push new Shelf highlights to Readwise. Create an access token in Readwise,
+                then sync annotations here.
+              </p>
+              <p id="readwise-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="readwise-form" class="tts-form">
+                <label>API token<span class="fine" id="readwise-token-hint">(required)</span><input name="apiToken" type="password" maxlength="500" autocomplete="off" placeholder="Readwise access token" /></label>
+                <label class="check"><input name="enabled" type="checkbox" /> Enable sync</label>
+                <p id="readwise-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save Readwise settings</button>
+                  <button type="button" id="readwise-validate" class="quiet">Validate token</button>
+                  <button type="button" id="readwise-sync" class="quiet">Sync now</button>
+                  <button type="button" id="readwise-disconnect" class="quiet">Disconnect</button>
                 </div>
               </form>
             </section>

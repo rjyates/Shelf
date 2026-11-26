@@ -15,6 +15,7 @@ mod metadata;
 mod opds;
 mod reader_data;
 mod reading_stats;
+mod readwise;
 mod session_injectors;
 mod tts;
 use argon2::{
@@ -470,6 +471,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ = session_injectors::migrate(&db);
     let _ = kindle_delivery::migrate(&db);
     let _ = hardcover::migrate(&db);
+    let _ = readwise::migrate(&db);
     let _ = opds::migrate(&db);
     let state = AppState {
         data_dir: database
@@ -680,6 +682,17 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             "/api/v1/books/{id}/hardcover/sync",
             post(hardcover::sync_hardcover_book),
         )
+.route(
+            "/api/v1/readwise",
+            get(readwise::get_readwise_settings)
+                .put(readwise::put_readwise_settings)
+                .delete(readwise::delete_readwise_settings),
+        )
+        .route(
+            "/api/v1/readwise/validate",
+            post(readwise::validate_readwise_token),
+        )
+        .route("/api/v1/readwise/sync", post(readwise::sync_readwise))
 .put(kindle_delivery::put_kindle_settings),
         )
         .route("/api/v1/opds", get(opds::root))
