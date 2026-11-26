@@ -440,6 +440,7 @@
             <a href="#settings-kindle">Send to Kindle</a>
             <a href="#settings-hardcover">Hardcover</a>
             <a href="#settings-readwise">Readwise</a>
+            <a href="#settings-storygraph">StoryGraph</a>
             <a href="#settings-opds">OPDS catalog</a>
             <a href="#settings-library">Library folders</a>
             <a href="#settings-account">Account</a>
@@ -657,6 +658,41 @@
                   <button type="button" id="readwise-validate" class="quiet">Validate token</button>
                   <button type="button" id="readwise-sync" class="quiet">Sync now</button>
                   <button type="button" id="readwise-disconnect" class="quiet">Disconnect</button>
+                </div>
+              </form>
+            </section>
+
+
+            <section id="settings-storygraph" class="setting" aria-labelledby="storygraph-heading">
+              <header class="setting-head">
+                <div>
+                  <p class="setting-kicker">Outbound sync</p>
+                  <h2 id="storygraph-heading" tabindex="-1">StoryGraph</h2>
+                </div>
+              </header>
+              <p class="fine setting-lede">
+                Push reading status and progress to StoryGraph using your browser session
+                cookie and remember token (from app.thestorygraph.com).
+              </p>
+              <p id="storygraph-status" class="fine" aria-live="polite">Checking…</p>
+              <form id="storygraph-form" class="tts-form">
+                <label>Session cookie<span class="fine" id="storygraph-session-hint">(required)</span><input name="sessionCookie" type="password" maxlength="4096" autocomplete="off" placeholder="_storygraph_session value" /></label>
+                <label>Remember token<span class="fine" id="storygraph-remember-hint">(required)</span><input name="rememberToken" type="password" maxlength="4096" autocomplete="off" placeholder="remember_user_token value" /></label>
+                <label class="check"><input name="enabled" type="checkbox" /> Enable sync</label>
+                <label>Book sync mode
+                  <select name="bookSyncMode">
+                    <option value="all_eligible">All eligible books</option>
+                    <option value="selected_only">Selected books only</option>
+                  </select>
+                </label>
+                <label class="check"><input name="autoSyncOnStatusChange" type="checkbox" checked /> Auto-sync on status change</label>
+                <label class="check"><input name="autoSyncOnProgressUpdate" type="checkbox" checked /> Auto-sync on progress update</label>
+                <p id="storygraph-error" role="alert" hidden></p>
+                <div class="setting-actions">
+                  <button class="primary" type="submit">Save StoryGraph settings</button>
+                  <button type="button" id="storygraph-validate" class="quiet">Validate cookies</button>
+                  <button type="button" id="storygraph-sync" class="quiet">Sync now</button>
+                  <button type="button" id="storygraph-disconnect" class="quiet">Disconnect</button>
                 </div>
               </form>
             </section>

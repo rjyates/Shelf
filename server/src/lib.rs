@@ -17,6 +17,7 @@ mod reader_data;
 mod reading_stats;
 mod readwise;
 mod session_injectors;
+mod storygraph;
 mod tts;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -472,6 +473,7 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
     let _ = kindle_delivery::migrate(&db);
     let _ = hardcover::migrate(&db);
     let _ = readwise::migrate(&db);
+    let _ = storygraph::migrate(&db);
     let _ = opds::migrate(&db);
     let state = AppState {
         data_dir: database
@@ -693,6 +695,25 @@ pub fn app(database: PathBuf) -> rusqlite::Result<Router> {
             post(readwise::validate_readwise_token),
         )
         .route("/api/v1/readwise/sync", post(readwise::sync_readwise))
+.route(
+            "/api/v1/storygraph",
+            get(storygraph::get_storygraph_settings)
+                .put(storygraph::put_storygraph_settings)
+                .delete(storygraph::delete_storygraph_settings),
+        )
+        .route(
+            "/api/v1/storygraph/validate",
+            post(storygraph::validate_storygraph_cookies),
+        )
+        .route("/api/v1/storygraph/sync", post(storygraph::sync_storygraph_all))
+        .route(
+            "/api/v1/books/{id}/storygraph/sync",
+            post(storygraph::sync_storygraph_book),
+        )
+        .route(
+            "/api/v1/books/{id}/storygraph/link",
+            post(storygraph::link_storygraph_book),
+        )
 .put(kindle_delivery::put_kindle_settings),
         )
         .route("/api/v1/opds", get(opds::root))
