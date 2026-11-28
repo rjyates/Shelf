@@ -1,5 +1,7 @@
 # Shelf
 
+[Architecture](docs/decisions/0001-rust-server-and-shared-flutter-mobile.md) · [API](protocol/openapi.json) · [Releases](https://github.com/rjyates/Shelf/releases) · [CI](https://github.com/rjyates/Shelf/actions/workflows/ci.yml)
+
 A self-hosted Rust book server with a dark academia web interface and one Flutter/Dart app for Android and iPhone.
 
 Shelf supports account setup, a persistent catalogue, manual page progress, and EPUB importing and reading with saved positions. EPUB support is new since v0.1.0; build this branch from source until its server and mobile releases are published. Book Orbit is the functional reference; other readers, audio, offline access, and external sync remain on the [feature roadmap](docs/parity.md). See the [approved v3 design](docs/design/v3.md).
